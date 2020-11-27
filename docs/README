@@ -1,0 +1,7 @@
+Documentation can be constructed by calling:
+    make clean; make html
+
+Then viewed via:
+    firefox build/html/index.html
+
+Note that one may need to delete the `source/_autosummary` directory prior to recompiling.
