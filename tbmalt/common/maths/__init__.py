@@ -5,13 +5,14 @@ This module contains a collection of batch-operable, back-propagatable
 mathematical functions.
 """
 from typing import Tuple, Union, Literal, Optional
+from numbers import Real
 import torch
 import numpy as np
 Tensor = torch.Tensor
 
 
-def gaussian(x: Union[Tensor, float], mean: Union[Tensor, float],
-             std: Union[Tensor, float]) -> Tensor:
+def gaussian(x: Union[Tensor, Real], mean: Union[Tensor, Real],
+             std: Union[Tensor, Real]) -> Tensor:
     r"""Gaussian distribution function.
 
     A one dimensional Gaussian function representing the probability density

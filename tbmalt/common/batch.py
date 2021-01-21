@@ -24,7 +24,7 @@ def pack(tensors: List[Tensor],
             for the last axis, etc. This will be a new dimension. [DEFAULT=0]
         value: The value with which the tensor is to be padded. [DEFAULT=0]
         size: Size of each dimension to which tensors should be padded. This
-            This to the largest size encountered along each dimension.
+            to the largest size encountered along each dimension.
 
     Returns:
         packed_tensors: Input tensors padded and packed into a single tensor.

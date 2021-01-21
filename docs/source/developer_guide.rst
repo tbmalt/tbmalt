@@ -16,11 +16,11 @@ Docstrings
 ==========
 Documentation is integral to helping users understand not only what a function does, but
 how it is to be used. Therefore, descriptive and well written docstrings must be provided,
-in English, for all functions, classes, generates, etc., including private methods. All
-text must be wrapped at the 79'th column; i.e. docstring lines may not exceed a width of
-80 characters, including indentation and newline characters, except when giving URLs,
-path-names, etc. [*]_ In general docstrings are composed of a one-line-summary followed by
-a longer, more detailed summary and then by one or more additional sections.
+in English, for all functions, classes, generates, etc., including significant or non-trivial
+private methods. All text must be wrapped at the 79'th column; i.e. docstring lines may not
+exceed a width of 80 characters, including indentation and newline characters, except when
+giving URLs, path-names, etc. [*]_ In general docstrings are composed of a one-line-summary
+followed by a longer, more detailed summary and then by one or more additional sections.
 
 
 Sections
@@ -487,7 +487,7 @@ code, it dose improve consistency and modularity.
 
 When raising exceptions, built-in exception types should be use wherever possible. However,
 custom exceptions are permitted where appropriate. Custom exceptions must inherit from the
-base ``TBMaLTError`` exception or its derivatives and should generally be defined in the
+base ``TbmaltError`` exception or its derivatives and should generally be defined in the
 ``common/exceptions.py`` module. Note that, as per Google style, catch-all excepts are not
 permitted.
 
@@ -545,7 +545,7 @@ running the function. All ``assert`` statements should also have a short message
 with them indicating what test is being performed. It is acknowledged that more/less complex
 functions may require a greater/lesser number of tests to be performed.
 
-As gradient test tend to have long run times they should be marked with a ``@pytest.mark.grad``
+As gradient tests tend to have long run times they should be marked with a ``@pytest.mark.grad``
 decorator flag, allowing them to be selectively skipped. Finally, all test modules should
 import * from ``tbmalt.tests.test_utils.py``, this ensures the correct float precision is
 used, activates gradient anomaly detection and grants access to ``fix_seed``. Some test

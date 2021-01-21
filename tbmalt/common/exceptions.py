@@ -1,7 +1,7 @@
 """Custom TBMaLT exceptions.
 """
 
-class TBMaLTError(Exception):
+class TbmaltError(Exception):
     """The base exception class for the TBMaLT package.
 
     All custom exceptions should inherit from this exception. However this may
@@ -15,7 +15,7 @@ class TBMaLTError(Exception):
         self.msg = msg
 
 
-class ConvergenceError(TBMaLTError):
+class ConvergenceError(TbmaltError):
     """Raised whenever an failure to converge is encountered.
 
     This exception is raise anywhere where a failure to converge is encountered.

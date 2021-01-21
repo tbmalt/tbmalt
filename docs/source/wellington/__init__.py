@@ -5,26 +5,41 @@ multiple returns in a satisfactory manner. This works by tricking the
 GoogleDocstring module into calling the NumpyDocstring's return parser.
 """
 
-from sphinxcontrib.napoleon import (
+from sphinx.ext.napoleon import (
     Config, setup, _patch_python_domain, _process_docstring, _skip_member,
     GoogleDocstring, NumpyDocstring)
 
-from sphinxcontrib.napoleon._version import __version__
+from typing import Any, Callable, Dict, List, Tuple, Union
 
+#from sphinx.ext.napoleon._version import __version__
+from sphinx import __display_version__ as __version__
 
 class NewGoogleDocstring(GoogleDocstring):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def _consume_fields(self, parse_type=True, prefer_type=False, numpy=False):
-        # type: (bool, bool) -> List[Tuple[unicode, unicode, List[unicode]]]
-        func = NumpyDocstring._consume_field if numpy else self._consume_field
+#    def _consume_fields(self, parse_type=True, prefer_type=False, numpy=False):
+#        # type: (bool, bool) -> List[Tuple[unicode, unicode, List[unicode]]]
+#        func = NumpyDocstring._consume_field if numpy else self._consume_field
+#
+#        self._consume_empty()
+#        fields = []
+#        while not self._is_section_break():
+#            _name, _type, _desc = func(parse_type, prefer_type)
+#            if _name or _type or _desc:
+#                fields.append((_name, _type, _desc,))
+#        return fields
 
+    def _consume_fields(self, parse_type: bool = True, prefer_type: bool = False,
+                        multiple: bool = False) -> List[Tuple[str, str, List[str]]]:
         self._consume_empty()
         fields = []
         while not self._is_section_break():
-            _name, _type, _desc = func(parse_type, prefer_type)
-            if _name or _type or _desc:
+            _name, _type, _desc = self._consume_field(parse_type, prefer_type)
+            if multiple and _name:
+                for name in _name.split(","):
+                    fields.append((name.strip(), _type, _desc))
+            elif _name or _type or _desc:
                 fields.append((_name, _type, _desc,))
         return fields
 
