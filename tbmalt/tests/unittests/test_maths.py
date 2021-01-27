@@ -71,7 +71,7 @@ def test_sym_single(device):
     data = torch.rand(10, 10, device=device)
     pred = maths.sym(data)
     ref = (data + data.T) / 2
-    abs_delta = torch.max(torch.abs(pred.cpu() - ref))
+    abs_delta = torch.max(torch.abs(pred.cpu() - ref.cpu()))
     same_device = pred.device == device
 
     assert abs_delta < 1E-12, 'Tolerance check'
@@ -84,7 +84,7 @@ def test_sym_batch(device):
     data = torch.rand(10, 10, 10, device=device)
     pred = maths.sym(data, -1, -2)
     ref = torch.stack([(i + i.T) / 2 for i in data], 0)
-    abs_delta = torch.max(torch.abs(pred.cpu() - ref))
+    abs_delta = torch.max(torch.abs(pred.cpu() - ref.cpu()))
     same_device = pred.device == device
 
     assert abs_delta < 1E-12, 'Tolerance check'
@@ -254,7 +254,7 @@ def test_eighb_general_single(device):
     b = maths.sym(torch.eye(10, device=device)
                   * torch.rand(10, device=device))
 
-    w_ref = linalg.eigh(a, b)[0]
+    w_ref = linalg.eigh(a.sft(), b.sft())[0]
 
     schemes = ['chol', 'lowd']
     for scheme in schemes:
@@ -278,7 +278,7 @@ def test_eighb_general_batch(device):
                    * torch.rand(s, device=device)) for s in sizes]
     a_batch, b_batch = batch.pack(a), batch.pack(b)
 
-    w_ref = batch.pack([torch.tensor(linalg.eigh(i, j)[0]) for i, j in zip(a, b)])
+    w_ref = batch.pack([torch.tensor(linalg.eigh(i.sft(), j.sft())[0]) for i, j in zip(a, b)])
 
     aux_settings = [True, False]
     schemes = ['chol', 'lowd']

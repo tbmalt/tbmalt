@@ -5,14 +5,13 @@ This module contains a collection of batch-operable, back-propagatable
 mathematical functions.
 """
 from typing import Tuple, Union, Literal, Optional
-from numbers import Real
 import torch
 import numpy as np
 Tensor = torch.Tensor
 
 
-def gaussian(x: Union[Tensor, Real], mean: Union[Tensor, Real],
-             std: Union[Tensor, Real]) -> Tensor:
+def gaussian(x: Union[Tensor, float], mean: Union[Tensor, float],
+             std: Union[Tensor, float]) -> Tensor:
     r"""Gaussian distribution function.
 
     A one dimensional Gaussian function representing the probability density
@@ -235,11 +234,11 @@ class _SymEigB(torch.autograd.Function):
         # Save tensors that will be needed in the backward pass
         ctx.save_for_backward(w, v)
 
-        # Save the broadening factor and the selecte broadening method.
+        # Save the broadening factor and the selected broadening method.
         ctx.bf, ctx.bm = factor, method
 
-        # Store dtype to prevent dtype mixing (don't mix dtypes)
-        ctx.dtype = a.dtype
+        # Store dtype/device to prevent dtype/device mixing
+        ctx.dtype, ctx.device = a.dtype, a.device
 
         # Return the eigenvalues and eigenvectors
         return w, v
@@ -272,7 +271,10 @@ class _SymEigB(torch.autograd.Function):
         w, v = ctx.saved_tensors
 
         # Retrieve, the broadening factor and convert to a tensor entity
-        bf = torch.tensor(ctx.bf, dtype=ctx.dtype)
+        if not isinstance(ctx.bf, Tensor):
+            bf = torch.tensor(ctx.bf, dtype=ctx.dtype, device=ctx.device)
+        else:
+            bf = ctx.bf
 
         # Retrieve the broadening method
         bm = ctx.bm
@@ -556,9 +558,9 @@ def eighb(a: Tensor,
                 l_inv = torch.inverse(l)
             else:
                 # Otherwise compute via an indirect method (default)
-                l_inv = torch.solve(torch.eye(a.shape[-1],
-                                              dtype=a.dtype), l)[0]
-
+                l_inv = torch.solve(torch.eye(a.shape[-1], dtype=a.dtype,
+                                              device=b.device), l)[0]
+                #  RuntimeError: Expected b and A to be on the same device, but found b on cpu and A on cuda:0 instead.
             # Transpose of l_inv: improves speed in batch mode
             l_inv_t = torch.transpose(l_inv, -1, -2)
 

@@ -75,24 +75,27 @@ def clean_zero_padding(m, sizes):
         This is only intended for 2D matrices packed into a 3D tensor.
     """
 
+    # Identify the device
+    device = m.device
+
     # First identify the maximum tensor size
     max_size = torch.max(sizes)
 
     # Build a mask that is True anywhere that the tensor should be zero, i.e.
     # True for regions of the tensor that should be zero padded.
     mask_1d = (
-            (torch.arange(max_size) - sizes.unsqueeze(1)) >= 0
+            (torch.arange(max_size, device=device) - sizes.unsqueeze(1)) >= 0
     ).repeat(max_size, 1, 1)
 
     # This, rather round about, approach to generating and applying the masks
     # must be used as some PyTorch operations like masked_scatter do not seem
     # to function correctly
-    mask_full = torch.zeros(*m.shape).bool()
+    mask_full = torch.zeros(*m.shape, device=device).bool()
     mask_full[mask_1d.permute(1, 2, 0)] = True
     mask_full[mask_1d.transpose(0, 1)] = True
 
     # Create and apply the subtraction mask
-    temp = torch.zeros_like(m, device=m.device)
+    temp = torch.zeros_like(m, device=device)
     temp[mask_full] = m[mask_full]
     cleaned = m - temp
 
