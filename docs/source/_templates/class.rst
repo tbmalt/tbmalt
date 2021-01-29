@@ -6,7 +6,8 @@
    :members:
    :show-inheritance:
    :inherited-members:
-
+   :special-members:
+   
    {% block attributes %}
    {% if attributes %}
    .. rubric:: {{ _('Properties') }}
