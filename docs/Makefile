@@ -18,3 +18,11 @@ help:
 # "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).
 %: Makefile
 	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+
+# Remove the autosummary code during "make clean" calls
+.PHONY : clean
+clean :
+	@echo "Removing 'build'"
+	@rm -r "`pwd`/build" 2> /dev/null
+	@echo "Removing 'source/_autosummary'"
+	@rm -r "`pwd`/source/_autosummary" 2> /dev/null

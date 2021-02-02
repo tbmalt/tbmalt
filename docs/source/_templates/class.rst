@@ -24,7 +24,6 @@
    .. rubric:: {{ _('Methods') }}
 
    .. autosummary::
-   .. automethod:: __call__
    {% for item in methods %}
       ~{{ name }}.{{ item }}
    {%- endfor %}
