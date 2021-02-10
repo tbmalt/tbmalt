@@ -9,10 +9,9 @@ import torch
 Tensor = torch.Tensor
 
 
-def pack(tensors: List[Tensor],
-         axis: int = 0, value: Any = 0,
-         size: Optional[Union[Tuple[int], torch.Size]] = None
-         ) -> Tensor:
+def pack(tensors: List[Tensor], axis: int = 0, value: Any = 0,
+         size: Optional[Union[Tuple[int], torch.Size]] = None,
+         return_mask: bool = False) -> Union[Tensor, Optional[Tensor]]:
     """Pad and pack a sequence of tensors together.
 
     Pad a list of variable length tensors with zeros, or some other value, and
@@ -25,9 +24,14 @@ def pack(tensors: List[Tensor],
         value: The value with which the tensor is to be padded. [DEFAULT=0]
         size: Size of each dimension to which tensors should be padded. This
             to the largest size encountered along each dimension.
+        return_mask: If True, a mask identifying the padding values is
+            returned. [DEFAULT=False]
 
     Returns:
         packed_tensors: Input tensors padded and packed into a single tensor.
+        mask: A tensor that can mask out the padding values. A False value in
+            ``mask`` indicates the corresponding entry in ``packed_tensor`` is
+            a padding value.
 
     Notes:
         ``packed_tensors`` maintains the same order as ``tensors``. This
@@ -35,6 +39,7 @@ def pack(tensors: List[Tensor],
         functions (at this particularly task).
 
     Examples:
+        Multiple tensors can be packed into a single tensor like so:
 
         >>> from tbmalt.common.batch import pack
         >>> import torch
@@ -49,6 +54,21 @@ def pack(tensors: List[Tensor],
         >>> print(abc_packed_c.shape)
         torch.Size([4, 4, 3])
 
+        An optional mask identifying the padding values can also be returned:
+
+        >>> packed, mask = pack([torch.tensor([1.]),
+        >>>                      torch.tensor([2., 2.]),
+        >>>                      torch.tensor([3., 3., 3.])],
+        >>>                     return_mask=True)
+        >>> print(packed)
+        tensor([[1., 0., 0.],
+                [2., 2., 0.],
+                [3., 3., 3.]])
+        >>> print(mask)
+        tensor([[ True, False, False],
+                [ True,  True, False],
+                [ True,  True,  True]])
+
     """
     # Gather some general setup info
     count, device, dtype = len(tensors), tensors[0].device, tensors[0].dtype
@@ -59,11 +79,17 @@ def pack(tensors: List[Tensor],
     # Tensor to pack into, filled with padding value.
     padded = torch.full((count, *size), value, dtype=dtype, device=device)
 
+    if return_mask:   # Generate the mask if requested.
+        mask = torch.full((count, *size), False, dtype=torch.bool,
+                          device=device)
+
     # Loop over & pack "tensors" into "padded". A proxy index "n" must be used
     # for assignments rather than a slice to prevent in-place errors.
     for n, source in enumerate(tensors):
         # Slice operations not elegant but they are dimension agnostic & fast.
         padded[(n, *[slice(0, s) for s in source.shape])] = source
+        if return_mask:  # Update the mask if required.
+            mask[(n, *[slice(0, s) for s in source.shape])] = True
 
     # If "axis" was anything other than 0, then "padded" must be permuted.
     if axis != 0:
@@ -75,10 +101,12 @@ def pack(tensors: List[Tensor],
         # was concatenated (i.e. 0).
         ax = list(range(1, padded.dim()))
 
-        # Re-insert the concatenation axis as specified
-        ax.insert(axis, 0)
+        ax.insert(axis, 0)  # Re-insert the concatenation axis as specified
 
-        # Perform the permeation
-        padded = padded.permute(ax)
+        padded = padded.permute(ax)  # Perform the permeation
 
-    return padded
+        if return_mask:  # Perform permeation on the mask is present.
+            mask = mask.permute(ax)
+
+    # Return the packed tensor, and the mask if requested.
+    return (padded, mask) if return_mask else padded
