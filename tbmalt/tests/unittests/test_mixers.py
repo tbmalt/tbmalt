@@ -37,7 +37,7 @@ Warnings:
 from torch.autograd import gradcheck
 import pytest
 
-from tbmalt.common.maths.mixers import Simple
+from tbmalt.common.maths.mixers import Simple, Anderson
 from tbmalt.tests.test_utils import *
 from tbmalt.common.maths import sym, eighb
 from tbmalt.common.batch import pack
@@ -371,5 +371,35 @@ def test_simple_convergence(device):
 @pytest.mark.grad
 def test_simple_grad(device):
     mixer = Simple(is_batch=True, tolerance=1E-6)
+    mixer.mix_param = 0.1
+    gradient(mixer, device)
+
+
+#######################################
+# TBMaLT.common.maths.mixers.Anderson #
+#######################################
+def test_anderson_general(device):
+    mixer = Anderson(is_batch=True)
+    general(mixer, device)
+    # Mixer should have been reset; check the reset was carried out correctly
+    reset = all([mixer.step_number == 0,
+                 mixer._delta is None,
+                 mixer._x_hist is None,
+                 mixer._f is None,
+                 mixer._shape_in is None,
+                 mixer._shape_out is None])
+
+    assert reset, 'Reset operation was incomplete'
+
+
+def test_anderson_convergence(device):
+    mixer = Anderson(is_batch=False, tolerance=1E-6)
+    mixer.mix_param = 0.1
+    convergence(mixer, device)
+
+
+@pytest.mark.grad
+def test_anderson_grad(device):
+    mixer = Anderson(is_batch=True, tolerance=1E-6)
     mixer.mix_param = 0.1
     gradient(mixer, device)
