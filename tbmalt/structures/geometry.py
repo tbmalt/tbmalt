@@ -28,18 +28,19 @@ class Geometry:
     strictly forbidden.
 
     Arguments:
-        atomic_numbers: Atomic numbers of the atoms.
+        numbers: Atomic numbers of the atoms.
         positions : Coordinates of the atoms.
         units: Unit in which ``positions`` were specified. For a list of
             available units see mak. [DEFAULT='bohr']
 
     Attributes:
-        atomic_numbers: Atomic numbers of the atoms.
+        numbers: Atomic numbers of the atoms.
         positions : Coordinates of the atoms.
         n_atoms: Number of atoms in the system.
+        n_batch: Number of systems in the batch system.
 
     Notes:
-        When representing multiple systems, the `atomic_numbers` & `positions`
+        When representing multiple systems, the `numbers` & `positions`
         tensors will be padded with zeros. Tensors generated from ase atoms
         objects or HDF5 database entities will not share memory with their
         associated numpy arrays, nor will they inherit their dtype.
@@ -73,20 +74,21 @@ class Geometry:
 
     """
 
-    __slots__ = ['atomic_numbers', 'positions', 'n_atoms']
+    __slots__ = ['numbers', 'positions', 'n_atoms', 'n_batch']
 
-    def __init__(self, atomic_numbers: Union[Tensor, List[Tensor]],
+    def __init__(self, numbers: Union[Tensor, List[Tensor]],
                  positions: Union[Tensor, List[Tensor]],
                  units: Optional[str] = 'bohr'):
 
-        if isinstance(atomic_numbers, Tensor):
-            self.atomic_numbers = atomic_numbers
+        if isinstance(numbers, Tensor):
+            self.numbers = numbers
             self.positions: Tensor = positions
         else:
-            self.atomic_numbers = pack(atomic_numbers)
+            self.numbers = pack(numbers)
             self.positions: Tensor = pack(positions)
 
-        self.n_atoms: Tensor = self.atomic_numbers.count_nonzero(-1)
+        self.n_atoms: Tensor = self.numbers.count_nonzero(-1)
+        self.n_batch: int = 1 if self.numbers.dim == 1 else len(self.numbers)
 
         # Ensure the distances are in atomic units (bohr)
         if units != 'bohr':
@@ -96,6 +98,40 @@ class Geometry:
     def distances(self) -> Tensor:
         """Distance matrix between all atoms in the system."""
         return torch.cdist(self.positions, self.positions, p=2)
+
+    @property
+    def positions_vec(self) -> Tensor:
+        """Get positions vector between atoms.
+        Returns:
+            positions_vector: Vectors between positions of each atom for batch.
+        """
+        return pack([ipo.unsqueeze(-2) - ipo.unsqueeze(-3)
+                     for ipo in self.positions])
+
+    @property
+    def global_numbers(self) -> Tensor:
+        """Return global atomic numbers."""
+        return torch.unique(self.numbers[self.numbers.ne(0)])
+
+    @property
+    def global_number_pairs(self) -> Tensor:
+        """Return global atomic number pairs."""
+        n_global = len(self.global_numbers)
+        return torch.stack([self.global_numbers.repeat(n_global),
+                            self.global_numbers.repeat_interleave(n_global)]).T
+
+    @staticmethod
+    def to_element(number: Union[Tensor, List[Tensor]]) -> list:
+        """Return elements number from elements.
+        Arguments:
+            numbers: Atomic number of each element.
+        Returns:
+            element: Element names.
+        """
+        if isinstance(number, Tensor):
+            number = number.unsqueeze(0) if number.dim() == 1 else number
+        return [[chemical_symbols[ii] for ii in inum[inum.ne(0)]]
+                for inum in number]
 
     @classmethod
     def from_ase_atoms(cls, atoms: Union[Atoms, List[Atoms]],
@@ -173,13 +209,13 @@ class Geometry:
         if not isinstance(source, list):
             # Read & parse a datasets from the database into a System instance
             # & return the result.
-            return cls(torch.tensor(source['atomic_numbers'], device=device),
+            return cls(torch.tensor(source['numbers'], device=device),
                        torch.tensor(source['positions'], dtype=dtype,
                                     device=device),
                        units=units)
         else:
             return cls(  # Create a batched Geometry instance and return it
-                [torch.tensor(s['atomic_numbers'], device=device)
+                [torch.tensor(s['numbers'], device=device)
                  for s in source],
                 [torch.tensor(s['positions'], device=device, dtype=dtype)
                  for s in source],
@@ -198,8 +234,8 @@ class Geometry:
         # Short had for dataset creation
         add_data = target.create_dataset
 
-        # Add datasets for atomic_numbers, positions, lattice, and pbc
-        add_data('atomic_numbers', data=self.atomic_numbers.cpu().numpy())
+        # Add datasets for numbers, positions, lattice, and pbc
+        add_data('numbers', data=self.numbers.cpu().numpy())
         pos = add_data('positions', data=self.positions.cpu().numpy())
 
         # Add units meta-data to the atomic positions
@@ -218,7 +254,7 @@ class Geometry:
             This will clone & replace all tensors present in the `Geometry`
             instance; which may break any existing links.
         """
-        self.atomic_numbers = self.atomic_numbers.to(device=device)
+        self.numbers = self.numbers.to(device=device)
         self.positions = self.positions.to(device=device)
 
     def __repr__(self) -> str:
@@ -227,13 +263,13 @@ class Geometry:
         # for multiple systems. Only the first & last two systems get shown if
         # there are more than four systems (this prevents endless spam).
 
-        def get_formula(atomic_numbers: Tensor) -> str:
+        def get_formula(numbers: Tensor) -> str:
             """Helper function to get reduced formula."""
             # If n atoms > 30; then use the reduced formula
-            if len(atomic_numbers) > 30:
+            if len(numbers) > 30:
                 return ''.join([f'{chemical_symbols[z]}{n}' if n != 1 else
                                 f'{chemical_symbols[z]}' for z, n in
-                                zip(*atomic_numbers.unique(return_counts=True))
+                                zip(*numbers.unique(return_counts=True))
                                 if z != 0])  # <- Ignore zeros (padding)
 
             # Otherwise list the elements in the order they were specified
@@ -241,19 +277,19 @@ class Geometry:
                 return ''.join(
                     [f'{chemical_symbols[int(z)]}{int(n)}' if n != 1 else
                      f'{chemical_symbols[z]}' for z, n in
-                     zip(*torch.unique_consecutive(atomic_numbers,
+                     zip(*torch.unique_consecutive(numbers,
                                                    return_counts=True))
                      if z != 0])
 
-        if self.atomic_numbers.dim() == 1:  # If a single system
-            formula = get_formula(self.atomic_numbers)
+        if self.numbers.dim() == 1:  # If a single system
+            formula = get_formula(self.numbers)
         else:  # If multiple systems
-            if self.atomic_numbers.shape[0] < 4:  # If n<4 systems; show all
-                formulas = [get_formula(an) for an in self.atomic_numbers]
+            if self.numbers.shape[0] < 4:  # If n<4 systems; show all
+                formulas = [get_formula(an) for an in self.numbers]
                 formula = ' ,'.join(formulas)
             else:  # If n>4; show only the first and last two systems
                 formulas = [get_formula(an) for an in
-                            self.atomic_numbers[[0, 1, -2, -1]]]
+                            self.numbers[[0, 1, -2, -1]]]
                 formula = '{}, {}, ..., {}, {}'.format(*formulas)
 
         # Wrap the formula(s) in the class name and return
