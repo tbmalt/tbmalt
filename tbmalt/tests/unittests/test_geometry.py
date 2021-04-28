@@ -90,6 +90,25 @@ def geometry_basic_helper(device, positions, atomic_numbers):
         assert check_4, '".to" method failed to set the correct device'
 
 
+def _calculate_vector_position(positions):
+    """Calculate vector of positions between atoms."""
+    if positions.dim() == 2:
+        vector = torch.zeros(positions.shape[0], positions.shape[0], 3)
+        for iat in range(positions.shape[0]):
+            for jat in range(positions.shape[0]):
+                vector[iat, jat] = positions[iat] - positions[jat]
+
+    else:
+        vector = torch.zeros(positions.shape[0], positions.shape[1],
+                             positions.shape[1], 3)
+        for ib in range(positions.shape[0]):
+            for iat in range(positions.shape[1]):
+                for jat in range(positions.shape[1]):
+                    vector[ib, iat, jat] = positions[ib, iat] - positions[ib, jat]
+    return vector
+
+
+
 def test_geometry_single(device):
     """Test the basic single system functionality of the Geometry class"""
     geometry_basic_helper(device, positions_data(device),
@@ -124,6 +143,21 @@ def test_geometry_single_from_ase_atoms(device):
 
     assert check_2, 'from_ase_atoms did not place tensors on the correct device'
 
+    check_3_1 = (geom_1.global_numbers == torch.tensor([1, 6])).all()
+    check_3_2 = (geom_1.global_number_pairs == torch.tensor(
+        [[1, 1], [6, 1], [1, 6], [6, 6]])).all()
+
+    assert check_3_1, 'global atomic numbers'
+    assert check_3_2, 'global atomic number pairs'
+
+    # test to element with Tensor and list input
+    check_4_1 = geom_1.to_element(atomic_numbers_data(device)) == \
+                 ['C', 'H', 'H', 'H', 'H']
+    check_4_2 = geom_1.to_element(geom_1.atomic_numbers) == ['C', 'H', 'H', 'H', 'H']
+
+    assert check_4_1, 'specie name is correct'
+    assert check_4_2, 'specie name is correct'
+
 
 def test_geometry_batch_from_ase_atoms(device):
     """Check batch instances can be instantiated from ase.Atoms objects."""
@@ -145,6 +179,22 @@ def test_geometry_batch_from_ase_atoms(device):
                and geom_1.atomic_numbers.device == device)
 
     assert check_2, 'from_ase_atoms did not place tensors on the correct device'
+
+    check_3_1 = (geom_1.global_numbers == torch.tensor([1, 6, 8])).all()
+    check_3_2 = (geom_1.global_number_pairs == torch.tensor(
+        [[1, 1], [6, 1], [8, 1], [1, 6], [6, 6], [8, 6], [1, 8], [6, 8], [8, 8]])).all()
+
+    assert check_3_1, 'global atomic numbers'
+    assert check_3_2, 'global atomic number pairs'
+
+    # test to element with Tensor and list input
+    check_4_1 = geom_1.to_element(atomic_numbers_data(device, batch=True)) == \
+                 [['C', 'H', 'H', 'H', 'H'], ['H', 'H', 'O'], ['H', 'H']]
+    check_4_2 = geom_1.to_element(geom_1.atomic_numbers) == \
+        [['C', 'H', 'H', 'H', 'H'], ['O','H', 'H']]
+
+    assert check_4_1, 'specie name is correct'
+    assert check_4_2, 'specie name is correct'
 
 
 ####################
@@ -202,6 +252,36 @@ def geometry_hdf5_helper(path, atomic_numbers, positions):
     os.remove(path)
 
 
+def test_dist_posvec_single(device):
+    """Test single distance and position vector."""
+    atomic_numbers = atomic_numbers_data(device)
+    positions = positions_data(device)
+    geo = Geometry(atomic_numbers, positions)
+    distances = torch.sqrt(((geo.positions.unsqueeze(-3) -
+                             geo.positions.unsqueeze(-2)) ** 2).sum(-1))
+    assert torch.max(abs(geo.distances - distances)) < 1E-14
+
+    # calculate position vector
+    vec = _calculate_vector_position(geo.positions)
+    assert torch.max(abs(geo.positions_vec - vec)) < 1E-14
+
+
+def test_dist_posvec_batch(device):
+    """Test batch distance and its mask, position vectors."""
+    atomic_numbers = atomic_numbers_data(device, batch=True)
+    positions = positions_data(device, batch=True)
+    geo = Geometry(atomic_numbers, positions)
+    distances = pack([torch.sqrt(((ipos[:inat].repeat(inat, 1) -
+                       ipos[:inat].repeat_interleave(inat, 0))
+                      ** 2).sum(1)).reshape(inat, inat)
+          for ipos, inat in zip(geo.positions, geo.n_atoms)])
+    assert torch.max(abs(geo.distances - distances)) < 1E-14
+
+    # calculate position vector
+    vec = _calculate_vector_position(geo.positions)
+    assert torch.max(abs(geo.positions_vec - vec)) < 1E-14
+
+
 def test_geometry_single_hdf5(device):
     """Ensure a Geometry instance can be witten to & read from an HDF5 database."""
     # Generate input data and run the tests
@@ -230,6 +310,7 @@ def geometry_distance_helper(geom):
         dmat_ref = distance_matrix(geom.positions.sft(), geom.positions.sft())
     else:
         dmat_ref = np.stack([distance_matrix(i, i) for i in geom.positions.sft()])
+        dmat_ref[~geom.mask_dist] = 0.0
 
     # Ensure distances are within tolerance thresholds.
     check_1 = np.allclose(dmat.sft(), dmat_ref)

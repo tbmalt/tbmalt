@@ -47,5 +47,5 @@ chemical_symbols: List[str] = [
 ]
 
 # Dictionary for looking up an element's atomic number.
-atomic_numbers: Dict[str, int] = {sym: z for sym, z in
+atomic_numbers: Dict[str, int] = {sym: z for z, sym in
                                   enumerate(chemical_symbols)}

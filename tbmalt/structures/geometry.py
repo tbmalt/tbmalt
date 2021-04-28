@@ -32,6 +32,7 @@ class Geometry:
     Attributes:
         atomic_numbers: Atomic numbers of the atoms.
         positions : Coordinates of the atoms.
+        mask_dist: Mask of distances to represent nonzero part.
         n_atoms: Number of atoms in the system.
         n_batch: Number of batch size.
 
@@ -70,7 +71,7 @@ class Geometry:
 
     """
 
-    __slots__ = ['atomic_numbers', 'positions', 'n_atoms', 'n_batch']
+    __slots__ = ['atomic_numbers', 'positions', 'mask_dist', 'n_atoms', 'n_batch']
 
     def __init__(self, atomic_numbers: Union[Tensor, List[Tensor]],
                  positions: Union[Tensor, List[Tensor]],
@@ -78,9 +79,11 @@ class Geometry:
 
         if isinstance(atomic_numbers, Tensor):
             self.atomic_numbers = atomic_numbers
+            self.mask_dist = None
             self.positions: Tensor = positions
         else:
-            self.atomic_numbers = pack(atomic_numbers)
+            self.atomic_numbers, _mask = pack(atomic_numbers, return_mask=True)
+            self.mask_dist: Tensor = _mask.unsqueeze(-2) * _mask.unsqueeze(-1)
             self.positions: Tensor = pack(positions)
 
         self.n_atoms: Tensor = self.atomic_numbers.count_nonzero(-1)
@@ -93,16 +96,22 @@ class Geometry:
     @property
     def distances(self) -> Tensor:
         """Distance matrix between all atoms in the system."""
-        return torch.cdist(self.positions, self.positions, p=2)
+        _dist = torch.cdist(self.positions, self.positions, p=2)
+
+        # to make sure padding area is zero
+        if self.mask_dist is not None:
+            _dist[~self.mask_dist] = 0.0
+
+        return _dist
 
     @property
     def positions_vec(self) -> Tensor:
-        """Get positions vector between atoms.
-        Returns:
-            positions_vector: Vectors between positions of each atom for batch.
-        """
-        return pack([ipo.unsqueeze(-2) - ipo.unsqueeze(-3)
-                     for ipo in self.positions])
+        """Get positions vector between atoms."""
+        if self.atomic_numbers.dim() == 1:
+            return self.positions.unsqueeze(-2) - self.positions.unsqueeze(-3)
+        else:
+            return pack([ipo.unsqueeze(-2) - ipo.unsqueeze(-3)
+                         for ipo in self.positions])
 
     @property
     def global_numbers(self) -> Tensor:
@@ -119,16 +128,22 @@ class Geometry:
     @staticmethod
     def to_element(atomic_numbers: Union[Tensor, List[Tensor]]) -> list:
         """Return elements number from elements.
+
         Arguments:
-            numbers: Atomic number of each element.
+            atomic_numbers: Atomic number of each element.
+
         Returns:
             element: Element names.
+
         """
-        if isinstance(atomic_numbers, Tensor):
-            number = atomic_numbers.unsqueeze(0) if \
-                atomic_numbers.dim() == 1 else atomic_numbers
-        return [[chemical_symbols[ii] for ii in inum[inum.ne(0)]]
-                for inum in number]
+        if isinstance(atomic_numbers, list):
+            atomic_numbers = pack(atomic_numbers)
+
+        if atomic_numbers.dim() == 1:
+            return [chemical_symbols[ii] for ii in atomic_numbers[atomic_numbers.ne(0)]]
+        else:
+            return [[chemical_symbols[ii] for ii in inum[inum.ne(0)]]
+                for inum in atomic_numbers]
 
     @classmethod
     def from_ase_atoms(cls, atoms: Union[Atoms, List[Atoms]],
