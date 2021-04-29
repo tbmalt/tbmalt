@@ -14,9 +14,10 @@ be abandoned in favor of the other. Thus, all mixing instances require the
 user to explicitly state whether they are operating on a single system or on a
 batch of systems.
 """
-from abc import ABC, abstractmethod
+from typing import Union, Optional, Any
 from numbers import Real
-from typing import Union, Optional
+from abc import ABC, abstractmethod
+from functools import wraps
 import warnings
 import torch
 from torch import Tensor
@@ -35,8 +36,14 @@ class _Mixer(ABC):
         tolerance: Max permitted difference in between successive iterations
             for a system to be considered "converged". [DEFAULT=1E-6]
 
+    Note:
+        The ``mix_param`` type has been declared as `Any` to support future
+        mixers whose `mixing_param` may not necessarily be a real scalar
+        value.
+
     """
-    def __init__(self, is_batch: bool, mix_param: Real = 0.05, tolerance: Real = 1E-6):
+    def __init__(self, is_batch: bool, mix_param: Real = 0.05,
+                 tolerance: Any = 1E-6):
 
         self.mix_param = mix_param
 
@@ -50,46 +57,60 @@ class _Mixer(ABC):
         # Difference between the current & previous systems
         self._delta: Optional[Tensor] = None
 
-    def _setup_hook(self, dtype: torch.dtype):
+    def __init_subclass__(cls):
+        def _tolerance_threshold_check(func):
+            """Wrapper to check the validity of the current tolerance value.
+
+            This wraps `__call__` to ensure that a tolerance threshold check
+            gets carried out on the first call, i.e. when `_step_number` is
+            zero. If the specified tolerance cannot be achieved then a warning
+            will be issued and the tolerance will be downgraded to just below
+            the precision limit.
+            """
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                self = args[0]
+                if self._step_number == 0:
+                    dtype = args[1].dtype
+                    if torch.finfo(dtype).resolution > self.tolerance:
+                        warnings.warn(
+                            f'{cls.__name__}: Tolerance value '
+                            f"{self.tolerance} can't be achieved by a {dtype}"
+                            '. DOWNGRADING!', UserWarning, stacklevel=2)
+                        self.tolerance = torch.finfo(dtype).resolution * 5.0
+                return func(*args, **kwargs)
+            return wrapper
+
+        cls.__call__ = _tolerance_threshold_check(cls.__call__)
+
+    @abstractmethod
+    def _setup_hook(self):
         """Conducts any required initialisation operations.
 
         Any setup code that needs only to be once, during the first call to
         "`__call__`" is placed here. This abstraction helps to clean up the
         `__call__` function by removing any code that is not needed for the
-        mixing operation. By default this code will ensure that the requested
-        tolerance limit is within the precision of the dtype being used. If
-        the tolerance is too tight, a warning is issued and the tolerance is
-        downgraded.
-
-        Arguments:
-            dtype: The dtype being used.
+        mixing operation.
 
         Notes:
             It is expected that new mixer classes will locally override this
-            function. *HOWEVER*, all new mixers will need to execute the code
-            present in this function. To prevent needless code repetition all
-            local ``_setup_hook`` functions should make a call to the parent
-            version via `super()._setup_hook(dtype)'.
-
+            function.
         """
-        # Check the specified tolerance can be achieved
-        if torch.finfo(dtype).resolution > self.tolerance:
-            warnings.warn(  # If not issue a warning
-                f'{self.__class__.__name__}: Tolerance value {self.tolerance}'
-                f' cannot be achieved by a {dtype}. DOWNGRADING!',
-                UserWarning, stacklevel=2)
-            # And downgrade to a tolerance just below the precision limit
-            self.tolerance = torch.finfo(dtype).resolution * 5.0
+        pass
 
     @abstractmethod
     def __call__(self, x_new: Tensor, x_old: Optional[Tensor] = None
                  ) -> Tensor:
         """Performs the mixing operation & returns the newly mixed system.
 
-        Notes:
-            This should contain only the code required to carry out the mixing
-            operation.
+        This should contain only the code required to carry out the mixing
+        operation.
 
+        Notes:
+            In all implementations the `x_new` argument **MUST** be the first
+            non-self argument, x_old should be an optional keyword argument.
+            The first call to this function, i.e. when `self._step_number` is
+            zero, should make a call to `_setup_hook`, if applicable.
         """
         pass
 
@@ -208,12 +229,22 @@ class Simple(_Mixer):
         tensor([1., 3.])
     """
 
-    def __init__(self, is_batch: bool, mix_param: Real = 0.05, tolerance: Real = 1E-6):
+    def __init__(self, is_batch: bool, mix_param: Real = 0.05,
+                 tolerance: Real = 1E-6):
         # Pass required inputs to parent class.
         super().__init__(is_batch, mix_param, tolerance)
 
         # Holds the system from the previous iteration.
-        self._x_old: Union[Tensor, None] = None
+        self._x_old: Optional[Tensor] = None
+
+    def _setup_hook(self):
+        """NullOp to satisfy abstractmethod requirement so parent class.
+
+        The simple mixer is unique in that it does not require any setup. Thus
+        an empty function has been created to satisfy the requirements of the
+        parent class.
+        """
+        pass
 
     def __call__(self, x_new: Tensor, x_old: Optional[Tensor] = None
                  ) -> Tensor:
@@ -240,16 +271,11 @@ class Simple(_Mixer):
             from all but the first step if desired.
 
         """
-        # If this is the first mixing step, make a call to the setup function
-        if self._step_number == 0:
-            self._setup_hook(x_new.dtype)
-
         # Increment the step number variable
         self._step_number += 1
 
         # Use the previous x_old value if none was specified
         x_old = self._x_old if x_old is None else x_old
-        x_new = x_new
 
         # Check all tensor dimensions match
         assert x_old.shape == x_new.shape,\
@@ -293,4 +319,5 @@ class Simple(_Mixer):
         # Invert cull_list, gather & reassign x_old and _delta so only those
         # marked False remain.
         cull = ~cull_list
-        self._x_old, self._delta = self._x_old[cull], self._delta[cull]
+        self._x_old = self._x_old[cull]
+        self._delta = self._delta[cull]
