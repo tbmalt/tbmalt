@@ -14,7 +14,7 @@ be abandoned in favor of the other. Thus, all mixing instances require the
 user to explicitly state whether they are operating on a single system or on a
 batch of systems.
 """
-from typing import Union, Optional, Any
+from typing import Union, Optional
 from numbers import Real
 from abc import ABC, abstractmethod
 from functools import wraps
@@ -31,22 +31,11 @@ class _Mixer(ABC):
 
     Arguments:
         is_batch: Set to true when mixing a batch of systems, False when not.
-        mix_param: Mixing parameter, ∈(0, 1), controls the extent of mixing.
-            Larger values result in more aggressive mixing. [DEFAULT=0.05]
         tolerance: Max permitted difference in between successive iterations
             for a system to be considered "converged". [DEFAULT=1E-6]
 
-    Note:
-        The ``mix_param`` type has been declared as `Any` to support future
-        mixers whose `mixing_param` may not necessarily be a real scalar
-        value.
-
     """
-    def __init__(self, is_batch: bool, mix_param: Real = 0.05,
-                 tolerance: Any = 1E-6):
-
-        self.mix_param = mix_param
-
+    def __init__(self, is_batch: bool, tolerance: Real = 1E-6):
         self.tolerance = tolerance
 
         self._is_batch = is_batch
@@ -232,7 +221,9 @@ class Simple(_Mixer):
     def __init__(self, is_batch: bool, mix_param: Real = 0.05,
                  tolerance: Real = 1E-6):
         # Pass required inputs to parent class.
-        super().__init__(is_batch, mix_param, tolerance)
+        super().__init__(is_batch, tolerance)
+
+        self.mix_param = mix_param
 
         # Holds the system from the previous iteration.
         self._x_old: Optional[Tensor] = None
