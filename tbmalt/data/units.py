@@ -7,12 +7,12 @@ convert it into its atomic-unit equivalent. Conversion factors have been
 grouped together by physical quantity, i.e. energy, length, dipole, etc.
 
 Attributes:
-    energy_units (dict): Factors to convert between different units of energy.
-    length_units (dict): Factors to convert between different units of length.
-    dipole_units (dict): Factors to convert between different units of dipole.
+    energy_units (Dict[str, int]): Energy unit conversion factors.
+    length_units (Dict[str, int]): Length unit conversion factors.
+    dipole_units (Dict[str, int]): Dipole unit conversion factors.
 
 Notes:
-    Available conversion factors are for each quantity are provided below with
+    Available conversion factors for each quantity are provided below with
     their associated keys, all of which are in lower-case.
 
     Energy:
@@ -35,7 +35,7 @@ Notes:
         - debye: 'debye' or 'd'
         - e-bohr / atomic-unit: 'ebohr', 'eb' or 'au'
 
-    Conversion factors & physical constants are taken directly from DFTB-plus.
+    Conversion factors & physical constants are taken directly from DFTB+.
 
 Examples:
     To convert from angstrom to atomic units (bohr):
@@ -52,7 +52,7 @@ Examples:
 from typing import Dict
 
 
-# Physical constants taken directly from DFTB-plus's constants.F90 file. These
+# Physical constants taken directly from DFTB+'s constants.F90 file. These
 # are used to build all necessary conversion factors.
 # Bohr --> Angstrom
 _Bohr__AA = 0.529177249
