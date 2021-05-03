@@ -6,7 +6,9 @@ code. The `Geometry` class is intended to hold any & all data needed to fully
 describe a chemical system's structure.
 """
 from typing import Union, List, Optional
+from operator import itemgetter
 import torch
+import numpy as np
 from h5py import Group
 from ase import Atoms
 from tbmalt.common.batch import pack
@@ -32,9 +34,8 @@ class Geometry:
     Attributes:
         atomic_numbers: Atomic numbers of the atoms.
         positions : Coordinates of the atoms.
-        mask_dist: Mask of distances to represent nonzero part.
         n_atoms: Number of atoms in the system.
-        n_batch: Number of batch size.
+
 
     Notes:
         When representing multiple systems, the `atomic_numbers` & `positions`
@@ -71,7 +72,8 @@ class Geometry:
 
     """
 
-    __slots__ = ['atomic_numbers', 'positions', 'mask_dist', 'n_atoms', 'n_batch']
+    __slots__ = ['atomic_numbers', 'positions', 'n_atoms',
+                 '_n_batch', '_mask_dist']
 
     def __init__(self, atomic_numbers: Union[Tensor, List[Tensor]],
                  positions: Union[Tensor, List[Tensor]],
@@ -79,15 +81,21 @@ class Geometry:
 
         if isinstance(atomic_numbers, Tensor):
             self.atomic_numbers = atomic_numbers
-            self.mask_dist = None
+            # Mask for clearing padding values in the distance matrix.
+            self._mask_dist: Union[Tensor, bool] = False
             self.positions: Tensor = positions
         else:
-            self.atomic_numbers, _mask = pack(atomic_numbers, return_mask=True)
-            self.mask_dist: Tensor = _mask.unsqueeze(-2) * _mask.unsqueeze(-1)
+            self.atomic_numbers, _mask = pack(atomic_numbers,
+                                              return_mask=True)
+            self._mask_dist: Union[Tensor, bool] = ~(
+                _mask.unsqueeze(-2) * _mask.unsqueeze(-1))
             self.positions: Tensor = pack(positions)
 
         self.n_atoms: Tensor = self.atomic_numbers.count_nonzero(-1)
-        self.n_batch: int = 1 if self.atomic_numbers.dim() == 1 else len(self.atomic_numbers)
+
+        # Number of batches if in batch mode (for internal use only)
+        self._n_batch: Optional[int] = (None if self.atomic_numbers.dim() == 1
+                                        else len(atomic_numbers))
 
         # Ensure the distances are in atomic units (bohr)
         if units != 'bohr':
@@ -95,55 +103,35 @@ class Geometry:
 
     @property
     def distances(self) -> Tensor:
-        """Distance matrix between all atoms in the system."""
-        _dist = torch.cdist(self.positions, self.positions, p=2)
-
-        # to make sure padding area is zero
-        if self.mask_dist is not None:
-            _dist[~self.mask_dist] = 0.0
-
-        return _dist
+        """Distance matrix between atoms in the system."""
+        dist = torch.cdist(self.positions, self.positions, p=2)
+        # Ensure padding area is zeroed out
+        dist[self._mask_dist] = 0
+        return dist
 
     @property
-    def positions_vec(self) -> Tensor:
-        """Get positions vector between atoms."""
-        if self.atomic_numbers.dim() == 1:
-            return self.positions.unsqueeze(-2) - self.positions.unsqueeze(-3)
-        else:
-            return pack([ipo.unsqueeze(-2) - ipo.unsqueeze(-3)
-                         for ipo in self.positions])
+    def distance_vectors(self) -> Tensor:
+        """Distance vector matrix between atoms in the system."""
+        dist_vec = self.positions.unsqueeze(-2) - self.positions.unsqueeze(-3)
+        dist_vec[self._mask_dist] = 0
+        return dist_vec
 
     @property
-    def global_numbers(self) -> Tensor:
-        """Return global atomic numbers."""
-        return torch.unique(self.atomic_numbers[self.atomic_numbers.ne(0)])
+    def chemical_symbols(self) -> list:
+        """Chemical symbols of the atoms present."""
+        return batch_chemical_symbols(self.atomic_numbers)
 
-    @property
-    def global_number_pairs(self) -> Tensor:
-        """Return global atomic number pairs."""
-        n_global = len(self.global_numbers)
-        return torch.stack([self.global_numbers.repeat(n_global),
-                            self.global_numbers.repeat_interleave(n_global)]).T
+    def unique_atomic_numbers(self) -> Tensor:
+        """Identifies and returns a tensor of unique atomic numbers.
 
-    @staticmethod
-    def to_element(atomic_numbers: Union[Tensor, List[Tensor]]) -> list:
-        """Return elements number from elements.
-
-        Arguments:
-            atomic_numbers: Atomic number of each element.
+        This method offers a means to identify the types of elements present
+        in the system(s) represented by a `Geometry` object.
 
         Returns:
-            element: Element names.
-
+            unique_atomic_numbers: A tensor specifying the unique atomic
+                numbers present.
         """
-        if isinstance(atomic_numbers, list):
-            atomic_numbers = pack(atomic_numbers)
-
-        if atomic_numbers.dim() == 1:
-            return [chemical_symbols[ii] for ii in atomic_numbers[atomic_numbers.ne(0)]]
-        else:
-            return [[chemical_symbols[ii] for ii in inum[inum.ne(0)]]
-                for inum in atomic_numbers]
+        return torch.unique(self.atomic_numbers[self.atomic_numbers.ne(0)])
 
     @classmethod
     def from_ase_atoms(cls, atoms: Union[Atoms, List[Atoms]],
@@ -311,3 +299,60 @@ class Geometry:
         """Creates a printable representation of the System."""
         # Just redirect to the `__repr__` method
         return repr(self)
+
+
+####################
+# Helper Functions #
+####################
+def batch_chemical_symbols(atomic_numbers: Union[Tensor, List[Tensor]]
+                           ) -> list:
+    """Converts atomic numbers to their chemical symbols.
+
+    This function allows for en-mass conversion of atomic numbers to chemical
+    symbols.
+
+    Arguments:
+        atomic_numbers: Atomic numbers of the elements.
+
+    Returns:
+        symbols: The corresponding chemical symbols.
+
+    Notes:
+        Padding vales, i.e. zeros, will be ignored.
+
+    """
+    a_nums = atomic_numbers
+
+    # Catch for list tensors (still faster doing it this way)
+    if isinstance(a_nums, list) and isinstance(a_nums[0], Tensor):
+        a_nums = pack(a_nums, value=0)
+
+    # Convert from atomic numbers to chemical symbols via a itemgetter
+    symbols = np.array(  # numpy must be used as torch cant handle strings
+        itemgetter(*a_nums.flatten())(chemical_symbols)
+    ).reshape(a_nums.shape)
+    # Mask out element "X", aka padding values
+    mask = symbols != 'X'
+    if symbols.ndim == 1:
+        return symbols[mask].tolist()
+    else:
+        return [s[m].tolist() for s, m in zip(symbols, mask)]
+
+
+def unique_atom_pairs(geometry: Geometry) -> Tensor:
+    """Returns a tensor specifying all unique atom pairs.
+
+    This takes `Geometry` instance and identifies all atom pairs. This use
+    useful for identifying all possible two body interactions possible within
+    a given system.
+
+    Arguments:
+         geometry: `Geometry` instance representing the target system.
+
+    Returns:
+        unique_atom_pairs: A tensor specifying all unique atom pairs.
+    """
+    uan = geometry.unique_atomic_numbers()
+    n_global = len(uan)
+    return torch.stack([uan.repeat(n_global),
+                        uan.repeat_interleave(n_global)]).T
