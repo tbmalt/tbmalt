@@ -7,7 +7,7 @@ from tbmalt.tests.test_utils import *
 from tbmalt.common.maths.interpolator import PolyInterpU
 torch.set_default_dtype(torch.float64)
 
-data = np.loadtxt('data/HH.dat')
+data = np.loadtxt('data/polyinterp/HH.dat')
 
 
 ###################################

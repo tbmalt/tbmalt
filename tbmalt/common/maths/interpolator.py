@@ -26,13 +26,15 @@ class PolyInterpU:
     def _check(self, xx: Tensor, yy: Tensor, **kwargs):
         """Check input parameters."""
         self.ninterp: int = kwargs.get('n_interpolation', 8)
+        self.device = xx.device  # get input device
 
         self.incr = xx[1] - xx[0]
         self.ngridpoint = len(xx)  # -> number of grid points
 
         # Check if xx is uniform
         _incr = xx[1:] - xx[:-1]
-        assert torch.allclose(_incr, torch.ones(*_incr.shape) * self.incr)
+        assert torch.allclose(_incr, torch.ones(
+            *_incr.shape, device=self.device) * self.incr)
 
         # Input size of SKF must larger than ninterp
         if self.ngridpoint < self.ninterp:
@@ -55,8 +57,8 @@ class PolyInterpU:
 
         """
         rmax = (self.ngridpoint - 1) * self.incr + tail
-        ind = torch.floor(rr / self.incr).int()
-        result = torch.zeros(*rr.shape)
+        ind = torch.floor(rr / self.incr).int().to(self.device)
+        result = torch.zeros(*rr.shape, device=self.device)
 
         # => polynomial fit
         if (ind <= self.ngridpoint).any():
@@ -68,10 +70,10 @@ class PolyInterpU:
             ind_last[ind_last < ninterp + 1] = ninterp + 1
 
             # gather xx and yy for both single and batch
-            xa = (ind_last.unsqueeze(1) - ninterp + torch.arange(ninterp)
-                  ) * self.incr  # get the interpolation gird points
+            xa = (ind_last.unsqueeze(1) - ninterp +
+                  torch.arange(ninterp, device=self.device)) * self.incr
             yb = torch.stack([self.yy[ii - ninterp - 1: ii - 1]
-                              for ii in ind_last])
+                              for ii in ind_last]).to(self.device)
             result[_mask] = poly_interp(xa, yb, rr[_mask])
 
         # Beyond the grid => extrapolation with polynomial of 5th order
@@ -82,7 +84,8 @@ class PolyInterpU:
             ilast = self.ngridpoint
 
             # get grid points and grid point values
-            xa = (ilast - ninterp + torch.arange(ninterp)) * self.incr
+            xa = (ilast - ninterp + torch.arange(
+                ninterp, device=self.device)) * self.incr
             yb = self.yy[ilast - ninterp - 1: ilast - 1]
             xa = xa.repeat(dr.shape[0]).reshape(dr.shape[0], -1)
             yb = yb.unsqueeze(0).repeat_interleave(dr.shape[0], dim=0)
@@ -150,14 +153,15 @@ def poly_interp(xp: Tensor, yp: Tensor, rr: Tensor) -> Tensor:
 
     """
     assert xp.dim() == 2
+    device = xp.device
     nn0, nn1 = xp.shape[0], xp.shape[1]
-    index_nn0 = torch.arange(nn0)
-    icl = torch.zeros(nn0).long()
+    index_nn0 = torch.arange(nn0, device=device)
+    icl = torch.zeros(nn0, device=device).long()
     cc, dd = yp.clone(), yp.clone()
     dxp = abs(rr - xp[index_nn0, icl])
 
     # find the most close point to rr (single atom pair or multi pairs)
-    _mask, ii = torch.zeros(len(rr)) == 0.0, 0.0
+    _mask, ii = torch.zeros(len(rr), device=device) == 0.0, 0.0
     _dx_new = abs(rr - xp[index_nn0, 0])
     while (_dx_new < dxp).any():
         ii += 1
