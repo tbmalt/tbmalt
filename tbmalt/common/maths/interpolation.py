@@ -1,4 +1,6 @@
+# -*- coding: utf-8 -*-
 """Interpolation for general purpose."""
+from numbers import Real
 import torch
 Tensor = torch.Tensor
 
@@ -6,104 +8,118 @@ Tensor = torch.Tensor
 class PolyInterpU:
     """Polynomial interpolation method with uniform grid points.
 
+    The boundary condition will use poly_to_zero function.
+
     Arguments:
-        xx: Grid points of distances, 1D Tensor.
-        yy: Slater-Koste Integral tables.
+        xx: Grid points for interpolation, 1D Tensor.
+        yy: Interpolation value at each grid point.
+
+    Keyword Args:
+        n_interp: Number of total interpolation grid points.
+        delta_r: Delta distance for 1st, 2nd derivative.
+        tail: Distance to smooth the tail.
+
+    Attributes:
+        xx: Grid points for interpolation, 1D Tensor.
+        yy: Interpolation values at each grid points.
+        grid_step: Distance between each gird points.
+        n_interp: Number of total interpolation grid points.
+        delta_r: Delta distance for 1st, 2nd derivative.
+        tail: Distance to smooth the tail.
+        device: Device type of the tensor in class `PolyInterpU`.
 
     Notes:
-        The `PolyInterpU` class is originally from DFTB+ polynomial
-        interpolation and assumes a uniform grid. The xx is grid points and
-        yy is values of the polynomial. If used in Slater-Koster integrals
-        interpolation, yy should be integrals corresponding to each grid
-        points. For the grid points at the tail of grid points, a s
-        mmoth-to-zero method is applied.
+        The `PolyInterpU` class, which is taken from the DFTB+, assumes a
+        uniform grid. Here, the yy and xx arguments are the values to be
+        interpolated and their associated grid points respectively. The tail
+        end of the spline is smoothed to zero, meaning that extrapolated
+        points will rapidly, but smoothly, decay to zero.
 
     """
 
     def __init__(self, xx: Tensor, yy: Tensor, **kwargs):
-        self.xx, self.yy = self._check(xx, yy, **kwargs)
+        self.xx, self.yy, self.grid_step, self.n_interp, self.delta_r, \
+            self.tail, self.device = self._check(xx, yy, **kwargs)
 
     def _check(self, xx: Tensor, yy: Tensor, **kwargs):
         """Check input parameters."""
-        self.ninterp: int = kwargs.get('n_interpolation', 8)
-        self.device = xx.device  # get input device
-
-        self.incr = xx[1] - xx[0]
-        self.ngridpoint = len(xx)  # -> number of grid points
+        n_interp: int = kwargs.get('n_interpolation', 8)
+        delta_r: Real = kwargs.get('n_interpolation', 1E-5)
+        tail: Real = 1.0
+        device = xx.device  # get input device
 
         # Check if xx is uniform
-        _incr = xx[1:] - xx[:-1]
-        assert torch.allclose(_incr, torch.ones(
-            *_incr.shape, device=self.device) * self.incr)
+        all_grid_step = xx[1:] - xx[:-1]
+        grid_step = xx[1] = xx[0]
+        assert torch.allclose(all_grid_step, torch.full_like(
+            all_grid_step, grid_step)), 'grid uniform check'
 
-        # Input size of SKF must larger than ninterp
-        if self.ngridpoint < self.ninterp:
+        # Input size of SKF must larger than n_interp
+        if len(xx) < n_interp:
             raise ValueError("Not enough grid points for interpolation!")
 
-        return xx, yy
+        return xx, yy, grid_step, n_interp, delta_r, tail, device
 
 
-    def __call__(self, rr: Tensor, ninterp=8, delta_r=1E-5, tail=1) -> Tensor:
+    def __call__(self, rr: Tensor) -> Tensor:
         """Interpolation SKF according to distance from integral tables.
 
         Arguments:
             rr: interpolation points for batch.
-            ninterp: Number of total interpolation grid points.
-            delta_r: Delta distance for 1st, 2nd derivative.
-            tail: Distance to smooth the tail, unit is bohr.
 
         Returns:
             result: Interpolation values with given rr.
 
         """
-        rmax = (self.ngridpoint - 1) * self.incr + tail
-        ind = torch.floor(rr / self.incr).int().to(self.device)
+        n_grid_point = len(self.xx)  # -> number of grid points
+        rmax = (n_grid_point - 1) * self.grid_step + self.tail
+        ind = torch.floor(rr / self.grid_step).int().to(self.device)
         result = torch.zeros(*rr.shape, device=self.device)
 
         # => polynomial fit
-        if (ind <= self.ngridpoint).any():
-            _mask = ind <= self.ngridpoint
+        if (ind <= n_grid_point).any():
+            _mask = ind <= n_grid_point
 
             # get the index of rr in grid points
-            ind_last = (ind[_mask] + ninterp / 2 + 1).int()
-            ind_last[ind_last > self.ngridpoint] = self.ngridpoint
-            ind_last[ind_last < ninterp + 1] = ninterp + 1
+            ind_last = (ind[_mask] + self.n_interp / 2 + 1).int()
+            ind_last[ind_last > n_grid_point] = n_grid_point
+            ind_last[ind_last < self.n_interp + 1] = self.n_interp + 1
 
             # gather xx and yy for both single and batch
-            xa = (ind_last.unsqueeze(1) - ninterp +
-                  torch.arange(ninterp, device=self.device)) * self.incr
-            yb = torch.stack([self.yy[ii - ninterp - 1: ii - 1]
+            xa = (ind_last.unsqueeze(1) - self.n_interp +
+                  torch.arange(self.n_interp, device=self.device)) * self.grid_step
+            yb = torch.stack([self.yy[ii - self.n_interp - 1: ii - 1]
                               for ii in ind_last]).to(self.device)
             result[_mask] = poly_interp(xa, yb, rr[_mask])
 
         # Beyond the grid => extrapolation with polynomial of 5th order
-        max_ind = self.ngridpoint - 1 + int(tail / self.incr)
-        is_tail = ind.masked_fill(ind.ge(self.ngridpoint) * ind.le(max_ind), -1).eq(-1)
+        max_ind = n_grid_point - 1 + int(self.tail / self.grid_step)
+        is_tail = ind.masked_fill(ind.ge(n_grid_point) * ind.le(max_ind), -1).eq(-1)
         if is_tail.any():
             dr = rr[is_tail] - rmax
-            ilast = self.ngridpoint
+            ilast = n_grid_point
 
             # get grid points and grid point values
-            xa = (ilast - ninterp + torch.arange(
-                ninterp, device=self.device)) * self.incr
-            yb = self.yy[ilast - ninterp - 1: ilast - 1]
+            xa = (ilast - self.n_interp + torch.arange(
+                self.n_interp, device=self.device)) * self.grid_step
+            yb = self.yy[ilast - self.n_interp - 1: ilast - 1]
             xa = xa.repeat(dr.shape[0]).reshape(dr.shape[0], -1)
             yb = yb.unsqueeze(0).repeat_interleave(dr.shape[0], dim=0)
 
             # get derivative
-            y0 = poly_interp(xa, yb, xa[:, ninterp - 1] - delta_r)
-            y2 = poly_interp(xa, yb, xa[:, ninterp - 1] + delta_r)
+            y0 = poly_interp(xa, yb, xa[:, self.n_interp - 1] - self.delta_r)
+            y2 = poly_interp(xa, yb, xa[:, self.n_interp - 1] + self.delta_r)
             y1 = self.yy[ilast - 2]
-            y1p = (y2 - y0) / (2.0 * delta_r)
-            y1pp = (y2 + y0 - 2.0 * y1) / (delta_r * delta_r)
+            y1p = (y2 - y0) / (2.0 * self.delta_r)
+            y1pp = (y2 + y0 - 2.0 * y1) / (self.delta_r * self.delta_r)
 
-            result[is_tail] = poly_to_zero(dr, -1.0 * tail, y1, y1p, y1pp)
+            result[is_tail] = poly_to_zero(dr, -1.0 * self.tail, y1, y1p, y1pp)
 
         return result
 
 
 def poly_to_zero(xx: Tensor, dx: Tensor,
-               y0: Tensor, y0p: Tensor, y0pp: Tensor) -> Tensor:
+                 y0: Tensor, y0p: Tensor, y0pp: Tensor) -> Tensor:
     """Get integrals if beyond the grid range with 5th order polynomial.
 
     Arguments:
@@ -152,7 +168,7 @@ def poly_interp(xp: Tensor, yp: Tensor, rr: Tensor) -> Tensor:
         systems interpolation. Therefore xp will be 2D Tensor.
 
     """
-    assert xp.dim() == 2
+    assert xp.dim() == 2, 'dimension check'
     device = xp.device
     nn0, nn1 = xp.shape[0], xp.shape[1]
     index_nn0 = torch.arange(nn0, device=device)
@@ -165,7 +181,7 @@ def poly_interp(xp: Tensor, yp: Tensor, rr: Tensor) -> Tensor:
     _dx_new = abs(rr - xp[index_nn0, 0])
     while (_dx_new < dxp).any():
         ii += 1
-        assert ii < nn1 - 1  # index ii range from 0 to nn1 - 1
+        assert ii < nn1 - 1, 'index ii range from 0 to %s' % nn1 - 1
         _mask = _dx_new < dxp
         icl[_mask] = ii
         dxp[_mask] = abs(rr - xp[index_nn0, ii])[_mask]

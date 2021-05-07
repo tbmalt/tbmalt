@@ -4,7 +4,7 @@ import numpy as np
 from torch.autograd import gradcheck
 import pytest
 from tbmalt.tests.test_utils import *
-from tbmalt.common.maths.interpolator import PolyInterpU
+from tbmalt.common.maths.interpolation import PolyInterpU
 torch.set_default_dtype(torch.float64)
 
 data = np.loadtxt('data/polyinterp/HH.dat')
@@ -23,6 +23,9 @@ def test_polyinterpu_single(device):
 
     assert abs(ref - pred) < 1E-14
 
+    # Check device: Device persistence check
+    check_dev = pred.device == xa.device
+    assert check_dev, 'Device of prediction consistent with input'
 
 def test_polyinterpu_batch(device):
     """Test multi distance interpolations in Hamiltonian."""
@@ -36,6 +39,10 @@ def test_polyinterpu_batch(device):
 
     assert (abs(ref - pred) < 1E-14).all()
 
+    # Check device: Device persistence check
+    check_dev = pred.device == xa.device
+    assert check_dev, 'Device of prediction consistent with input'
+
 
 def test_polyinterpu_tail(device):
     """Test the smooth Hamiltonian to zero code in the tail."""
@@ -46,6 +53,10 @@ def test_polyinterpu_tail(device):
     ref = torch.tensor([1.2296664801642019E-005], device=device)
 
     assert (abs(ref - pred) < 1E-11).all()
+
+    # Check device: Device persistence check
+    check_dev = pred.device == xa.device
+    assert check_dev, 'Device of prediction consistent with input'
 
 
 @pytest.mark.grad
