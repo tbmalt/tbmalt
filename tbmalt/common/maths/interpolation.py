@@ -13,7 +13,7 @@ class PolyInterpU:
 
     Arguments:
         xx: Grid points for interpolation, 1D Tensor.
-        yy: Interpolation value at each grid point.
+        yy: Values to be interpolated at each grid point.
         tail: Distance to smooth the tail.
         delta_r: Delta distance for 1st, 2nd derivative.
         n_interp: Number of total interpolation grid points.
@@ -21,13 +21,12 @@ class PolyInterpU:
 
     Attributes:
         xx: Grid points for interpolation, 1D Tensor.
-        yy: Interpolation values at each grid points.
+        yy: Values to be interpolated at each grid point.
         delta_r: Delta distance for 1st, 2nd derivative.
         tail: Distance to smooth the tail.
         n_interp: Number of total interpolation grid points.
         n_interp_r: Number of right side interpolation grid points.
         grid_step: Distance between each gird points.
-        _device: Device type of the tensor in class `PolyInterpU`.
 
     Notes:
         The `PolyInterpU` class, which is taken from the DFTB+, assumes a
@@ -48,6 +47,8 @@ class PolyInterpU:
         self.n_interp = n_interp
         self.n_interp_r = n_interp_r
         self.grid_step = xx[1] - xx[0]
+
+        # Device type of the tensor in this class
         self._device = xx.device
 
         # Check xx is uniform & that len(xx) > n_interp
@@ -121,7 +122,7 @@ def poly_to_zero(xx: Tensor, dx: Tensor, inv_dist: Tensor,
     """Get interpolation if beyond the grid range with 5th order polynomial.
 
     Arguments:
-        y0: Values of interpolation grid point values.
+        y0: Values to be interpolated at each grid point.
         y0p: First derivative of y0.
         y0pp: Second derivative of y0.
         xx: Grid points.
