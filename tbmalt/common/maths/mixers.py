@@ -14,9 +14,10 @@ be abandoned in favor of the other. Thus, all mixing instances require the
 user to explicitly state whether they are operating on a single system or on a
 batch of systems.
 """
-from abc import ABC, abstractmethod
-from numbers import Real
 from typing import Union, Optional
+from numbers import Real
+from abc import ABC, abstractmethod
+from functools import wraps
 import warnings
 import torch
 from torch import Tensor
@@ -30,16 +31,11 @@ class _Mixer(ABC):
 
     Arguments:
         is_batch: Set to true when mixing a batch of systems, False when not.
-        mix_param: Mixing parameter, ∈(0, 1), controls the extent of mixing.
-            Larger values result in more aggressive mixing. [DEFAULT=0.05]
         tolerance: Max permitted difference in between successive iterations
             for a system to be considered "converged". [DEFAULT=1E-6]
 
     """
-    def __init__(self, is_batch: bool, mix_param: Real = 0.05, tolerance: Real = 1E-6):
-
-        self.mix_param = mix_param
-
+    def __init__(self, is_batch: bool, tolerance: Real = 1E-6):
         self.tolerance = tolerance
 
         self._is_batch = is_batch
@@ -50,46 +46,61 @@ class _Mixer(ABC):
         # Difference between the current & previous systems
         self._delta: Optional[Tensor] = None
 
-    def _setup_hook(self, dtype: torch.dtype):
+    def __init_subclass__(cls):
+        def _tolerance_threshold_check(func):
+            """Wrapper to check the validity of the current tolerance value.
+
+            This wraps `__call__` to ensure that a tolerance threshold check
+            gets carried out on the first call, i.e. when `_step_number` is
+            zero. If the specified tolerance cannot be achieved then a warning
+            will be issued and the tolerance will be downgraded to just below
+            the precision limit.
+            """
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                self = args[0]
+                # pylint: disable=W0212
+                if self._step_number == 0:
+                    dtype = args[1].dtype
+                    if torch.finfo(dtype).resolution > self.tolerance:
+                        warnings.warn(
+                            f'{cls.__name__}: Tolerance value '
+                            f"{self.tolerance} can't be achieved by a {dtype}"
+                            '. DOWNGRADING!', UserWarning, stacklevel=2)
+                        self.tolerance = torch.finfo(dtype).resolution * 5.0
+                return func(*args, **kwargs)
+            return wrapper
+
+        cls.__call__ = _tolerance_threshold_check(cls.__call__)
+
+    @abstractmethod
+    def _setup_hook(self):
         """Conducts any required initialisation operations.
 
         Any setup code that needs only to be once, during the first call to
         "`__call__`" is placed here. This abstraction helps to clean up the
         `__call__` function by removing any code that is not needed for the
-        mixing operation. By default this code will ensure that the requested
-        tolerance limit is within the precision of the dtype being used. If
-        the tolerance is too tight, a warning is issued and the tolerance is
-        downgraded.
-
-        Arguments:
-            dtype: The dtype being used.
+        mixing operation.
 
         Notes:
             It is expected that new mixer classes will locally override this
-            function. *HOWEVER*, all new mixers will need to execute the code
-            present in this function. To prevent needless code repetition all
-            local ``_setup_hook`` functions should make a call to the parent
-            version via `super()._setup_hook(dtype)'.
-
+            function.
         """
-        # Check the specified tolerance can be achieved
-        if torch.finfo(dtype).resolution > self.tolerance:
-            warnings.warn(  # If not issue a warning
-                f'{self.__class__.__name__}: Tolerance value {self.tolerance}'
-                f' cannot be achieved by a {dtype}. DOWNGRADING!',
-                UserWarning, stacklevel=2)
-            # And downgrade to a tolerance just below the precision limit
-            self.tolerance = torch.finfo(dtype).resolution * 5.0
+        pass
 
     @abstractmethod
     def __call__(self, x_new: Tensor, x_old: Optional[Tensor] = None
                  ) -> Tensor:
         """Performs the mixing operation & returns the newly mixed system.
 
-        Notes:
-            This should contain only the code required to carry out the mixing
-            operation.
+        This should contain only the code required to carry out the mixing
+        operation.
 
+        Notes:
+            In all implementations the `x_new` argument **MUST** be the first
+            non-self argument, x_old should be an optional keyword argument.
+            The first call to this function, i.e. when `self._step_number` is
+            zero, should make a call to `_setup_hook`, if applicable.
         """
         pass
 
@@ -192,28 +203,40 @@ class Simple(_Mixer):
 
         The attractive fixed point of the function:
 
-        >>> from torch import tensor, sqrt
-        >>> def func(x):
-        >>>     return tensor([0.5 * sqrt(x[0] + x[1]),
-        >>>                    1.5 * x[0] + 0.5 * x[1]])
-
-        can be idenfied using the ``Simple`` mixer as follows:
-
-        >>> from tbmalt.common.maths.mixers import Simple
-        >>> x = tensor([2., 2.])  # Initial guess
-        >>> mixer = Simple(False, tolerance=1E-4, mix_param=0.8)
-        >>> for i in range(100):
-        >>>     x = mixer(func(x), x)
-        >>> print(x)
+        # >>> from torch import tensor, sqrt
+        # >>> def func(x):
+        # >>>     return tensor([0.5 * sqrt(x[0] + x[1]),
+        # >>>                    1.5 * x[0] + 0.5 * x[1]])
+        #
+        # can be idenfied using the ``Simple`` mixer as follows:
+        #
+        # >>> from tbmalt.common.maths.mixers import Simple
+        # >>> x = tensor([2., 2.])  # Initial guess
+        # >>> mixer = Simple(False, tolerance=1E-4, mix_param=0.8)
+        # >>> for i in range(100):
+        # >>>     x = mixer(func(x), x)
+        # >>> print(x)
         tensor([1., 3.])
     """
 
-    def __init__(self, is_batch: bool, mix_param: Real = 0.05, tolerance: Real = 1E-6):
+    def __init__(self, is_batch: bool, mix_param: Real = 0.05,
+                 tolerance: Real = 1E-6):
         # Pass required inputs to parent class.
-        super().__init__(is_batch, mix_param, tolerance)
+        super().__init__(is_batch, tolerance)
+
+        self.mix_param = mix_param
 
         # Holds the system from the previous iteration.
-        self._x_old: Union[Tensor, None] = None
+        self._x_old: Optional[Tensor] = None
+
+    def _setup_hook(self):
+        """NullOp to satisfy abstractmethod requirement so parent class.
+
+        The simple mixer is unique in that it does not require any setup. Thus
+        an empty function has been created to satisfy the requirements of the
+        parent class.
+        """
+        pass
 
     def __call__(self, x_new: Tensor, x_old: Optional[Tensor] = None
                  ) -> Tensor:
@@ -240,16 +263,11 @@ class Simple(_Mixer):
             from all but the first step if desired.
 
         """
-        # If this is the first mixing step, make a call to the setup function
-        if self._step_number == 0:
-            self._setup_hook(x_new.dtype)
-
         # Increment the step number variable
         self._step_number += 1
 
         # Use the previous x_old value if none was specified
         x_old = self._x_old if x_old is None else x_old
-        x_new = x_new
 
         # Check all tensor dimensions match
         assert x_old.shape == x_new.shape,\
@@ -293,7 +311,8 @@ class Simple(_Mixer):
         # Invert cull_list, gather & reassign x_old and _delta so only those
         # marked False remain.
         cull = ~cull_list
-        self._x_old, self._delta = self._x_old[cull], self._delta[cull]
+        self._x_old = self._x_old[cull]
+        self._delta = self._delta[cull]
 
 
 class Anderson(_Mixer):
@@ -351,8 +370,9 @@ class Anderson(_Mixer):
                  generations: int = 6, diagonal_offset=0.01,
                  init_mix_param: Real = 0.01, tolerance: Real = 1E-6):
 
-        super().__init__(is_batch, mix_param, tolerance)
+        super().__init__(is_batch, tolerance)
 
+        self.mix_param = mix_param
         self.generations = generations
         self.init_mix_param = init_mix_param
         self.diagonal_offset = diagonal_offset
@@ -369,15 +389,12 @@ class Anderson(_Mixer):
     def _setup_hook(self, x_new: Tensor):
         """Perform post instantiation initialisation operation.
 
-        This checks the tolerances are within acceptable limits & instantiates
-        internal variables.
+        This instantiates internal variables.
 
         Arguments:
             x_new: New system(s) that is to be mixed.
         """
         dtype, device = x_new.dtype, x_new.device
-        # Make a call to the parent's setup_hook to check tolerances
-        super()._setup_hook(dtype)
 
         # Tensors are converted to _shape_in when passed in and back to their
         # original shape _shape_out when returned to the user.
@@ -391,6 +408,11 @@ class Anderson(_Mixer):
         size = (self.generations + 1, *self._shape_in)
         self._x_hist = torch.zeros(size, dtype=dtype, device=device)
         self._f = torch.zeros(size, dtype=dtype, device=device)
+
+    @property
+    def delta(self) -> Tensor:
+        """Difference between the current & previous systems"""
+        return self._delta.reshape(self._shape_out)
 
     def __call__(self, x_new: Tensor, x_old: Optional[Tensor] = None
                  ) -> Tensor:
@@ -433,8 +455,8 @@ class Anderson(_Mixer):
 
         # If a sufficient history has been built up then use Anderson mixing
         if self._step_number > self.generations:
-            # Setup and solve the linear equation system, as described in equation
-            # 4.3 (Eyert), to get the coefficients "thetas":
+            # Setup and solve the linear equation system, as described in
+            # equation 4.3 (Eyert), to get the coefficients "thetas":
             #   a(i,j) =  <F(l) - F(l-i)|F(l) - F(l-j)>
             #   b(i)   =  <F(l) - F(l-i)|F(l)>
             # here dF = <F(l) - F(l-i)|
@@ -446,27 +468,29 @@ class Anderson(_Mixer):
             # vectors by adding 1 + offset^2 to the diagonals of "a", see
             # equation 8.2 (Eyert)
             if self.diagonal_offset is not None:
-                a += torch.eye(a.shape[-1], device=x_new.device) * (self.diagonal_offset ** 2)
+                a += (torch.eye(a.shape[-1], device=x_new.device)
+                      * (self.diagonal_offset ** 2))
 
             # Solve for the coefficients. As torch.solve cannot solve for 1D
             # tensors a blank dimension must be added
             thetas = torch.squeeze(torch.solve(torch.unsqueeze(b, -1), a)[0])
 
-            # Construct the 2nd terms of equations 4.1 and 4.2 (Eyert). These are
+            # Construct the 2'nd terms of eq 4.1 & 4.2 (Eyert). These are
             # the "averaged" histories of x and F respectively:
             #   x_bar = sum(j=1 -> m) ϑ_j(l) * (|x(l-j)> - |x(l)>)
             #   f_bar = sum(j=1 -> m) ϑ_j(l) * (|F(l-j)> - |F(l)>)
-            # These are not the x_bar & F_var values of equations 4.1 & 4.2 (Eyert)
+            # These are not the x_bar & F_var values of eq. 4.1 & 4.2 (Eyert)
             # yet as they are still missing the 1st terms.
-            x_bar = torch.einsum('...h,h...v->...v', thetas, (self._x_hist[1:] - self._x_hist[0]))
+            x_bar = torch.einsum('...h,h...v->...v', thetas,
+                                 (self._x_hist[1:] - self._x_hist[0]))
             f_bar = torch.einsum('...h,h...v->...v', thetas, -df)
 
             # The first terms of equations 4.1 & 4.2 (Eyert):
             #   4.1: |x(l)> and & 4.2: |F(l)>
             # Have been replaced by:
             #   ϑ_0(l) * |x(j)> and ϑ_0(l) * |x(j)>
-            # respectively, where "ϑ_0(l)" is the coefficient for the current step
-            # and is defined as (Anderson):
+            # respectively, where "ϑ_0(l)" is the coefficient for the current
+            # step and is defined as (Anderson):
             #   ϑ_0(l) = 1 - sum(j=1 -> m) ϑ_j(l)
             # Code deviates from DFTB+ here to prevent "stability issues"
             # theta_0 = 1 - torch.sum(thetas)
@@ -512,7 +536,8 @@ class Anderson(_Mixer):
         # Invert the cull_list, gather & reassign self._delta self._x_hist &
         # self._f so only those marked False remain.
         cull = ~cull_list
-        self._delta, self._f = self._delta[cull], self._f[:, cull]
+        self._delta = self._delta[cull]
+        self._f = self._f[:, cull]
         self._x_hist = self._x_hist[:, cull]
 
         # Adjust the the shapes accordingly
@@ -526,8 +551,3 @@ class Anderson(_Mixer):
         self._step_number = 0
         self._x_hist = self._f = self._delta = None
         self._shape_in = self._shape_out = None
-
-    @property
-    def delta(self) -> Tensor:
-        """Difference between the current & previous systems"""
-        return self._delta.reshape(self._shape_out)

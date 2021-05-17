@@ -34,13 +34,14 @@ Warnings:
     decouple the mixer tests from the maths module.
 
 """
-from torch.autograd import gradcheck
 import pytest
-
+import torch
+from torch.autograd import gradcheck
 from tbmalt.common.maths.mixers import Simple, Anderson
-from tbmalt.tests.test_utils import *
+from tbmalt.tests.test_utils import fix_seed, clean_zero_padding
 from tbmalt.common.maths import sym, eighb
 from tbmalt.common.batch import pack
+
 Tensor = torch.Tensor
 
 
@@ -64,13 +65,13 @@ def gen_systems(device, sizes):
             neutral_charge vectors
 
     """
-    H, S, G, q0 = [], [], [], []  # Lists for data to be placed into
-    for size in sizes:  # Loop over the various sizes
-        for i in [H, S, G]:  # Construct new H, S, and G matrices
-            mat = torch.rand(size, size, device=device)  # Random n,n matrix
-            mat = (mat + mat.T) / 2  # Symmetries
+    H, S, G, q0 = [], [], [], []
+    for size in sizes:
+        for i in [H, S, G]:
+            mat = torch.rand(size, size, device=device)
+            mat = (mat + mat.T) / 2
             i.append(mat @ mat)  # Make positive semi-definite
-        _q0 = torch.rand(size, device=device)  # Generate random orbital charges
+        _q0 = torch.rand(size, device=device)
         q0.append((_q0 / _q0.sum()) * int(size / 2))
     # Zero pad pack data into single tensors and return them
     return pack(H), pack(S), pack(G), pack(q0)
@@ -85,11 +86,11 @@ def faux_SCF(F_in, neutral_charges, H, S, G):
     C = eighb(F_in, S, eigenvectors=True)[1]
     new_charges = torch.sum((C @ C.transpose(-2, -1)) * S, -1)
     if H.dim() == 3:
-        esp = torch.einsum('bn,bnm->bn', (new_charges - neutral_charges), G)
+        esp = torch.einsum('bn,bnm->bm', (new_charges - neutral_charges), G)
         esp_matrix = torch.unsqueeze(esp, 1) + torch.unsqueeze(esp, 2)
 
     else:
-        esp = torch.einsum('n,nm->n', (new_charges - neutral_charges), G)
+        esp = torch.einsum('n,nm->m', (new_charges - neutral_charges), G)
         esp_matrix = torch.unsqueeze(esp, 1) + esp
 
     F_out = H + 0.5 * S * esp_matrix
@@ -104,11 +105,11 @@ def faux_SCC(charges_in, neutral_charges, H, S, G):
     """
     # Takes an old vector (charges) and returns a new one
     if H.dim() == 3:
-        esp = torch.einsum('bn,bnm->bn', (charges_in - neutral_charges), G)
+        esp = torch.einsum('bn,bnm->bm', (charges_in - neutral_charges), G)
         esp_matrix = torch.unsqueeze(esp, 1) + torch.unsqueeze(esp, 2)
 
     else:
-        esp = torch.einsum('n,nm->n', (charges_in - neutral_charges), G)
+        esp = torch.einsum('n,nm->m', (charges_in - neutral_charges), G)
         esp_matrix = torch.unsqueeze(esp, 1) + esp
 
     F = H + 0.5 * S * esp_matrix
@@ -140,8 +141,8 @@ def cycle(mixer, target, function, arguments=None, n=200):
         mixer: Mixer class instance.
         target: Vector or matrix that is to be mixed.
         function: Function to be cycled, e.g. ``faux_SCC``.
-        arguments: A tuple holding any other arguments that are to be passed
-            in to the mixer.
+        arguments: Tuple holding any other arguments that must be passed into
+            ``function``.
         n: Number of mixing cycles to perform.
 
     Returns:
@@ -149,12 +150,17 @@ def cycle(mixer, target, function, arguments=None, n=200):
         mixed: The final mixed system
 
     """
+    arguments = () if arguments is None else arguments
     device = target.device
-    for _ in range(n):
-        if arguments is not None:
-            target = mixer(function(target, *arguments), target)
-        else:
-            target = mixer(function(target), target)
+    n_first = int(n / 2)
+    n_second = n - n_first
+
+    # "x_old" will only be provided for the first few cycles
+    for _ in range(n_first):
+        target = mixer(function(target, *arguments), target)
+    # After that it will have to rely on its internal tracking
+    for _ in range(n_second):
+        target = mixer(function(target, *arguments))
 
     # Find floating point tensors that have been placed on the wrong device.
     tensors = [k for k, v in mixer.__dict__.items() if isinstance(v, Tensor)
@@ -198,7 +204,8 @@ def general(mixer, device):
 
     """
     name = mixer.__class__.__name__
-    a = a_copy = torch.ones(5, 5, 5, device=device)
+    a = torch.ones(5, 5, 5, device=device)
+    a_copy = a.clone()
     mixer._is_batch = True
 
     # Checks 1 & 2
@@ -239,8 +246,8 @@ def general(mixer, device):
     mixer.cull(cull_list)
     # Next mixer call should crash if cull was not implemented correctly.
     a = mixer(func(a[~cull_list]), a[~cull_list])
-    chk_6 = a.shape == a_copy[cull_list].shape
-    assert chk_5a, f'{name} returned an unexpected shape after cull operation'
+    chk_6 = a.shape == a_copy[~cull_list].shape
+    assert chk_6, f'{name} returned an unexpected shape after cull operation'
 
     # Check 7
     # This only performs the reset operation to catch any fatal errors.
