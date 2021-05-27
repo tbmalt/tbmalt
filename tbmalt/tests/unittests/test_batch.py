@@ -23,7 +23,24 @@ def test_pack(device):
     same_device = packed.device == device
 
     assert equivalent, 'Check pack method against numpy'
-    assert same_device, 'Device persistence check'
+    assert same_device, 'Device persistence check (packed tensor)'
+
+    # Check that the mask is correct
+    *_, mask = batch.pack([
+        torch.rand(1, device=device),
+        torch.rand(2, device=device),
+        torch.rand(3, device=device)],
+        return_mask=True)
+
+    ref_mask = torch.tensor([[1, 0, 0], [1, 1, 0], [1, 1, 1]],
+                            dtype=torch.bool, device=device)
+
+    same_device_mask = mask.device == device
+    eq = torch.all(torch.eq(mask, ref_mask))
+
+    assert eq, 'Mask yielded an unexpected result'
+    assert same_device_mask, 'Device persistence check (mask)'
+
 
 
 @pytest.mark.grad
