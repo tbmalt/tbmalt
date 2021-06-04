@@ -407,7 +407,12 @@ its use in the main branch should generally be avoided. If including maths in th
 it is advisable to precede the triple-quote with an :code:`r` to indicate a raw string. This
 avoids having to escape every backslash. Docstrings should be parsed by autodoc and visually
 inspected prior to submitting a pull request. If an argument, attribute or property is referenced
-by name in the docstring it should be encased in a double prime, i.e. \`\`arg_1\`\`.
+by name in the docstring it should be encased in a double prime, i.e. \`\`arg_1\`\`. Where
+required, images may also be added to the docstrings. The associated image files should be
+placed in the `tbmalt/docs/source/images` directory and should use the svg format
+wherever possible. It is important to note that when referencing an image the path must be
+specified relative to the `tbmalt/docs/source/_autosummary` directory i.e.
+`../images/My_Image.svg`.
 
 
 Code
@@ -546,14 +551,20 @@ with them indicating what test is being performed. It is acknowledged that more/
 functions may require a greater/lesser number of tests to be performed.
 
 As gradient tests tend to have long run times they should be marked with a ``@pytest.mark.grad``
-decorator flag, allowing them to be selectively skipped. Finally, all test modules should
-import * from ``tbmalt.tests.test_utils.py``, this ensures the correct float precision is
-used, activates gradient anomaly detection and grants access to ``fix_seed``. Some test
-examples are shown below in code-block :ref:`unit_tests`. Any operation involving a GPU-tensor
-and a non-GPU entity, such as a numpy array, will result in ``TypeError``. Thus, such tensors
+decorator flag, allowing them to be selectively skipped. Finally, test modules should import
+only the functions they need, this helps to decrease test interdependency. Some test examples
+are shown below in code-block :ref:`unit_tests`. Any operation involving a GPU-tensor and
+a non-GPU entity, such as a numpy array, will result in ``TypeError``. Thus, such tensors
 often need to be moved to the CPU, via the ``.cpu()`` attribute, during the final stages of
 testing. Furthermore, the ``torch.Tensor`` class has been overloaded with a new ``.sft()``
 attribute which aliases the ``.cpu().numpy()`` command which is frequently used during testing.
+
+Autograd anomaly detection has been disabled by default for the TBMaLT unit-tests, i.e.
+``torch.autograd.detect_anomaly`` is set to False. This is due to the **significant** increase
+in time it creates in running ``torch.autograd.gradcheck``. If more detailed gradient tests
+tests are required during testing then anomaly detection can be enabled by setting the
+``--detect-anomaly`` flag; e.g ``pytest --detect-anomaly``. Be warned, gradient tests will
+take a very long time to run with autograd anomaly detection enabled!
 
 .. code-block:: python
     :caption: Unit test examples

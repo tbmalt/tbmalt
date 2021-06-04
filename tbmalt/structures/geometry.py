@@ -29,13 +29,12 @@ class Geometry:
         atomic_numbers: Atomic numbers of the atoms.
         positions : Coordinates of the atoms.
         units: Unit in which ``positions`` were specified. For a list of
-            available units see mak. [DEFAULT='bohr']
+            available units see :mod:`.units`. [DEFAULT='bohr']
 
     Attributes:
         atomic_numbers: Atomic numbers of the atoms.
         positions : Coordinates of the atoms.
         n_atoms: Number of atoms in the system.
-
 
     Notes:
         When representing multiple systems, the `atomic_numbers` & `positions`
@@ -68,7 +67,7 @@ class Geometry:
         Geometry(CH4)
 
         Multiple systems can be represented by a single ``Geometry`` instance.
-        To do this, simply pass in lists where appropriate.
+        To do this, simply pass in lists or packed tensors where appropriate.
 
     """
 
@@ -79,17 +78,16 @@ class Geometry:
                  positions: Union[Tensor, List[Tensor]],
                  units: Optional[str] = 'bohr'):
 
-        if isinstance(atomic_numbers, Tensor):
-            self.atomic_numbers = atomic_numbers
-            # Mask for clearing padding values in the distance matrix.
+        # "pack" will only effect lists of tensors
+        self.atomic_numbers = pack(atomic_numbers)
+        self.positions: Tensor = pack(positions)
+
+        # Mask for clearing padding values in the distance matrix.
+        if (temp_mask := self.atomic_numbers != 0).all():
             self._mask_dist: Union[Tensor, bool] = False
-            self.positions: Tensor = positions
         else:
-            self.atomic_numbers, _mask = pack(atomic_numbers,
-                                              return_mask=True)
             self._mask_dist: Union[Tensor, bool] = ~(
-                _mask.unsqueeze(-2) * _mask.unsqueeze(-1))
-            self.positions: Tensor = pack(positions)
+                temp_mask.unsqueeze(-2) * temp_mask.unsqueeze(-1))
 
         self.n_atoms: Tensor = self.atomic_numbers.count_nonzero(-1)
 
@@ -241,21 +239,31 @@ class Geometry:
         # Add units meta-data to the atomic positions
         pos.attrs['unit'] = 'bohr'
 
-    def to(self, device: torch.device):
-        """Moves `Geometry` tensors to the specified device.
+    def to(self, device: torch.device) -> 'Geometry':
+        """Returns a copy of the `Geometry` instance on the specified device
 
-        This moves all tensors present in the associated `Geometry` instance
-        to the specified device.
+        This method creates and returns a new copy of the `Geometry` instance
+        on the specified device "``device``".
 
         Arguments:
             device: Device to which all associated tensors should be moved.
 
-        Warnings:
-            This will clone & replace all tensors present in the `Geometry`
-            instance; which may break any existing links.
+        Returns:
+            geometry: A copy of the `Geometry` instance placed on the
+                specified device.
+
+        Notes:
+            If the `Geometry` instance is already on the desired device then
+            `self` will be returned.
         """
-        self.atomic_numbers = self.atomic_numbers.to(device=device)
-        self.positions = self.positions.to(device=device)
+        # Developers Notes: It is imperative that this function gets updated
+        # whenever new attributes are added to the `Geometry` class. Otherwise
+        # this will return an incomplete `Geometry` object.
+        if self.atomic_numbers.device == device:
+            return self
+        else:
+            return self.__class__(self.atomic_numbers.to(device=device),
+                                  self.positions.to(device=device))
 
     def __repr__(self) -> str:
         """Creates a string representation of the Geometry object."""

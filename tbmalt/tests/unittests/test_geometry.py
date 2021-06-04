@@ -40,8 +40,9 @@ def atomic_numbers_data(device, batch=False):
 ##################
 def geometry_basic_helper(device, positions, atomic_numbers):
     """Function to reduce code duplication when testing basic functionality."""
+    from time import time
     # Pack the reference data, if multiple systems provided
-    batch = isinstance(atomic_numbers, list)
+    batch = isinstance(atomic_numbers, list) or atomic_numbers.ndim == 2
     if batch:
         atomic_numbers_ref = pack(atomic_numbers)
         positions_ref = pack(positions)
@@ -77,7 +78,7 @@ def geometry_basic_helper(device, positions, atomic_numbers):
 
     # Check 4: Verify that the `.chemical_symbols` returns the correct value
     check_4 = all([chemical_symbols[int(j)] == i if isinstance(i, str)
-                   else [chemical_symbols[int(k)] for k in j] == i
+                   else [chemical_symbols[int(k)] for k in j if k != 0] == i
                    for i, j in zip(geom_1.chemical_symbols, atomic_numbers)])
     assert check_4, 'The ".chemical_symbols" property is incorrect'
 
@@ -88,9 +89,9 @@ def geometry_basic_helper(device, positions, atomic_numbers):
         # Select a device to move to
         new_device = {'cuda': torch.device('cpu'),
                       'cpu': torch.device('cuda:0')}[device.type]
-        geom_1.to(new_device)
-        check_5 = (geom_1.atomic_numbers.device == new_device
-                   and geom_1.positions.device == new_device)
+        geom_1_copy = geom_1.to(new_device)
+        check_5 = (geom_1_copy.atomic_numbers.device == new_device
+                   and geom_1_copy.positions.device == new_device)
 
         assert check_5, '".to" method failed to set the correct device'
 
@@ -103,8 +104,11 @@ def test_geometry_single(device):
 
 def test_geometry_batch(device):
     """Test the basic batch system functionality of the Geometry class"""
+    # Run test with a list of tensors & using pre-packed tensor
     geometry_basic_helper(device, positions_data(device, True),
                           atomic_numbers_data(device, True))
+    geometry_basic_helper(device, pack(positions_data(device, True)),
+                          pack(atomic_numbers_data(device, True)))
 
 
 #####################
@@ -309,3 +313,7 @@ def test_unique_atom_pairs(device):
          [8, 6], [1, 8], [6, 8], [8, 8]], device=device)
     check = (unique_atom_pairs(geom) == ref).all()
     assert check, "unique_atom_pairs returned an unexpected result"
+
+
+if __name__ == '__main__':
+    test_geometry_batch(device=torch.device('cpu'))

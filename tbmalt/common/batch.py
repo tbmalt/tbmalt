@@ -9,8 +9,8 @@ import torch
 Tensor = torch.Tensor
 
 
-def pack(tensors: List[Tensor], axis: int = 0, value: Any = 0,
-         size: Optional[Union[Tuple[int], torch.Size]] = None,
+def pack(tensors: Union[List[Tensor], Tuple[Tensor]], axis: int = 0,
+         value: Any = 0, size: Optional[Union[Tuple[int], torch.Size]] = None,
          return_mask: bool = False) -> Union[Tensor, Optional[Tensor]]:
     """Pad and pack a sequence of tensors together.
 

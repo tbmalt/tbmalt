@@ -51,9 +51,13 @@ Examples:
 """
 from typing import Dict
 
+# Developers Notes: The constants used here will eventually be abstracted to a
+# separate module. Until then, the warning C0103 has been disabled to stop
+# PyLint from complaining.
 
 # Physical constants taken directly from DFTB+'s constants.F90 file. These
 # are used to build all necessary conversion factors.
+# pylint: disable=C0103
 # Bohr --> Angstrom
 _Bohr__AA = 0.529177249
 # Angstrom --> Bohr

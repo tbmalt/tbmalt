@@ -560,7 +560,6 @@ def eighb(a: Tensor,
                 # Otherwise compute via an indirect method (default)
                 l_inv = torch.solve(torch.eye(a.shape[-1], dtype=a.dtype,
                                               device=b.device), l)[0]
-                #  RuntimeError: Expected b and A to be on the same device, but found b on cpu and A on cuda:0 instead.
             # Transpose of l_inv: improves speed in batch mode
             l_inv_t = torch.transpose(l_inv, -1, -2)
 

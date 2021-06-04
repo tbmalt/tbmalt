@@ -12,11 +12,6 @@ import numpy as np
 import torch
 import functools
 
-# Default must be set to float64 otherwise gradcheck will not function
-torch.set_default_dtype(torch.float64)
-# This will track for any anomalys in the gradient
-torch.autograd.set_detect_anomaly(True)
-
 
 def fix_seed(func):
     """Sets torch's & numpy's random number generator seed.
@@ -100,10 +95,3 @@ def clean_zero_padding(m, sizes):
     cleaned = m - temp
 
     return cleaned
-
-def __sft(self):
-    """Aliese for calling .cpu().numpy()"""
-    return self.cpu().numpy()
-
-
-torch.Tensor.sft = __sft
