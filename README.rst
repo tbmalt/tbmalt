@@ -16,7 +16,7 @@ of interfacing with existing models/codes.
 
 License
 =======
-TBMaLT is released under the `GNU General Public License v3.0 <LICENSE>`_.
+TBMaLT is released under the `GNU Lesser General Public License <LICENSE>`_.
 
 .. |Python badge| image:: https://img.shields.io/badge/python-v3.8-blue?style=for-the-badge&logo=python
     :target: https://www.python.org/
@@ -24,4 +24,4 @@ TBMaLT is released under the `GNU General Public License v3.0 <LICENSE>`_.
 
 .. |License badge| image:: https://img.shields.io/badge/license-GNU%20LGPL%20v3.0-blue?style=for-the-badge&logo=GNU
     :target: https://www.gnu.org/licenses/lgpl-3.0.en.html
-    :alt: GNU General Public License v3.0
+    :alt: GNU Lesser General Public License v3.0
