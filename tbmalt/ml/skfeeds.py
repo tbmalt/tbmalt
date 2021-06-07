@@ -7,15 +7,13 @@ Hamiltonian and overlap matrices. The on-site and off-site terms are yielded
 by the `on_site` and `off_site` class methods respectively.
 """
 
-from typing import Literal, Union, Tuple
+from typing import Union, Tuple
 from abc import ABC, abstractmethod
 from inspect import getfullargspec
 from warnings import warn
 from h5py import Group
+import torch
 from torch import Tensor
-
-# Custom type declarations
-SkIntType = Literal['H', 'S']
 
 
 class _SkFeed(ABC):
@@ -40,8 +38,7 @@ class _SkFeed(ABC):
         subclasses' `off_site` or `on_site` methods. Both methods must accept
         an arbitrary number of keyword arguments, i.e. `**kwargs`. The
         `off_site` & `on_site` method must take the keyword arguments
-        (atom_pair, l_pair, distances, ski_type) and (atomic_numbers &
-        ski_type) respectively.
+        (atom_pair, l_pair, distances) and (atomic_numbers) respectively.
 
         This behaviour is enforced to maintain consistency between the various
         subclasses of `_SkFeed`'; which is necessary as the various subclasses
@@ -63,19 +60,18 @@ class _SkFeed(ABC):
                          f' missing from method "{name}"',
                          stacklevel=4)
 
-
             if sig.varkw is None:  # This check cannot be skipped
                 warn(f'Signature Warning: method "{name}" must accept an '
                      f'arbitrary keyword arguments, i.e. **kwargs.',
                      stacklevel=4)
 
-        check(cls.off_site, {'atom_pair', 'l_pair', 'distances', 'ski_type'})
-        check(cls.on_site, {'atomic_numbers', 'ski_type'})
+        check(cls.off_site, {'atom_pair', 'l_pair', 'distances'})
+        check(cls.on_site, {'atomic_numbers'})
 
 
     @abstractmethod
     def off_site(self, atom_pair: Tensor, l_pair: Tensor, distances: Tensor,
-                 ski_type: SkIntType, **kwargs) -> Tensor:
+                 **kwargs) -> Tensor:
         """Evaluate the selected off-site Slater-Koster integrals.
 
         This evaluates & returns the off-site Slater-Koster integrals between
@@ -89,9 +85,6 @@ class _SkFeed(ABC):
             atom_pair: Atomic numbers of the associated atoms.
             l_pair: Azimuthal quantum numbers associated with the interaction.
             distances: Distances between the atoms pairs.
-            ski_type: Identity of the type of integral to be returned, one of:
-                - "S" for overlap integrals
-                - "H" for Hamiltonian integrals
 
         Keyword Arguments:
             atom_indices: Tensor: The indices of the atoms associated with the
@@ -103,14 +96,14 @@ class _SkFeed(ABC):
                 ``atom_pair`` at the specified distances.
 
         Developers Notes:
-            The Slater-Koster transformation passes "atom_pair", "l_pair",
-            "distances" & "ski_type" as keyword arguments. This avoids having
-            to change the Slater-Koster transformation code every time a new
-            feed is created. These four arguments were made default as they
-            will be required by most Slater-Koster feed implementations. A
-            warning will be issued if a `_SkFeed` subclass is found to be
-            missing any of these arguments. However, this behaviour can be
-            suppressed by adding the class argument `check_sig=False`.
+            The Slater-Koster transformation passes "atom_pair", "l_pair", &
+            "distances" as keyword arguments. This avoids having to change the
+            Slater-Koster transformation code every time a new feed is
+            created. These four arguments were made default as they will be
+            required by most Slater-Koster feed implementations. A warning
+            will be issued if a `_SkFeed` subclass is found to be missing any
+            of these arguments. However, this behaviour can be suppressed by
+            adding the class argument `check_sig=False`.
 
             It is imperative that this method accepts an arbitrary number of
             keyword arguments, i.e. has a `**kwarg` argument. This allows for
@@ -129,16 +122,12 @@ class _SkFeed(ABC):
         pass
 
     @abstractmethod
-    def on_site(self, atomic_numbers: Tensor, ski_type: SkIntType, **kwargs
-                ) -> Tuple[Tensor, ...]:
+    def on_site(self, atomic_numbers: Tensor, **kwargs) -> Tuple[Tensor, ...]:
         """Returns the specified on-site terms.
 
         Arguments:
             atomic_numbers: Atomic numbers for which on-site terms should be
                 returned.
-            ski_type: Identity of the type of integral to be returned, one of:
-                - "S" for overlap integrals
-                - "H" for Hamiltonian integrals
 
         Keyword Arguments:
             atom_indices: Tensor: The indices of the atoms associated with the
@@ -153,6 +142,22 @@ class _SkFeed(ABC):
             See the documentation for the _SkFeed.off_site method for
             more information.
 
+        """
+        pass
+
+    @abstractmethod
+    def to(self, device: torch.device) -> 'SkFeed':
+        """Returns a copy of the `SkFeed` instance on the specified device.
+        This method creates and returns a new copy of the `SkFeed` instance
+        on the specified device "``device``".
+        Arguments:
+            device: Device on which the clone should be placed.
+        Returns:
+            sk_feed: A copy of the `SkFeed` instance placed on the specified
+                device.
+        Notes:
+            If the `SkFeed` instance is already on the desired device then
+            `self` will be returned.
         """
         pass
 
