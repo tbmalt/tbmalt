@@ -14,7 +14,7 @@ from torch import Tensor, stack
 from tbmalt import Geometry, Basis
 from tbmalt.common import split_by_size
 from tbmalt.common.batch import pack
-from tbmalt.ml.skfeeds import SkFeed, SkIntType
+from tbmalt.ml.skfeeds import SkFeed
 
 # Static module-level constants (used for SK transformation operations)
 _SQR3, _SQR6, _SQR10, _SQR15 = np.sqrt(np.array([3., 6., 10., 15.])).tolist()
@@ -22,7 +22,7 @@ _HSQR3 = 0.5 * np.sqrt(3.)
 
 
 def hs_matrix(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
-              ski_type: SkIntType, **kwargs) -> Tensor:
+              **kwargs) -> Tensor:
     """Build the Hamiltonian or overlap matrix via Slater-Koster transforms.
 
     Constructs the Hamiltonian or overlap matrix for the target system(s)
@@ -34,24 +34,13 @@ def hs_matrix(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
         basis: `Basis` instance associated with the target system(s).
         sk_feed: The Slater-Koster feed entity responsible for providing the
             requisite Slater Koster integrals and on-site terms.
-        ski_type: Identity of the type of integral to be returned by the
-            ``sk_feed`` one of:
-
-                - "S" for overlap integrals
-                - "H" for Hamiltonian integrals
-
-            This is passed as a keyword argument into all calls made to the
-            ``sk_feed`` object and will determine the type of matrix returned.
 
     Keyword Arguments:
-        kwargs: Surplus `kwargs` are passed into calls made to the ``sk_feed``
+        kwargs: `kwargs` are passed into all calls made to the ``sk_feed``
             object's `off_site` & `on_site` methods. This permits additional
             information, such as that needed for environmental dependent feeds,
             to be provided to these methods without having to add custom call
-            signatures for each new class of Slater-Koster feed. For example
-            `sk_hs_matrix(geometry, basis, sk_feed, 'H', x=10, y=20)`
-            will result in `x` & `y` being passed in as keyword arguments to
-            the `off_site` & `on_site` calls.
+            signatures for each Slater-Koster feed type.
 
     Returns:
         mat: Hamiltonian or overlap matrices for the target systems.
@@ -116,9 +105,8 @@ def hs_matrix(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
         # provided by the user. If the SK-feed is environmentally dependent,
         # then it will need the indices of the atoms; as this data cannot be
         # provided by the user it must be explicitly added to the kwargs here.
-        integrals = _gather_off_site(
-            g_anum, l_pair, g_dist, sk_feed, ski_type, **kwargs,
-            atom_indices=index_mask_a)
+        integrals = _gather_off_site(g_anum, l_pair, g_dist, sk_feed,
+                                     **kwargs, atom_indices=index_mask_a)
 
         # Make a call to the relevant Slater-Koster function to get the sk-block
         sk_data = sub_block_rot(l_pair, g_vecs, integrals)
@@ -154,12 +142,12 @@ def hs_matrix(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
 
     # Set the onsite terms (diagonal)
     mat.diagonal(0, -2, -1)[:] = _gather_on_site(geometry, basis, sk_feed,
-                                                 ski_type, **kwargs)
+                                                 **kwargs)
     return mat
 
 
 def _gather_on_site(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
-                    ski_type: SkIntType, **kwargs):
+                    **kwargs) -> Tensor:
     """Retrieves on site terms from a target feed in a batch-wise manner.
 
     This is a convenience function for retrieving on-site terms from an SKFeed
@@ -170,22 +158,17 @@ def _gather_on_site(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
         basis: `Basis` instance associated with the target system(s).
         sk_feed: The Slater-Koster feed entity responsible for providing the
             requisite Slater Koster integrals and on-site terms.
-        ski_type: Identity of the type of integral to be returned, by the
-            ``sk_feed`` one of:
-
-                - "S" for overlap integrals
-                - "H" for Hamiltonian integrals
-
 
     Keyword Arguments:
-        kwargs: Surplus `kwargs` are passed into calls made to the ``sk_feed``
+        kwargs: `kwargs` are passed into calls made to the ``sk_feed``
             object's `off_site` method.
-        atom_indices: Tensor: Indices of the atoms for which the on-site terms
-            are being evaluated. Note this is constructed internally and so is
-            not required.
 
     Returns:
         on_site_values: On-site values associated with the specified systems.
+
+    Notes:
+        Unlike `_gather_of_site`, this function does not require the keyword
+        argument ``atom_indices`` as it can be constructed internally.
     """
     an = geometry.atomic_numbers
     a_shape = basis.atomic_matrix_shape[:-1]
@@ -199,8 +182,7 @@ def _gather_on_site(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
         kwargs['atom_indices'] = torch.arange(geometry.n_atoms.max()
                                               ).expand(a_shape)
 
-    os_flat = torch.cat(sk_feed.on_site(atomic_numbers=an[mask],
-                                        ski_type=ski_type, **kwargs))
+    os_flat = torch.cat(sk_feed.on_site(atomic_numbers=an[mask], **kwargs))
 
     # Pack results if necessary (code has no effect on single systems)
     c = torch.unique_consecutive((basis.on_atoms != -1).nonzero().T[0],
@@ -210,7 +192,7 @@ def _gather_on_site(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
 
 def _gather_off_site(
         atom_pairs: Tensor, l_pair: Tensor, distances: Tensor,
-        sk_feed: SkFeed, ski_type: SkIntType, **kwargs) -> Tensor:
+        sk_feed: SkFeed, **kwargs) -> Tensor:
     """Retrieves integrals from a target feed in a batch-wise manner.
 
     This convenience function mediates the integral retrieval operation by
@@ -223,13 +205,6 @@ def _gather_off_site(
         l_pair: Azimuthal quantum numbers associated with all interactions.
         sk_feed: The Slater-Koster feed entity responsible for providing the
             requisite Slater Koster integrals and on-site terms.
-        ski_type: Identity of the type of integral to be returned, by the
-            ``sk_feed`` one of:
-
-                - "S" for overlap integrals
-                - "H" for Hamiltonian integrals
-
-            This is passed in all calls made to ``ski_type``.
 
     Keyword Arguments:
         kwargs: Surplus `kwargs` are passed into calls made to the ``sk_feed``
@@ -283,7 +258,7 @@ def _gather_off_site(
         # the _SkIntegralFeed class.
         integrals[index_mask] = sk_feed.off_site(
             atom_pair=atom_pair, l_pair=l_pair,
-            distances=distances[index_mask], ski_type=ski_type,
+            distances=distances[index_mask],
             atom_indices=atom_indices_selected, **kwargs)
 
     # Return the resulting integrals

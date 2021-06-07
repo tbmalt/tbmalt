@@ -28,6 +28,7 @@ def test_skfeed_abc():
         class _(_SkFeed, check_sig=False):
             def on_site(self, atomic_numbers, ski_type): ...
             def off_site(self, atom_pair, l_pair, distances, ski_type, **kwargs): ...
+            def to(self, atomic_numbers, ski_type): ...
 
         if not warn:
             pytest.fail(
@@ -37,6 +38,7 @@ def test_skfeed_abc():
         class _(_SkFeed, check_sig=False):
             def on_site(self, atomic_numbers, ski_type, **kwargs): ...
             def off_site(self, atom_pair, l_pair, distances, ski_type): ...
+            def to(self, atomic_numbers, ski_type): ...
 
         if not warn:
             pytest.fail(
@@ -54,6 +56,7 @@ def test_skfeed_abc():
             class _(_SkFeed):
                 exec(f'def on_site(self, {", ".join(on_site_args_clone)}): ...')
                 exec(f'def off_site(self, {", ".join(off_site_args)}): ...')
+                def to(self, atomic_numbers, ski_type): ...
 
             if not warn:
                 pytest.fail(f'UserWarning failed to issue when `{arg}` '
@@ -71,6 +74,7 @@ def test_skfeed_abc():
             class _(_SkFeed):
                 exec(f'def on_site(self, {", ".join(on_site_args)}): ...')
                 exec(f'def off_site(self, {", ".join(off_site_args_clone)}): ...')
+                def to(self, atomic_numbers, ski_type): ...
 
             if not warn:
                 pytest.fail(f'UserWarning failed to issue when `{arg}` '

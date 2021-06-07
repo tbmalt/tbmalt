@@ -103,7 +103,7 @@ class _TestSkFeed(_SkFeed):
                                 for l2 in range(max_ls[atom_2] + 1)
                                 if l1 <= l2}
 
-    def off_site(self, atom_pair, l_pair, distances, ski_type, **kwargs):
+    def off_site(self, atom_pair, l_pair, distances, **kwargs):
         """This creates and returns dummy off-site Slater-Koster integrals.
 
         The integral value returned is just the product of the distance and a
@@ -127,7 +127,7 @@ class _TestSkFeed(_SkFeed):
         return (self.off_site_values[(*atom_pair, *l_pair)].view(1, -1)
                 * distances.view(-1, 1))
 
-    def on_site(self, atomic_numbers, ski_type, **kwargs):
+    def on_site(self, atomic_numbers, **kwargs):
         """Returns dummy on-site values."""
 
         # Used in testing for kwarg passthrough
@@ -135,6 +135,9 @@ class _TestSkFeed(_SkFeed):
             raise FoundOnSiteTestKwarg()
 
         return tuple([self.on_site_values[int(i)] for i in atomic_numbers])
+
+    def to(self, *args):
+        pass
 
 
 def molecules(device: torch.device, n: Optional[int] = None
@@ -476,7 +479,7 @@ def test_gather_on_site_general(device):
     sk_feed = _TestSkFeed(atomic_numbers.unique().tolist(), device=device)
 
     try:
-        _gather_on_site(geometry, basis, sk_feed, 'H',
+        _gather_on_site(geometry, basis, sk_feed,
                         test_on_site_kwarg_passthrough=None)
         # If an FoundOnSiteTestKwarg exception did not get raised then the
         # kwarg did not get passed-through, so fail the test.
@@ -499,8 +502,8 @@ def test_gather_on_site_single(device):
 
     for geometry in geoms:
         basis = Basis(geometry.atomic_numbers, max_ls)
-        pred = _gather_on_site(geometry, basis, sk_feed, ski_type='H')
-        ref = torch.cat(sk_feed.on_site(geometry.atomic_numbers, ski_type='H'))
+        pred = _gather_on_site(geometry, basis, sk_feed)
+        ref = torch.cat(sk_feed.on_site(geometry.atomic_numbers))
         check_1 = torch.allclose(ref, pred)
         check_2 = pred.device == device
         assert check_1, f'Incorrect on-site values returned for {geometry}'
@@ -522,8 +525,8 @@ def test_gather_on_site_batch(device):
     geometry = Geometry([i.atomic_numbers for i in geoms],
                         [i.positions for i in geoms])
     basis = Basis([i.atomic_numbers for i in geoms], max_ls)
-    pred = _gather_on_site(geometry, basis, sk_feed, ski_type='H')
-    ref = pack([torch.cat(sk_feed.on_site(i.atomic_numbers, ski_type='H'))
+    pred = _gather_on_site(geometry, basis, sk_feed)
+    ref = pack([torch.cat(sk_feed.on_site(i.atomic_numbers))
                 for i in geoms])
 
     check_1 = torch.allclose(ref, pred)
@@ -540,10 +543,10 @@ def test_gather_on_site_grad(device):
     # Proxy function is needed for calling gradcheck as only torch.tensors
     # can be proved as input arguments.
     def single_proxy(*args):
-        return _gather_on_site(geom_s, basis_s, sk_feed_s, ski_type='H')
+        return _gather_on_site(geom_s, basis_s, sk_feed_s)
 
     def batch_proxy(*args):
-        return _gather_on_site(geom_b, basis_b, sk_feed_b, ski_type='H')
+        return _gather_on_site(geom_b, basis_b, sk_feed_b)
 
     # Construct the single and batch systems
     sk_feed_s = _TestSkFeed(device=device, requires_grad=True)
@@ -600,7 +603,7 @@ def test_gather_off_site_general(device):
 
     # Check for kwarg passthrough
     try:
-        _gather_off_site(g_anum, l_pair, dists, sk_feed, 'H',
+        _gather_off_site(g_anum, l_pair, dists, sk_feed,
                          test_off_site_kwarg_passthrough=None)
         pytest.fail(
             'kwargs not passed-through to the SkFeed off_site method')
@@ -610,7 +613,7 @@ def test_gather_off_site_general(device):
     # Ensure atom_indices are passed through correctly (a special check is
     # required as _gather_off_site manipulates the tensor).
     try:
-        _gather_off_site(g_anum, l_pair, dists, sk_feed, 'H',
+        _gather_off_site(g_anum, l_pair, dists, sk_feed,
                          atom_indices=index_mask_a)
     except AtomIndicesIncorrect:
         pytest.fail('Atom indices passed to off_site were incorrect')
@@ -649,8 +652,8 @@ def test_gather_off_site(device):
         atom_pairs, distances = get_interactions(l_pair, 20)
         viable_atom_pairs = []
 
-        pred = _gather_off_site(atom_pairs, l_pair, distances, sk_feed, 'H')
-        ref = torch.cat([sk_feed.off_site(i, l_pair, j, 'H')
+        pred = _gather_off_site(atom_pairs, l_pair, distances, sk_feed)
+        ref = torch.cat([sk_feed.off_site(i, l_pair, j)
                          for i, j in zip(atom_pairs, distances)], dim=0)
         check_1 = torch.allclose(pred, ref)
         check_2 = pred.device == device
@@ -665,7 +668,7 @@ def test_gather_off_site_grad(device):
     """Checks gradient stability of the `_gather_off_site` function."""
 
     def proxy(*args):
-        return _gather_off_site(atom_pairs, l_pair, distances, sk_feed, 'H')
+        return _gather_off_site(atom_pairs, l_pair, distances, sk_feed)
 
     # Instantiate the SkFeed object
     sk_feed = _TestSkFeed(device=device, requires_grad=True)
@@ -689,7 +692,7 @@ def test_hs_matrix_general(device):
     basis = Basis(atomic_numbers[0], max_ls)
 
     try:
-        hs_matrix(geometry, basis, sk_feed, 'H',
+        hs_matrix(geometry, basis, sk_feed,
                   test_off_site_kwarg_passthrough=None)
         pytest.fail(
             'kwargs not passed-through to the SkFeed off_site method')
@@ -697,7 +700,7 @@ def test_hs_matrix_general(device):
         pass
 
     try:
-        hs_matrix(geometry, basis, sk_feed, 'H',
+        hs_matrix(geometry, basis, sk_feed,
                   test_on_site_kwarg_passthrough=None)
         pytest.fail(
             'kwargs not passed-through to the SkFeed on_site method')
@@ -712,7 +715,7 @@ def test_hs_matrix_single(device):
     for atomic_numbers, positions in zip(*molecules(device=device)):
         geometry = Geometry(atomic_numbers, positions)
         basis = Basis(atomic_numbers, max_ls)
-        res = hs_matrix(geometry, basis, sk_feed, 'H')
+        res = hs_matrix(geometry, basis, sk_feed)
 
         # Tolerance threshold tests are not implemented, so just fail here
         check_1 = False
@@ -730,7 +733,7 @@ def test_hs_matrix_batch(device):
     atomic_numbers, positions = molecules(device=device)
     geometry = Geometry(atomic_numbers, positions)
     basis = Basis(atomic_numbers, max_ls)
-    res = hs_matrix(geometry, basis, sk_feed, 'H')
+    res = hs_matrix(geometry, basis, sk_feed)
 
     # Tolerance threshold tests are not implemented, so just fail here
     check_1 = False
@@ -753,7 +756,7 @@ def test_hs_matrix_grad(device):
 
     def proxy(geometry_in, basis_in, sk_feed_in, *args):
         """Proxy function is needed to enable gradcheck to operate properly"""
-        return hs_matrix(geometry_in, basis_in, sk_feed_in, 'H')
+        return hs_matrix(geometry_in, basis_in, sk_feed_in)
 
     # Make sure the SkFeed object only creates data from H & C otherwise the
     # calculation will take an inordinate amount time.
