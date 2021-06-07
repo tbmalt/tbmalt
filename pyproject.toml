@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+testpaths = [
+    "tests"
+]
+markers = [
+    "grad: Marks tests which perform 'gradcheck' evaluations, this can be slow."
+]

@@ -118,5 +118,3 @@ dipole_units: Dict[str, float] = {
     'ebohr': 1.0, 'eb': 1.0,
     'au': 1.0
 }
-
-

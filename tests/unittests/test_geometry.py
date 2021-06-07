@@ -5,7 +5,7 @@ import numpy as np
 from scipy.spatial import distance_matrix
 import torch
 from ase.build import molecule
-from tbmalt.tests.test_utils import fix_seed
+from tests.test_utils import fix_seed
 from tbmalt.structures.geometry import Geometry, unique_atom_pairs
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units

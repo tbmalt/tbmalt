@@ -4,7 +4,7 @@ from torch.autograd import gradcheck
 import pytest
 import numpy as np
 from tbmalt.common import batch
-from tbmalt.tests.test_utils import *
+from tests.test_utils import *
 
 
 @fix_seed

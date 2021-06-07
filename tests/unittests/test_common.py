@@ -2,7 +2,7 @@
 """Unit tests associated with `tbmalt.common.__init__`."""
 import numpy as np
 import torch
-from tbmalt.tests.test_utils import fix_seed
+from tests.test_utils import fix_seed
 from tbmalt.common import split_by_size
 
 
@@ -31,5 +31,3 @@ def test_split_by_size(device):
         check_1 = all([torch.allclose(i, j) for i, j in zip(prd, ref)])
 
         assert check_1, 'Tensor split operation failed'
-
-

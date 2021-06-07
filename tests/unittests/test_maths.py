@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from scipy import linalg
 from tbmalt.common import maths, batch
-from tbmalt.tests.test_utils import *
+from tests.test_utils import *
 
 
 ####################

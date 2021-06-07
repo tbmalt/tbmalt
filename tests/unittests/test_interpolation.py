@@ -3,11 +3,11 @@ import torch
 import numpy as np
 from torch.autograd import gradcheck
 import pytest
-from tbmalt.tests.test_utils import *
+from tests.test_utils import *
 from tbmalt.common.maths.interpolation import PolyInterpU
 torch.set_default_dtype(torch.float64)
 
-data = np.loadtxt('data/polyinterp/HH.dat')
+data = np.loadtxt('tests/unittests/data/polyinterp/HH.dat')
 
 
 ###################################

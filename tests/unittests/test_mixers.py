@@ -38,7 +38,7 @@ import pytest
 import torch
 from torch.autograd import gradcheck
 from tbmalt.common.maths.mixers import Simple, Anderson
-from tbmalt.tests.test_utils import fix_seed, clean_zero_padding
+from tests.test_utils import fix_seed, clean_zero_padding
 from tbmalt.common.maths import sym, eighb
 from tbmalt.common.batch import pack
 

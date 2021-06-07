@@ -8,7 +8,7 @@ from numpy.random import choice
 import torch
 from torch import Tensor
 from torch.autograd import gradcheck
-from tbmalt.tests.test_utils import fix_seed
+from tests.test_utils import fix_seed
 from tbmalt.common.batch import pack
 from tbmalt.physics.dftb.slaterkoster import (
     _rot_yz_s, _rot_xy_s, _rot_yz_p, _rot_xy_p, _rot_yz_d,
@@ -62,7 +62,7 @@ def from_file(path: str, **kwargs) -> Tensor:
 
 def build_geom(*atomic_numbers: int, **kwargs) -> Geometry:
     """Constructs a `Geometry` object for a given number of atoms.
-    
+
     Takes an arbitrary number of atoms and returns a `Geometry` object. Note
     that the positions are randomly generated.
 
@@ -74,7 +74,7 @@ def build_geom(*atomic_numbers: int, **kwargs) -> Geometry:
     Returns:
         geometry: `Geometry` object with the desired atoms at random positions.
     """
-    
+
     return Geometry(torch.tensor(*[atomic_numbers],),
                     torch.rand(len(atomic_numbers), 3, **kwargs))
 
@@ -214,7 +214,7 @@ def sk_rotation_data(batch: bool = False, **kwargs
 
     # Read in unit vectors & the reference rotation matrices. Then create a mas
     # identifying vectors where |y| > |z|.
-    path = 'data/slaterkoster'
+    path = 'tests/unittests/data/slaterkoster'
     u_vecs = from_file(f'{path}/unit_vectors.dat', **kwargs)
     r_mats = {ll: from_file(f'{path}/rot_{ll}.dat', **kwargs) for ll in range(4)}
     yz_mask = u_vecs[:, 1].abs() > u_vecs[:, 2].abs()
@@ -301,7 +301,7 @@ def sub_block_rot_data(batch: bool = False, **kwargs
         integrals:  Slater-Koster integrals (input data).
         reference: Reference results.
     """
-    path = 'data/slaterkoster'
+    path = 'tests/unittests/data/slaterkoster'
     l_pairs = [(l1, l2) for l1 in range(4) for l2 in range(4)]
     u_vecs = from_file(f'{path}/unit_vectors.dat', **kwargs)
 
