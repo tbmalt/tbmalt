@@ -14,9 +14,18 @@ based tight binding models. This python toolkit aims to help reduce the overhead
 associated with the development of new models; and its modular nature reduces the complexity
 of interfacing with existing models/codes.
 
+
 License
 =======
-TBMaLT is released under the `GNU Lesser General Public License <LICENSE>`_.
+
+TBMaLT is free software: you can redistribute it and/or modify it under
+the terms of the GNU Lesser General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+TBMaLT is distributed in the hope that it will be useful, but without any
+warranty; without even the implied warranty of merchantability or fitness for a
+particular purpose.  See the GNU Lesser General Public License for more details.
 
 .. |Python badge| image:: https://img.shields.io/badge/python-v3.8-blue?style=for-the-badge&logo=python
     :target: https://www.python.org/
