@@ -1,0 +1,41 @@
+name: CI
+
+on: [push, pull_request]
+# on:
+#   push:
+#     branches:
+#       - main
+#   pull_request:
+#     branches:
+#       - main
+#   # Allows to trigger the workflow manually from the Action tab
+#  workflow_dispatch:
+
+jobs:
+
+  build:
+
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        # Dependencies are not installed via 'requirements.txt' to prevent the download of 800 MB.
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest h5py ase typing
+          pip3 install torch==1.8.1+cpu -f https://download.pytorch.org/whl/torch_stable.html
+
+      - name: Test with pytest
+        run: |
+          pytest
