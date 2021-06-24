@@ -5,10 +5,22 @@ This module provides the `Basis` data structure class and its associated code.
 The `Basis` class is intended to hold data needed to describe the number and
 identities of a chemical systems bases.
 """
-from typing import Dict, List, Union, Literal
+from typing import Dict, List, Union, Literal, Optional, Any
+import numpy as np
+from h5py import Group
 import torch
-from torch import Tensor, Size
+from torch import Tensor, Size, arange
 from tbmalt.common.batch import pack
+from tbmalt.common import split_by_size
+
+
+Form = Literal['full', 'shell', 'atomic']
+
+
+def _repeat_range(tensor, **kwargs):
+    """Combines `torch.arange` and `torch.repeat_interleave` methods."""
+    # Convenience function to abstract repeated verbose calls
+    return arange(len(tensor), **kwargs).repeat_interleave(tensor)
 
 
 class Basis:
@@ -19,160 +31,126 @@ class Basis:
 
     Arguments:
         atomic_numbers: Atomic numbers of the atoms present in the system.
-        max_ls: A dictionary specifying the maximum permitted angular momentum
-            associated with a each atomic number. keys must be integers not
-            torch tensors.
+        shell_dict: A dictionary that yields the angular momenta of each shell
+            for a given atomic number e.g. `{1: [0], 2: [0, 0, 0] 6: [0, 1]}`
+            designates H as having 1s shell, He as having 3s shells and C as
+            having 1s & 1p shell. Values must be lists of integers, not torch
+            tensors.
         shell_resolved: If True, calculations will be shell-resolved, if False
             they will be atom-resolved. This is used to automatically
             return the correct resolution information. [DEFAULT=False]
 
     Attributes:
-        n_orbitals (Tensor): Number of orbitals present.
-        n_subshells (Tensor): Number of subshells present.
-        n_atoms (Tensor): Number of atoms present.
-        orbital_matrix_shape (Size): Associated orbital matrix shape, e.g.
+        n_orbitals (Tensor): orbital count.
+        n_shells (Tensor): shell count.
+        n_atoms (Tensor): atoms count.
+        orbital_matrix_shape (Size): Anticipated orbital matrix shape, e.g.
             Hamiltonian or overlap matrices.
-        subshell_matrix_shape (Size): Similar to ``orbital_matrix_shape`` but
-            with only one matrix-element per subshell block.
-        atomic_matrix_shape (Size): Similar to ``subshell_matrix_shape`` but
+        shell_matrix_shape (Size): Similar to ``orbital_matrix_shape`` but
+            with only one matrix-element per shell.
+        atomic_matrix_shape (Size): Similar to ``shell_matrix_shape`` but
             with only one matrix-element per atom.
+        shell_ls (Tensor): Azimuthal number associated with each shell.
+        shell_ns (Tensor): The number of each shell, as defined by the order
+            in which they were specified for relevant species.
 
+    Warnings:
+        The order that each element's shell is specified in ``shell_dict`` is
+        taken as the order in which integrals are yielded by `SkFeed` objects;
+        i.e. `SkFeed.off_site(..., [atom_1_shell, atom_2_shell], ...)` will
+        return the integral associated with the atom_1_shell'th shell on atom
+        1 and the atom_2_shell'th shell on atom 2.
     """
     # Developers Notes:
-    # This class is used wherever information is needed about a system's basis
-    # set or its orbitals. It is designed to permit code to be written which is
-    # agnostic to the orbital-resolved/atom-resolved nature of the calculation.
-    #
-    # Class instances have two primary cached properties named ``_basis_list``
-    # & ``_basis_blocks``; which are derived from the two class properties
-    # ``_look_up`` & ``_blocks`` respectively. These help speed up calls to
-    # the ``azimuthal_matrix`` function without needing to store the underling
-    # result. which would be memory intensive. The ``_look_up`` list stores a
-    # vector for each angular momenta:
-    #     _look_up = [
-    #         [0],  # <- for an S-subshell
-    #         [1, 1, 1],  # <- for a P-subshell
-    #         [2, 2, 2, 2, 2],  # <- for a D-subshell
-    #         [3, 3, 3, 3, 3, 3, 3],  # <- for an F-subshell
-    #         ...  # So on and so forth
-    #     ]
-    # This is used to generate atomic azimuthal identity blocks. For example a
-    # carbon atom has s & p subshells, thus it combines the s & p orbitals:
-    #     Carbon_atom = [0, 1, 1, 1,]
-    #     or
-    #     Carbon_atom = torch.cat([_look_up[0], _look_up[1]])
-    # These are then used to build up the azimuthal identity for the whole
-    # system ``_basis_list``. To save memory, ``_basis_list`` stores vectors
-    # rather than concatenating them into a single list. The ``_blocks``
-    # property is a list of truthy boolean tensors of size NxN where
-    #   N = 2ℓ + 1
-    # ℓ being the azimuthal quantum number. These are used in constructing the
-    # mask which blanks out the on site terms from the ``azimuthal_matrix``.
-    # By storing both ``_basis_list`` and ``_basis_blocks`` as composites of
-    # ``_look_up`` & ``_blocks`` the amount of memory per system can be
-    # reduced. The two secondary cached properties: ``_sub_basis_list`` &
-    # ``_sub_basis_blocks`` are the orbital-resolved variates.
+    # Basis instances only ever yield tensors used for masking or indexing
+    # operations. As such the device on which they return results is somewhat
+    # irrelevant. However, results are placed on the anticipated device anyway
+    # to maintain expected behaviour.
 
-    # Variable Setup
-    _max_l = 5  # <- Sets the maximum permitted angular momentum.
-    _ls = torch.arange(_max_l)
+    def __init__(self, atomic_numbers: Union[List[Tensor], Tensor],
+                 shell_dict: Dict[int, List[int]],
+                 shell_resolved: bool = False):
 
-    # Cache List Construction
-    # pylint: disable=E741,W0106
-    _sub_look_up = [torch.arange(l + 1) for l in _ls]
-    _look_up = [l.repeat_interleave(2 * l + 1) for l in _sub_look_up]
-    _sub_blocks = [torch.full((l + 1, l + 1), True) for l in _ls]
-    _blocks = [torch.full((l, l), True) for l in (_ls + 1) ** 2]
-    _orbs_per_shell = [2 * l + 1 for l in _sub_look_up]
-
-    # Cache List Extension: Add dummy ℓ=-1 value for padded batches
-    _orbs_per_shell.append(torch.tensor([0]))
-
-    def __init__(self, atomic_numbers: Union[Tensor, List[Tensor]],
-                 max_ls: Dict[int, int], shell_resolved: bool = False):
-
-        # Ensure that the keys of `max_ls` are integers and Not tensors
-        key = list(max_ls.keys())[0]
-        if not isinstance(key, int):
-            raise ValueError(f'Keys of "max_ls" must be ints not {type(key)}')
-        # Clone the max_ls dict and modify it to accept padding values
-        max_ls = max_ls.copy()
-        max_ls[0] = -1
-
-        # pylint: disable=C0103
-        _batch = isinstance(atomic_numbers, list) or atomic_numbers.ndim == 2
+        # Ensure that shell_dict yields lists with integers in & nothing else
+        if not all([isinstance(j, int) and isinstance(i, list)
+                    for i in shell_dict.values() for j in i]):
+            raise ValueError('"shell_dict" must yield lists of integers.')
 
         # __DATA ATTRIBUTES__
         self.shell_resolved = shell_resolved
+        self.shell_dict = shell_dict
         self.atomic_numbers = pack(atomic_numbers)
 
-        self.max_l_on_atom: Tensor = torch.tensor(
-            [max_ls[int(i)] if i.ndim == 0  # If single system
-             else [max_ls[int(j)] for j in i]  # If multiple systems
-             for i in self.atomic_numbers])
+        # __META ATTRIBUTES__
+        self.__device = self.atomic_numbers.device  # <- Don't change directly
+        # pylint: disable=C0103
+        _batch = self.atomic_numbers.ndim == 2  # <─┬ Used only during init
+        kwargs = {'device': self.__device}  # <─────┘
+
+        # __HELPER ATTRIBUTES__
+        def map_helper(i):  # Helps to build _shells/orbitals_per_species
+            return torch.zeros(294, dtype=torch.long).scatter(
+                0, torch.tensor(list(shell_dict.keys())), torch.tensor(i)
+            ).to(**kwargs)
+
+        # These allow for the Nº of shells/orbitals on a given species to be
+        # looked-up in a batch-wise manor without the need for dictionaries.
+        self._shells_per_species = map_helper(
+            [len(v) for v in shell_dict.values()])
+        self._orbitals_per_species = map_helper(
+            [sum([l * 2 + 1 for l in v]) for v in shell_dict.values()])
+
+        self.shell_ns, self.shell_ls = torch.tensor(
+            [(i, l) for n in self.atomic_numbers.view(-1) if n != 0
+             for i, l in enumerate(shell_dict[int(n)])], **kwargs).T
+
+        if _batch:  # Reshape "shell_ns" & "shell_ls" if batched
+            for attr in ['shell_ns', 'shell_ls']:  # Hack to avoid duplication
+                self.__setattr__(attr, pack(split_by_size(
+                    self.__getattribute__(attr),
+                    self._shells_per_species[self.atomic_numbers].sum(-1)),
+                    value=-1))
 
         # __COUNTABLE ATTRIBUTES__
-        self.n_orbitals: Tensor = self.orbs_per_atom.sum(-1)
-        self.n_subshells: Tensor = (self.max_l_on_atom + 1).sum(-1)
         self.n_atoms: Tensor = self.atomic_numbers.count_nonzero(-1)
+        self.n_shells: Tensor = (self.shell_ls != -1).sum(-1)
+        self.n_orbitals: Tensor = self.orbs_per_atom.sum(-1)
 
         # __SHAPE ATTRIBUTES__
         # pylint: disable=C0103
-        _m1, _m2 = self.n_atoms.max(), self.n_subshells.max()
+        _m1, _m2 = self.n_atoms.max(), self.n_shells.max()
         _m3 = self.n_orbitals.max()
         # _n adds an extra dimension when in batch mode
-        _n = Size([len(atomic_numbers)]) if _batch else Size()
+        _n = Size([len(self.atomic_numbers)]) if _batch else Size()
         self.atomic_matrix_shape: Size = _n + Size([_m1, _m1])
-        self.subshell_matrix_shape: Size = _n + Size([_m2, _m2])
+        self.shell_matrix_shape: Size = _n + Size([_m2, _m2])
         self.orbital_matrix_shape: Size = _n + Size([_m3, _m3])
 
-        # __CACHE ATTRIBUTES__
-        def apply_loop(look_up):  # Convenience function
-            if self.max_l_on_atom.dim() == 1:
-                return [look_up[o] for o in self.max_l_on_atom]
-            else:
-                return [[look_up[o] for o in s if o != -1]
-                        for s in self.max_l_on_atom]
+    @property
+    def device(self) -> torch.device:
+        """The device on which the `Basis` object resides."""
+        return self.__device
 
-        # Construct cache properties
-        self._basis_list = apply_loop(self._look_up)
-        self._sub_basis_list = apply_loop(self._sub_look_up)
-        self._basis_blocks = apply_loop(self._blocks)
-        self._sub_basis_blocks = apply_loop(self._sub_blocks)
-
-        if _batch:
-            # Masks for clearing padding values when in batch mode & to get
-            # around PyTorch issue 55143.
-            def make_mask(e):  # Convenience function
-                return pack([torch.full([i], True)for i in e], value=False)
-
-            self._masks = {'orbital': make_mask(self.n_orbitals),
-                           'shell': make_mask(self.n_subshells),
-                           'atomic': make_mask(self.n_atoms)}
-
-            # Add "full" and "block" aliases for convenience
-            self._masks.update({'full': self._masks['orbital'],
-                                'block': self._masks['shell']})
+    @device.setter
+    def device(self, *args):
+        # Instruct users to use the ".to" method if wanting to change device.
+        raise AttributeError('Basis object\'s dtype can only be modified '
+                             'via the ".to" method.')
 
     @property
     def orbs_per_atom(self) -> Tensor:
         """Number of orbitals associated with each atom."""
-        return (self.max_l_on_atom + 1) ** 2
+        return self._orbitals_per_species[self.atomic_numbers.view(-1)
+                                   ].view_as(self.atomic_numbers)
 
     @property
     def orbs_per_shell(self) -> Tensor:
         """Number of orbitals associated with each shell."""
-        # Get number of orbitals per-shell, per-system, concatenate, & pack.
-        if self.atomic_numbers.dim() == 1:
-            return torch.cat([self._orbs_per_shell[l]
-                              for l in self.max_l_on_atom])
-        else:
-            return pack([torch.cat([self._orbs_per_shell[l] for l in i])
-                         for i in self.max_l_on_atom])
+        return torch.where(self.shell_ls != -1, self.shell_ls * 2 + 1, 0)
 
     @property
     def orbs_per_res(self):
-        """Returns ``orbs_per_atom`` if atom resolved & ``orbs_per_shell`` if not."""
+        """Returns `orbs_per_atom` if atom resolved & `orbs_per_shell` if not."""
         # This property allows for resolution agnostic programming.
         return (self.orbs_per_shell if self.shell_resolved
                 else self.orbs_per_atom)
@@ -180,22 +158,20 @@ class Basis:
     @property
     def on_atoms(self) -> Tensor:
         """Identifies which atom each orbital belongs to."""
-        if self.atomic_numbers.dim() == 1:
-            return torch.arange(len(self.orbs_per_atom)
-                                ).repeat_interleave(self.orbs_per_atom)
+        if (opa := self.orbs_per_atom).ndim == 1:
+            return _repeat_range(opa, device=self.__device)
         else:
-            return pack([torch.arange(len(o)).repeat_interleave(o)
-                         for o in self.orbs_per_atom], value=-1)
+            return pack([_repeat_range(o, device=self.__device) for o in opa],
+                        value=-1)
 
     @property
     def on_shells(self) -> Tensor:
         """Identifies which shell each orbital belongs to."""
-        if self.atomic_numbers.dim() == 1:
-            return torch.arange(len(self.orbs_per_shell)
-                                ).repeat_interleave(self.orbs_per_shell)
+        if (ops := self.orbs_per_shell).ndim == 1:
+            return _repeat_range(ops, device=self.__device)
         else:
-            return pack([torch.arange(len(o)).repeat_interleave(o)
-                         for o in self.orbs_per_shell], value=-1)
+            return pack([_repeat_range(o, device=self.__device) for o in ops],
+                        value=-1)
 
     @property
     def on_res(self) -> Tensor:
@@ -203,37 +179,119 @@ class Basis:
         # This property allows for resolution agnostic programming.
         return self.on_shells if self.shell_resolved else self.on_atoms
 
-    def azimuthal_matrix(self, form: Literal['full', 'block'] = 'full',
-                         sort: bool = False, mask_on_site: bool = True,
-                         mask_lower: bool = True, mask_diag: bool = True
-                         ) -> Tensor:
+    def to(self, device: device) -> 'Basis':
+        """Returns a copy of the `Basis` instance on the specified device.
+
+        This method creates and returns a new copy of the `Basis` instance
+        on the specified device "``device``".
+
+        Arguments:
+            device: Device to which all associated tensors should be moved.
+
+        Returns:
+            basis: Copy of the instance placed on the specified device.
+
+        Notes:
+            If the `Basis` instance is already on the desired device then
+            `self` will be returned.
+
+        """
+        return self.__class__(self.atomic_numbers.to(device=device),
+                              self.shell_dict, self.shell_resolved)
+
+    @classmethod
+    def from_hdf5(cls, source: Group, device: Optional[torch.device] = None
+                  ) -> 'Basis':
+        """Instantiate a `Basis` instances from an HDF5 group.
+
+        Arguments:
+            source: An HDF5 group(s) containing `Basis` instance.
+            device: Device on which to place tensors. [DEFAULT=None]
+
+        Returns:
+            basis: The resulting `Basis` object.
+        """
+        shell_dict = {int(k): v[()].tolist() for k, v in
+                      source['shell_dict'].items()}
+        shell_resolved = bool(source['shell_resolved'][()])
+        atomic_numbers = torch.tensor(source['atomic_numbers'][()],
+                                      device=device)
+        return cls(atomic_numbers, shell_dict, shell_resolved)
+
+    def to_hdf5(self, target: Group):
+        """Saves `Basis` instance into a target HDF5 Group.
+
+        Arguments:
+            target: The hdf5 group to which the `Basis` should be saved.
+
+        Notes:
+            This function does not create its own group as it expects that
+            ``target`` is the group into which data should be writen.
+        """
+        # Store the shell dictionary, atomic numbers & resolution
+        shell_dict = target.create_group('shell_dict')
+        for k, v in self.shell_dict.items():
+            shell_dict.create_dataset(str(k), data=np.array(v))
+
+        target.create_dataset('atomic_numbers',
+                              data=self.atomic_numbers.detach().cpu().numpy())
+
+        target.create_dataset('shell_resolved', data=self.shell_resolved)
+
+    def matrix_shape(self, form: Form) -> Size:
+        """Returns the expected shape of a matrix based on ``form``.
+
+        This returns either `orbital_matrix_shape`, `shell_matrix_shape` or
+        `atomic_matrix_shape` based on the value provided for ``form``.
+
+        Arguments:
+            form: Specifies the form of the atomic number matrix:
+
+                - "full": One matrix-element for each orbital-orbital pair.
+                - "shell": One matrix-element for each shell-shell pair.
+                - "atomic": One matrix-element for each atom-atom pair.
+
+        Returns:
+            shape: A `torch.Size` object specifying the associated shape.
+        """
+        # This is mostly a convenience function and to avoid code reception
+        try:
+            shape = {'full': self.orbital_matrix_shape,
+                     'shell': self.shell_matrix_shape,
+                     'atomic': self.atomic_matrix_shape}[form]
+            return shape
+
+        except KeyError as e:  # Warn if an unknown "form" option is used
+            raise ValueError(f'"{form}" is not a valid option for "form".'
+                             f'valid values are {Form.__args__}')
+
+    def azimuthal_matrix(self, form: Form = 'full', sort: bool = False,
+                         mask_on_site: bool = False, mask_diag: bool = False,
+                         mask_lower: bool = False) -> Tensor:
         r"""Azimuthal quantum numbers for each basis-basis interaction.
 
         Tensor defining the azimuthal quantum numbers (ℓ) associated with each
-        orbital-orbital interaction element.  Alternately, a block form of
+        orbital-orbital interaction element.  Alternately, a shell form of
         the azimuthal matrix can be returned which defines only one element
-        per subshell-subshell interaction block. Segments of the matrix can be
+        per shell-shell interaction block. Segments of the matrix can be
         masked out with -1 values using the `mask_*` arguments.
 
         Arguments:
             form: Specifies the form of the azimuthal matrix:
 
-                - "full": One matrix-element for each orbital-orbital
-                  interaction.
-                - "block": Causes the ℓ-matrix to be returned in block form
-                  where each subshell-subshell interaction block is
-                  represented by only a single element.
+                - "full": one matrix-element per orbital-orbital interaction.
+                - "shell": Causes the ℓ-matrix to be returned in shell form
+                  where each shell-shell interaction block is represented by a
+                  single element.
 
                 See the notes section for more information. [DEFAULT="full"]
             sort: Sort along the last dimension so the lowest ℓ value in each
                 ℓ-pair comes first. [DEFAULT=False]
-            mask_on_site : `bool`, optional
-                Masks on-site blocks. Note that the diagonals are not masked
-                when in full matrix mode. [DEFAULT=True]
-            mask_lower : `bool`, optional
-                Masks lower triangle of the ℓ-matrix. [DEFAULT=True]
-            mask_diag : `bool`, optional
-                Masks diagonal elements in full matrix mode. [DEFAULT=True]
+            mask_on_site: Masks on-site blocks, but leaves diagonals
+                unaffected.[DEFAULT=False]
+            mask_diag: Masks diagonal elements in full matrix mode but has no
+                effect on `shell` form matrices. [DEFAULT=False]
+            mask_lower: Masks lower triangle of the ℓ-matrix. [DEFAULT=False]
 
         Returns:
             azimuthal_matrix: Tensor defining the azimuthal quantum numbers
@@ -263,13 +321,13 @@ class Basis:
             Black & grey indicate areas of the matrix that have been masked
             out by setting their values to -1. A masking value of -1 is
             chosen as it is a invalid azimuthal quantum number, & is thus
-            less likely to result in collision. If ``block`` is True then
+            less likely to result in collision. If ``shell`` is True then
             the matrix will be reduced to:
 
             .. image:: ../images/Azimuthal_matrix_block.svg
                 :width: 186
                 :align: center
-                :alt: Azimuthal matrix (block form)
+                :alt: Azimuthal matrix (shell form)
 
             As the diagonal elements are contained within the on-site blocks
             it is not possible to selectively mask & unmask them. Note that
@@ -286,47 +344,45 @@ class Basis:
             ``atomic_number_matrix``.
 
         Raises:
-            KeyError: If an invalid ``form`` option is passed.
-        """
-        if form not in ['full', 'block']:
-            raise KeyError(f'"{form}" is not a valid option for `form`')
+            ValueError: If an invalid ``form`` option is passed.
 
+        Warnings:
+            Azimuthal sorting (``sort``) should be used with care as it will
+            introduce inconsistencies with the other matrices. Only use this
+            option if you know what you are doing.
+        """
+
+        if form == 'atomic':
+            raise ValueError('Azimuthal matrix can not be in "atomic" form')
+
+        shape = self.matrix_shape(form)  # <- shape of the output matrix
         batch = self.atomic_numbers.dim() == 2
 
-        # Code is full/block mode agnostic to reduce code duplication. however
+        # Code is full/shell mode agnostic to reduce code duplication. however
         # some properties must be set at the start to make this work.
-        if form != 'block':  # If returning the full matrix
-            shape = self.orbital_matrix_shape  # <- shape of the output matrix
-            basis_list = self._basis_list  # <- see class docstring
-            basis_blocks = self._basis_blocks  # <- see class docstring
-        else:  # If returning the reduced block matrix
-            shape = self.subshell_matrix_shape
-            basis_list = self._sub_basis_list
-            basis_blocks = self._sub_basis_blocks
-
-        # Repeat basis list to get ℓ-values for the 1'st orbital in each
-        # interaction. Expand function is used as it is faster than repeat.
-        if not batch:
-            l_mat = torch.cat(basis_list).expand(shape)
+        if form == 'full':
+            counts = self.shell_ls * 2 + 1
+            counts[counts == -1] = 0
+            basis_list = self.shell_ls.repeat_interleave(counts.view(-1))
+            if batch:
+                basis_list = pack(split_by_size(basis_list, self.n_orbitals)
+                                  , value=-1)
         else:
-            l_mat = pack([torch.cat(i) for i in basis_list],
-                         value=-1).unsqueeze(-2).expand(shape).clone()
-            # Propagate the padding values to the second dimension
-            l_mat[(l_mat == -1).transpose(-1, -2)] = -1
+            basis_list = self.shell_ls
 
-        # Convert from an NxNx1 matrix into the NxNx2 azimuthal matrix
-        l_mat = torch.stack((l_mat.transpose(-1, -2), l_mat), -1)
+        # Repeat and expand the vectors to get the final NxNx2 matrix tensor.
+        l_mat = self._rows_to_NxNx2(basis_list, shape, -1)
 
         # If masking out parts of the matrix
         if mask_on_site | mask_lower | mask_diag:
             # Create a blank mask.
             mask = torch.full_like(l_mat, False, dtype=torch.bool)
             if mask_on_site:  # Mask out on-site blocks if required.
-                if not batch:
-                    mask[torch.block_diag(*basis_blocks)] = True
-                else:
-                    mask[pack([torch.block_diag(*i) for i in basis_blocks],
-                              value=True)] = True
+                idx_mat = self.index_matrix(form)
+                mask[idx_mat[..., 0] == idx_mat[..., 1]] = True
+
+            if form == 'full': # Mask/unmask the diagonals as instructed
+                mask.diagonal(dim1=-3, dim2=-2)[:] = mask_diag
 
             # Add lower triangle of the matrix to the mask, if told to do so
             if mask_lower:
@@ -336,38 +392,66 @@ class Basis:
                     a, b = tuple(torch.tril_indices(*shape[1:], -1))
                     mask[:, a, b] = True  # ↑ Indexing hack ↑
 
-            # If not in block mode mask/unmask the diagonals as instructed
-            # Mask/Unmask the the
-            if form != 'block':  # <- Only valid for non block matrices
-                # If mask_diag True; the diagonal will be masked, if False it
-                # will be unmasked.
-                mask.diagonal(dim1=-3, dim2=-2)[:] = mask_diag
-
             # Apply the mask and set all the masked values to -1
             l_mat[mask] = -1
 
-        # Sort the angular momenta terms, if requested, and return the
-        # azimuthal_matrix.
+        # Sort angular momenta terms if requested & return the matrix
         return l_mat if not sort else l_mat.sort(-1)[0]
 
-    def atomic_number_matrix(self,
-                             form: Literal['full', 'block', 'atomic'] = 'full'
-                             ) -> Tensor:
+    def shell_number_matrix(self, form: Form = 'full') -> Tensor:
+        r"""Shell numbers associated with each orbital-orbital pair.
+
+        This is analogous to the ``azimuthal_matrix`` tensor but with shell
+        numbers rather than azimuthal quantum numbers. The shell number for
+        each species are taken from the order in which they are defined in
+        the `Basis.shell_dict`.
+
+        Arguments:
+            form: Specifies the form of the shell number matrix:
+
+                - "full": 1 matrix-element per orbital-orbital interaction.
+                - "shell": 1 matrix-element per shell-shell interaction block.
+
+                A more in-depth description of the this argument's effects is
+                given in :meth:`.azimuthal_matrix`. [DEFAULT="full"]
+
+        Returns:
+            shell_number_matrix: An NxNx2 tensor specifying the shell numbers
+                associated with each interaction. N can be the number orbitals
+                , shells or atoms depending on ``form``.
+
+        Raises:
+            ValueError: If an invalid ``form`` option is passed
+
+        """
+        if form == 'atomic':
+            raise ValueError('Shell matrix can not be given in "atomic" form')
+
+        # 1) Make the first row of the NxN matrix
+        s_mat = self.shell_ns.clone()
+
+        if form == 'full':  # If the full matrix is required: expand the s_mat
+            s_mat = s_mat.repeat_interleave(torch.where(
+                self.shell_ls == -1, 0, self.shell_ls * 2 + 1).view(-1))
+            if self.atomic_numbers.dim() == 2:  # "if batch"
+                s_mat = pack(split_by_size(s_mat, self.n_orbitals), value=-1)
+
+        # Convert the rows into a full NxNx2 tensor and return it
+        return self._rows_to_NxNx2(s_mat, self.matrix_shape(form), -1)
+
+    def atomic_number_matrix(self, form: Form = 'full') -> Tensor:
         r"""Atomic numbers associated with each orbital-orbital pair.
 
         This is analogous to the ``azimuthal_matrix`` tensor but with atomic
-        numbers rather than azimuthal quantum numbers. Block and atomic forms
+        numbers rather than azimuthal quantum numbers. Shell and atomic forms
         can also be returned.
 
         Arguments:
             form: Specifies the form of the atomic number matrix:
 
-                - "full": One matrix-element for each orbital-orbital
-                  interaction.
-                - "block": One matrix-element for each subshell-subshell
-                  interaction block.
-                - "atomic": One matrix-element for each atom-atom interaction
-                  block.
+                - "full": 1 matrix-element per orbital-orbital interaction.
+                - "shell": 1 matrix-element per shell-shell interaction block.
+                - "atomic": 1 matrix-element per atom-atom interaction block.
 
                 A more in-depth description of the this argument's effects is
                 given in :meth:`.azimuthal_matrix`. [DEFAULT="full"]
@@ -375,52 +459,34 @@ class Basis:
         Returns:
             atomic_number_matrix: An NxNx2 tensor specifying the atomic
                 numbers associated with each interaction. N can be the number
-                of orbitals, subshells or atoms depending on ``form``.
+                of orbitals, shells or atoms depending on ``form``.
 
         Raises:
             ValueError: If an invalid ``form`` option is passed.
 
         """
-        try:  # Identify the final desired shape
-            shape = {'full': self.orbital_matrix_shape,
-                     'block': self.subshell_matrix_shape,
-                     'atomic': self.atomic_matrix_shape}[form]
-        except KeyError as e:  # Warn if using an unknown "form" option
-            raise type(e)(f'"{form}" is not a valid option for `form`')
-
         batch = self.atomic_numbers.dim() == 2
 
-        # 1) Make the first row of the NxN matrix
+        # Make the first row of the NxN matrix
         if form == 'full':
             indices = self.on_atoms
             if batch:  # Workaround for issue 55143
-                indices[~self._masks['orbital']] = self.n_atoms.max() - 1
+                indices[torch.where(indices == -1)] = self.n_atoms.max() - 1
             an_mat = self.atomic_numbers.gather(-1, indices)
 
-        elif form == 'block':
-            if not batch:
-                an_mat = self.atomic_numbers.repeat_interleave(
-                    self.max_l_on_atom + 1)
-            else:  # There is no easy alternative to the for-loop method
-                an_mat = pack([an.repeat_interleave(ml + 1) for an, ml in
-                               zip(self.atomic_numbers, self.max_l_on_atom)])
+        elif form == 'shell':
+            an = self.atomic_numbers.view(-1)
+            an_mat = an.repeat_interleave(self._shells_per_species[an])
+            if batch:
+                an_mat = pack(split_by_size(an_mat, self.n_shells), value=0)
 
         else:  # 'form' must be "atomic" then
             an_mat = self.atomic_numbers
 
-        # 2) Expand the row into the first NxN slice of the matrix
-        if not batch:
-            an_mat = an_mat.expand(shape).clone()
-        else:
-            an_mat[~self._masks[form]] = -0  # Mask along rows
-            an_mat = an_mat.unsqueeze(-2).expand(shape).clone()
-            an_mat[~self._masks[form]] = -0  # Mask down columns
+        # Convert the rows into a full NxNx2 tensor and return it
+        return self._rows_to_NxNx2(an_mat, self.matrix_shape(form), 0)
 
-        # 3) Form the NxN slice into the full NxNx2 tensor and return it.
-        return torch.stack((an_mat.transpose(-1, -2), an_mat), -1)
-
-    def index_matrix(self, form: Literal['full', 'block', 'atomic'] = 'full'
-                     ) -> Tensor:
+    def index_matrix(self, form: Form = 'full') -> Tensor:
         """Indices of the atoms associated with each orbital pair.
 
         Produces a tensor specifying the indices of the atoms associate with
@@ -432,12 +498,9 @@ class Basis:
         Arguments:
             form: Specifies the form of the index matrix:
 
-                - "full": One matrix-element for each orbital-orbital
-                  interaction.
-                - "block": One matrix-element for each subshell-subshell
-                  interaction block.
-                - "atomic": One matrix-element for each atom-atom interaction
-                  block.
+                - "full": 1 matrix-element per orbital-orbital interaction.
+                - "shell": 1 matrix-element per shell-shell interaction block.
+                - "atomic": 1 matrix-element per atom-atom interaction block.
 
                 A more in-depth description of the this argument's effects is
                 given in :meth:`.azimuthal_matrix`. [DEFAULT="full"]
@@ -445,46 +508,47 @@ class Basis:
         Returns:
             index_matrix : A NxNx2 tensor specifying the indices of the atoms
                 associated with each interaction. N can be the number of
-                orbitals, sub-shells or atoms depending on ``form``.
+                orbitals, shells or atoms depending on ``form``.
 
         Raises:
             ValueError: If an invalid ``form`` option is passed.
         """
+        shape = self.matrix_shape(form)  # <- shape of the output matrix
+        ans = self.atomic_numbers
 
-        try:  # Identify the final desired shape
-            shape = {'full': self.orbital_matrix_shape,
-                     'block': self.subshell_matrix_shape,
-                     'atomic': self.atomic_matrix_shape}[form]
-        except KeyError as e:  # Warn if using an unknown "form" option
-            raise type(e)(f'"{form}" is not a valid option for `form`')
-
-        batch = self.atomic_numbers.dim() == 2
-
-        # 1) Make the first row of the NxN matrix
+        # Make the first row of the NxN matrix
         if form == 'full':
             i_mat = self.on_atoms
 
-        elif form == 'block':
-            if not batch:
-                i_mat = torch.arange(
-                    len(self.max_l_on_atom)
-                ).repeat_interleave(self.max_l_on_atom + 1)
+        elif form == 'shell':
+            i_mat = arange(
+                self.n_atoms.max(), device=self.__device).expand_as(
+                ans).repeat_interleave(self._shells_per_species[ans.view(-1)])
 
-            else:
-                i_mat = pack([torch.arange(len(ml)).repeat_interleave(ml + 1)
-                              for ml in self.max_l_on_atom])
+            if self.atomic_numbers.dim() == 2:  # "if batch"
+                i_mat = pack(split_by_size(i_mat, self.n_shells), value=-1)
 
         else:  # Must be atomic form otherwise
-            i_mat = torch.arange(self.n_atoms.max()
-                                 ).expand(shape[:-1]).clone()
+            i_mat = arange(self.n_atoms.max(), device=self.__device).expand(
+                shape[:-1]).clone()
+            i_mat[ans == 0] = -1  # Pre-mask to make masking work later on
 
-        # 2) Expand the row into the first NxN slice of the matrix
-        if not batch:
-            i_mat = i_mat.expand(shape).clone()
-        else:
-            i_mat[~self._masks[form]] = -1  # Mask along rows
-            i_mat = i_mat.unsqueeze(-2).expand(shape).clone()
-            i_mat[~self._masks[form]] = -1  # Mask down columns
+        # Convert the rows into a full NxNx2 tensor and return it
+        return self._rows_to_NxNx2(i_mat, shape, -1)
 
-        # 3) Form the NxN slice into the full NxNx2 tensor and return it.
-        return torch.stack((i_mat.transpose(-1, -2), i_mat), -1)
+    @staticmethod
+    def _rows_to_NxNx2(vec: Tensor, shape: Size, pad: Optional[Any] = None
+                       ) -> Tensor:
+        """Takes a row & converts it into its final NxNx2 shape.
+
+        Arguments:
+            vec: The vector that is to be expanded into a tensor.
+            shape: The final, batch agnostic, shape of the tensor.
+            pad: Values which are to be padded after expansion.
+
+        """
+        # Expand rows into first NxN slice of the matrix and mask as needed
+        mat = vec.unsqueeze(-2).expand(shape).clone()
+        mat[mat[..., 0, :] == pad] = pad  # Mask down columns
+        # Form the NxN slice into the full NxNx2 tensor and return it.
+        return torch.stack((mat.transpose(-1, -2), mat), -1)
