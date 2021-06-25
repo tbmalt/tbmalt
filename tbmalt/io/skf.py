@@ -1,21 +1,24 @@
 # -*- coding: utf-8 -*-
 """Load Slater-Koster Tables."""
 import os
-from typing import Union, List, Dict, Tuple
+from typing import Union, List, Tuple, Optional, Literal
+from itertools import combinations_with_replacement
 import torch
 import h5py
 from h5py import Group
 from torch import Tensor
 from tbmalt.structures.geometry import batch_chemical_symbols
-from tbmalt.data.sk import int_s, int_p, int_d, int_f, hdf_suffix, skf_suffix
 
 
 class Skf:
     """Get data from Skf file or binary file for single element pair.
 
+    Read the data from a normal Slater-Koster file as DFTB+, or from the
+    equivalent binary hdf5 file. The Hamiltonian, overlap, repulsive data are
+    optional and can be controlled by arguments in classmethod `read`.
+
     Arguments:
-        element_pair: Single element pair, it can be chemical name pair or
-            element number pair.
+        element_pair: Single element number pair.
         hamiltonian: Hamiltonian data.
         overlap: Overlap data.
         repulsive: A dictionary contains all the repulsive data.
@@ -34,27 +37,25 @@ class Skf:
         dtype: Tensor dtype used in this object.
 
     Attributes:
-        element_pair: Single element pair, it can be chemical name pair or
-            element number pair.
+        element_pair: Single element number pair.
         homo: If the element_pair is homo or hetero.
         hamiltonian: Hamiltonian data.
         overlap: Overlap data.
         repulsive: All the repulsive keys from input repulsive dictionary.
         onsite: On-site data if element_pair is homo.
-        U: Hubbert U data if element_pair is homo.ielement
+        U: Hubbert U data if element_pair is homo.
         kwargs: All the keys from input kwargs dictionary.
 
-    Notes:
-        The class `Skf` tests on the mio, pbc and auorg type files, please be
-        careful when read other type SKF files.
+    Warnings:
+        This may fail to parse files which do not strictly adhere to the skf
+        file format.
 
     Examples:
         Evaluating load mio SKF files with defined path to skf:
 
         >>> from tbmalt.io.skf import Skf
-        >>> from tbmalt.data.sk import int_d
         >>> path = '../../tests/unittests/data/slko/mio/H-H.skf'
-        >>> skf = Skf.read(path, torch.tensor([1, 1]))
+        >>> skf = Skf.read(path, 'from_skf', torch.tensor([1, 1]))
         >>> print(skf.g_step)
         >>> 0.02
         >>> print(skf.hamiltonian.shape)
@@ -62,10 +63,10 @@ class Skf:
 
     """
 
-    def __init__(self, element_pair: Union[Tensor, List[str]],
-                 hamiltonian: Tensor = None, overlap: Tensor = None,
-                 repulsive: dict = None, onsite: Tensor = None,
-                 U: Tensor = None, **kwargs):
+    def __init__(
+            self, element_pair: Tensor, hamiltonian: Optional[Tensor] = None,
+            overlap: Optional[Tensor] = None, repulsive: Optional[dict] = None,
+            onsite: Optional[Tensor] = None, U: Optional[Tensor] = None, **kwargs):
         self.element_pair = element_pair
         self.homo = self.element_pair[0] == self.element_pair[1]
 
@@ -74,6 +75,7 @@ class Skf:
         self.overlap = overlap
 
         # set all repulsive attributes
+        self.repulsive = True if repulsive is not None else repulsive
         if repulsive is not None:
             for irep in repulsive.keys():
                 setattr(self, irep, repulsive[irep])
@@ -86,58 +88,54 @@ class Skf:
             setattr(self, iarg, kwargs[iarg])
 
     @classmethod
-    def read(cls, path_to_file: str, element_pair: Tensor,
-             mask_hs: bool = False, max_l: Dict[int, int] = None,
-             interactions: List[Tuple[int, int, int]] = None,
+    def read(cls, path_to_file: str, skf_type: Literal['from_hdf', 'from_skf'],
+             element_pair: Tensor, mask_hs: Optional[bool] = False,
+             interactions: Optional[List[Tuple[int, int, int]]] = None,
              **kwargs) -> 'Skf':
         """Read different type SKF files according to interactions.
 
         To minimize the data memory, the Hamiltonian and overlap beyond the
         minimal basis will never be uesed, therefore selective Hamiltonian
-        and overlap are applied and controlled by `with_mask`. If `with_mask`
-        is True, either `max_l` or `interactions` should be assigned.
+        and overlap are applied and controlled by `mask_hs`. If `mask_hs`
+        is True, `interactions` should be assigned, the default is False.
 
         Arguments:
             path_to_file: Joint path to SKF files or binary hdf with SKF data.
+            skf_type: The input file type, 'from_hdf' or 'from_skf'.
             element_pair: Single element number pair.
             mask_hs: If use mask to generate only the used Hamiltonian or
                 overlap, the default is False.
             interactions: A list of orbital interactions, which is determined
                 by the maximum of quantum number ℓ of each element pair.
+                `interactions` should be offered if mask_hs is True.
 
         Returns:
             Skf: All attributes of object `Skf`.
 
         """
         # Check if the joint path to the SKF file exists
-        assert os.path.isfile(path_to_file), '%s does not exist' % path_to_file
-
-        # Get the type of the input SKF file with given joint path
-        this_suffix = path_to_file.split('.')[-1]
-        assert this_suffix in hdf_suffix + skf_suffix, 'suffix of ' + \
-            '%s is not in %s or %s' % (path_to_file, hdf_suffix, skf_suffix)
-
-        file_type = 'from_hdf' if this_suffix in hdf_suffix else 'from_skf'
+        if not os.path.isfile(path_to_file):
+            raise FileNotFoundError(f'do not find: {path_to_file}')
 
         if mask_hs:
-            assert max_l is not None or interactions is not None, 'mask_hs' + \
-                ' is True, one of max_l and interactions should be offered'
-            interactions = interactions if interactions is not None else \
-                _interaction[max([max_l[int(iele)] for iele in element_pair])]
+            assert interactions is not None, \
+                'mask_hs is True, interactions should be defined'
 
-        return getattr(Skf, file_type)(
+        return getattr(Skf, skf_type)(
             path_to_file, element_pair, mask_hs, interactions, **kwargs)
 
     @classmethod
-    def from_skf(cls, path_to_skf: str, element_pair: Tensor, mask_hs: bool,
-                 interactions: List[Tuple[int, int, int]], **kwargs) -> 'Skf':
+    def from_skf(cls, path_to_skf: str, element_pair: Tensor,
+                 mask_hs: Optional[bool] = False,
+                 interactions: Optional[List[Tuple[int, int, int]]] = None,
+                 **kwargs) -> 'Skf':
         """Read a skf file and return an `Skf` instance.
 
         File names should follow the naming convention X-Y.skf where X and
         Y are the names of chemical symbols.
 
         Arguments:
-            path: Path to the target skf file.
+            path_to_skf: Path to the target skf file.
             element_pair: Current element number pair.
             mask_hs: If use mask to generate only the used Hamiltonian or
                 overlap, the default is False.
@@ -254,13 +252,14 @@ class Skf:
         return cls(element_pair, h_data, s_data, rep, onsite, U, **kwd)
 
     @classmethod
-    def from_hdf(cls, path: str, element_pair: Union[Tensor, str],
-                 mask_hs: bool, interactions: List[Tuple[int, int, int]],
+    def from_hdf(cls, path_to_hdf: str, element_pair: Union[Tensor, str],
+                 mask_hs: Optional[bool] = False,
+                 interactions: Optional[List[Tuple[int, int, int]]] = None,
                  **kwargs) -> 'Skf':
         """Generate integral from h5py binary data.
 
         Arguments:
-            path: Path to the target binary file.
+            path_to_hdf: Path to the target binary file.
             element_pair: Current element number pair.
             mask_hs: If use mask to generate only the used Hamiltonian or
                 overlap, the default is False.
@@ -296,7 +295,7 @@ class Skf:
             element_name_pair = batch_chemical_symbols(element_pair)
         this_name = element_name_pair[0] + '-' + element_name_pair[1]
 
-        with h5py.File(path, 'r') as f:
+        with h5py.File(path_to_hdf, 'r') as f:
 
             if read_hamiltonian:
                 maskh = _get_hs_mask(
@@ -348,23 +347,14 @@ class Skf:
         return cls(element_pair, h_data, s_data, rep, onsite, U, **kwd)
 
     @staticmethod
-    def to_hdf(target: Union[str, Group], skf: object,
-               read_hamiltonian: bool = True, read_overlap: bool = True,
-               read_repulsive: bool = True, read_onsite: bool = True,
-               read_U: bool = True, read_other_params: bool = True,
-               mode: str = 'a'):
+    def to_hdf(target: Union[str, Group], skf: object, mode: str = 'a'):
         """Write standard Slater-Koster data to hdf type.
 
         Arguments:
             target: The string will be the name of the target to be written,
                 the Group type will be the opened `File` object in h5py.
             skf: Object with Slater-Koster raw data.
-            element_pair: Tensor type element number pairs or string type
-                chemical element names.
-            read_hamiltonian: If write Hamiltonian data.
-            read_overlap: If write overlap data.
-            read_repulsive: If write repulsive data.
-            mode: Mode to write data.
+            mode: Mode to write data, same to the h5py mode.
 
         """
         if isinstance(target, str):
@@ -385,39 +375,41 @@ class Skf:
         # write hamiltonian, overlap, onsite and U, currently gradient is not
         # included in skf object, detach is not necessary, cpu() will avoid
         # error if data type is cuda
-        if read_hamiltonian:
+        if skf.hamiltonian is not None:
             g.create_dataset('hamiltonian', data=skf.hamiltonian.cpu())
 
-        if read_overlap:
+        if skf.overlap is not None:
             g.create_dataset('overlap', data=skf.overlap.cpu())
 
-        if read_onsite and skf.homo:
+        if skf.onsite is not None and skf.homo:
             g.create_dataset('onsite', data=skf.onsite.cpu())
 
-        if read_U and skf.homo:
+        if skf.U is not None and skf.homo:
             g.create_dataset('U', data=skf.U.cpu())
 
-        if read_repulsive:
-            g.create_dataset('repulsive', data=read_repulsive)
+        if skf.repulsive is not None:
+            g.create_dataset('repulsive', data=skf.repulsive)
             g.create_dataset('r_int', data=skf.r_int)
             g.create_dataset('r_cutoff', data=skf.r_cutoff)
             for ipr in ['r_table', 'r_grid', 'r_a123', 'r_long_grid', 'r_c_0to5']:
                 g.create_dataset(ipr, data=getattr(skf, ipr).cpu())
 
-        if read_other_params:
-            for ipr in ['g_step', 'n_grids', 'rcut']:
+        for ipr in ['g_step', 'n_grids', 'rcut']:
+            if ipr in skf.__dict__.keys():
                 g.create_dataset(ipr, data=getattr(skf, ipr))
 
-            for ipr in ['hs_grid', 'r_poly']:
+        for ipr in ['hs_grid', 'r_poly']:
+            if ipr in skf.__dict__.keys():
                 g.create_dataset(ipr, data=getattr(skf, ipr).cpu())
 
-
-            if skf.homo:
+        if skf.homo:
+            if 'mass' in skf.__dict__.keys():
                 g.create_dataset('mass', data=skf.mass)
+            if 'occupations' in skf.__dict__.keys():
                 g.create_dataset('occupations', data=skf.occupations.cpu())
 
 
-class CompressionRadii:
+class CompressionRSkf:
     pass
 
 
@@ -425,32 +417,34 @@ def _get_hs_mask(n_interaction: int, read_ski: bool, mask_hs: bool,
                  interactions: List[Tuple[int, int, int]]) -> List[bool]:
     """Return the mask for Hamiltonian or overlap.
 
-    The read_ski determines if read Hamiltonian or overlap, if False, the
-    mask will return False for all interactions. If read_ski is True and
-    mask_hs is False, the mask will return True for all interactions, it
-    suggests that all Hamiltonian or overlap will be returned. If read_ski is
-    True and mask_hs is True, the mask will be applied to select the
-    interactions.
+    The `read_ski` determines if read Hamiltonian or overlap, if False, the
+    mask will return False for all interactions. If `read_ski` is True and
+    `mask_hs` is False, the mask will return True for all interactions, it
+    suggests that all Hamiltonian or overlap will be returned. If `read_ski`
+    is True and `mask_hs` is True, the mask will be applied to select the
+    interactions according to `interactions`.
 
     Arguments:
         n_interaction: The total number of Hamiltonian or overlap interactions.
         read_ski: If read Hamiltonian or overlap.
-        mask_hs: If use mask to generate only the used Hamiltonian or overlap.
+        mask_hs: If use mask to select Hamiltonian or overlap.
         interactions: A list of orbital interactions, which is determined
             by the maximum of quantum number ℓ of each element pair.
 
     Returns:
-        mask: Mask the interactions in Hamiltonian or overlap.
+        mask: Mask the interactions in Hamiltonian or overlap to select
+            Hamiltonian or overlap.
 
     """
     if mask_hs and read_ski:
         # In normal SKF, the total Hamiltonian and overlap in each line
         # is 20, in extended format, it will be 40. The number of interactions
         # will be the half.
-        assert n_interaction in (10, 20), 'Number of interactions ' + \
-            'should be 10 or 20, but get %d' % n_interaction
-        assert len(interactions) <= n_interaction, 'number of interactions' + \
-            ' is more than the total interactions size: %d' % n_interaction
+        assert n_interaction in (10, 20), \
+            f'Number of interactions should be 10 or 20 but get {n_interaction}'
+        assert len(interactions) <= n_interaction, \
+            f'number of interactions {len(interactions)} is more than' + \
+                f' the total interactions size: {n_interaction}'
 
         sk_i = _interaction[2] if n_interaction == 10 else _interaction[3]
 
@@ -474,10 +468,21 @@ def _asterisk_to_repeat_tensor(
         for ii in xx]).to(device).to(dtype)
 
 
+def _get_interaction(lm):
+    """Helper function to generate interactions in Slater-Koster files."""
+    _int = [(l1, l2, im) for l1, l2 in combinations_with_replacement(lm, 2)
+            for im in range(l1, -1, -1)]
+    return list(reversed(_int))
+
+
 # alias for common code structure to deal with SK tables each line
 _lmf = lambda xx: list(map(float, xx.split()))
 _asterisk = lambda xx: list(map(str.strip, xx.split()))
 
+
 # default interactions for each max quantum number, to make sure the order of
 # interactions will be always fixed
-_interaction = {0: int_s, 1: int_p, 2: int_d, 3: int_f}
+_ls, _lp, _ld, _lf = (
+    list(range(1)), list(range(2)), list(range(3)), list(range(4)))
+_interaction = {0: _get_interaction(_ls), 1: _get_interaction(_lp),
+                2: _get_interaction(_ld), 3: _get_interaction(_lf)}

@@ -5,6 +5,7 @@ This test will test precision and device of every parameters from SKF files,
 write SKF data to hdf binary and then read parameters from binary.
 """
 import os
+from itertools import combinations_with_replacement
 import torch
 import h5py
 import numpy as np
@@ -14,10 +15,10 @@ torch.set_default_dtype(torch.float64)
 
 def test_hs_mio_homo(device):
     """Test data from mio SKF files for homo carbon and carbon."""
-    path_to_cc_mio = './tests/unittests/data/slko/mio/C-C.skf'
+    path_to_mio = './tests/unittests/data/slko/mio/C-C.skf'
 
-    # Step 1: Load  all SKF data
-    sk = Skf.read(path_to_cc_mio, torch.tensor([6, 6]), device=device)
+    # Step 1.1: Load  all SKF data
+    sk = Skf.read(path_to_mio, 'from_skf', torch.tensor([6, 6]), device=device)
 
     g_step, n_grids = 0.02, 500
     onsite = torch.tensor([0.0, -0.19435511, -0.50489172], device=device)
@@ -45,6 +46,8 @@ def test_hs_mio_homo(device):
     assert abs(sk.n_grids - n_grids) < 1E-14, 'n_grids tolerance check'
     assert torch.max(abs(sk.hamiltonian[19] - h_20)) < 1E-14, \
         'hamiltonian tolerance check'
+    assert sk.hamiltonian.shape[1] == 10, 'hamiltonian shape error'
+    assert sk.overlap.shape[1] == 10, 'overlap shape error'
     assert torch.max(abs(sk.overlap[39] - s_40)) < 1E-14, \
         'overlap tolerance check'
     assert torch.max(abs(sk.onsite - onsite)) < 1E-14, 'onsite tolerance check'
@@ -77,9 +80,26 @@ def test_hs_mio_homo(device):
     assert sk.r_long_grid.device == device, 'r_long_grid device persistence'
     assert sk.r_c_0to5.device == device, 'r_c_0to5 device persistence'
 
-    # Step 2: write data to hdf, and then read
+    # Step 1.2: Load  all SKF data with mask
+    sk12 = Skf.read(path_to_mio, 'from_skf', torch.tensor([6, 6]),
+                    mask_hs=True, interactions=_interaction[1], device=device)
+    assert abs(sk12.g_step - g_step) < 1E-14, 'g_step tolerance check'
+    assert abs(sk12.n_grids - n_grids) < 1E-14, 'n_grids tolerance check'
+    assert sk12.hamiltonian.shape[1] == 4, 'hamiltonian shape error'
+    assert sk12.overlap.shape[1] == 4, 'overlap shape error'
+    assert torch.max(abs(sk12.overlap[39, 0] - s_40[5])) < 1E-14, \
+        'masked overlap tolerance check'
+    assert torch.max(abs(sk12.overlap[39, 2] - s_40[8])) < 1E-14, \
+        'masked overlap tolerance check'
+
+    assert sk12.hamiltonian.device == device, 'hamiltonian device persistence'
+    assert sk12.U.device == device, 'Hubbert U persistence'
+    assert sk12.occupations.device == device, 'occupations device persistence'
+    assert sk12.r_a123.device == device, 'r_a123 device persistence'
+
+    # Step 2.1: write data to hdf, and then read the hdf
     Skf.to_hdf('cc.hdf', sk)
-    sk_b = Skf.read('./cc.hdf', torch.tensor([6, 6]), device=device)
+    sk_b = Skf.read('./cc.hdf', 'from_hdf', torch.tensor([6, 6]), device=device)
 
     # check tolerance for all the parameters
     assert abs(sk_b.g_step - g_step) < 1E-14, 'g_step tolerance check'
@@ -99,19 +119,40 @@ def test_hs_mio_homo(device):
         'r_long_grid tolerance check'
 
     # check device persistence
-    assert sk.hamiltonian.device == device, 'hamiltonian device persistence'
-    assert sk.overlap.device == device, 'overlap device persistence'
-    assert sk.onsite.device == device, 'onsite device persistence'
-    assert sk.occupations.device == device, 'occupations device persistence'
-    assert sk.r_table.device == device, 'r_table device persistence'
-    assert sk.r_long_grid.device == device, 'r_long_grid device persistence'
+    assert sk_b.hamiltonian.device == device, 'hamiltonian device persistence'
+    assert sk_b.overlap.device == device, 'overlap device persistence'
+    assert sk_b.onsite.device == device, 'onsite device persistence'
+    assert sk_b.occupations.device == device, 'occupations device persistence'
+    assert sk_b.r_table.device == device, 'r_table device persistence'
+    assert sk_b.r_long_grid.device == device, 'r_long_grid device persistence'
+
+    # Step 2.2: write data to hdf, and then read the hdf with mask
+    sk_b2 = Skf.read('./cc.hdf', 'from_hdf', torch.tensor([6, 6]), mask_hs=True,
+                    interactions=_interaction[1], device=device)
+
+    # check tolerance for all the parameters
+    assert abs(sk_b2.g_step - g_step) < 1E-14, 'g_step tolerance check'
+    assert torch.max(abs(sk_b2.hamiltonian[19, 1] - h_20[6])) < 1E-14, \
+        ' hamiltonian tolerance check'
+    assert abs(sk_b2.rcut - rcut) < 1E-14, ' rcut tolerance check'
+    assert abs(sk_b2.r_cutoff - r_cutoff) < 1E-14, 'Tolerance check'
+    assert torch.max(abs(sk_b2.r_table[1] - r_table_1)) < 1E-14, \
+        'r_table tolerance check'
+    assert torch.max(abs(sk_b2.r_long_grid - r_long_grid)) < 1E-14, \
+        'r_long_grid tolerance check'
+
+    # check device persistence
+    assert sk_b2.hamiltonian.device == device, 'hamiltonian device persistence'
+    assert sk_b2.overlap.device == device, 'overlap device persistence'
+    assert sk_b2.occupations.device == device, 'occupations device persistence'
+    assert sk_b2.r_long_grid.device == device, 'r_long_grid device persistence'
 
     os.remove('cc.hdf')
 
-    # Step 2: write data to hdf, and target is File object, then read data
+    # Step 3: write data to hdf, and target is File object, then read data
     target = h5py.File('cc.hdf', 'w')
     Skf.to_hdf(target, sk)
-    sk_b2 = Skf.read('./cc.hdf', torch.tensor([6, 6]), device=device)
+    sk_b2 = Skf.read('./cc.hdf', 'from_hdf', torch.tensor([6, 6]), device=device)
 
     # check tolerance for all the parameters
     assert abs(sk_b2.n_grids - n_grids) < 1E-14, 'n_grids tolerance check'
@@ -141,7 +182,7 @@ def test_hs_mio_hetero(device):
     path_to_cc_mio = './tests/unittests/data/slko/mio/C-H.skf'
 
     # Step 1: Load all SKF data
-    sk = Skf.read(path_to_cc_mio, torch.tensor([6, 1]))
+    sk = Skf.read(path_to_cc_mio, 'from_skf', torch.tensor([6, 1]))
 
     g_step, n_grids = 0.02, 500
     h_37 = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
@@ -178,8 +219,9 @@ def test_hs_mio_hetero(device):
         'r_c_0to5 tolerance check'
 
     # Step 2: do not read hamiltonian and repulsive data
-    sk2 = Skf.read(path_to_cc_mio, torch.tensor([6, 1]), read_hamiltonian=False,
-                   read_overlap=True, read_repulsive=False)
+    sk2 = Skf.read(
+        path_to_cc_mio, 'from_skf', torch.tensor([6, 1]),
+        read_hamiltonian=False, read_overlap=True, read_repulsive=False)
 
     # check tolerance for all the parameters
     assert abs(sk2.g_step - g_step) < 1E-14, 'g_step tolerance check'
@@ -190,9 +232,9 @@ def test_hs_mio_hetero(device):
     assert sk2.U is None, 'Hetero do not has Hubbert U'
 
     # Step 2: do not read hamiltonian and overlap data
-    max_l = {1: 0, 6: 1}
-    sk3 = Skf.read(path_to_cc_mio, torch.tensor([6, 1]), max_l=max_l,
-                   read_hamiltonian=False, read_overlap=False, read_repulsive=True)
+    sk3 = Skf.read(
+        path_to_cc_mio, 'from_skf', torch.tensor([6, 1]),
+        read_hamiltonian=False, read_overlap=False, read_repulsive=True)
 
     # check tolerance for all the parameters
     assert abs(sk3.g_step - g_step) < 1E-14, 'g_step tolerance check'
@@ -212,7 +254,6 @@ def test_hs_mio_hetero(device):
 
 def test_auorg(device):
     """Test data from mio SKF files for homo Au and Au."""
-    max_l = {79: 2}
     path_to_cc_auorg = './tests/unittests/data/slko/auorg/Au-Au.skf'
     hs = torch.from_numpy(np.loadtxt(
         './tests/unittests/data/slko/auorg/hs.dat')).to(torch.get_default_dtype())
@@ -221,7 +262,7 @@ def test_auorg(device):
             torch.get_default_dtype())
 
     # Load data without mask hamiltonian and overlap
-    sk = Skf.read(path_to_cc_auorg, torch.tensor([79, 79]), max_l=max_l)
+    sk = Skf.read(path_to_cc_auorg, 'from_skf', torch.tensor([79, 79]))
 
     g_step, n_grids = 0.02, 919
     onsite = torch.tensor([
@@ -267,7 +308,7 @@ def test_pbc(device):
     path_to_cc_auorg = './tests/unittests/data/slko/pbc/Si-Si.skf'
 
     # Load data without mask hamiltonian and overlap
-    sk = Skf.read(path_to_cc_auorg, torch.tensor([14, 14]))
+    sk = Skf.read(path_to_cc_auorg, 'from_skf', torch.tensor([14, 14]))
 
     g_step, n_grids = 0.02, 520
     onsite = torch.tensor([0.55, -0.15031380, -0.39572506])
@@ -315,3 +356,16 @@ def test_pbc(device):
         'r_long_grid tolerance check'
     assert torch.max(abs(sk.r_c_0to5 - r_c_0to5)) < 1E-14, \
         'r_c_0to5 tolerance check'
+
+
+def _get_interaction(lm):
+    """Helper function to generate interactions in Slater-Koster files."""
+    _int = [(l1, l2, im) for l1, l2 in combinations_with_replacement(lm, 2)
+            for im in range(l1, -1, -1)]
+    return list(reversed(_int))
+
+
+_ls, _lp, _ld, _lf = (
+    list(range(1)), list(range(2)), list(range(3)), list(range(4)))
+_interaction = {0: _get_interaction(_ls), 1: _get_interaction(_lp),
+                2: _get_interaction(_ld), 3: _get_interaction(_lf)}
