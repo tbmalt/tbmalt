@@ -82,7 +82,13 @@ def geometry_basic_helper(device, positions, atomic_numbers):
                    for i, j in zip(geom_1.chemical_symbols, atomic_numbers)])
     assert check_4, 'The ".chemical_symbols" property is incorrect'
 
-    # Check 5: Test the device on which the Geometry's tensor are located
+    # Check 5: ensure that the dtype and device properties are correct.
+    check_5a = geom_1.device == device
+    check_5b = geom_1.dtype == positions_ref.dtype
+    assert check_5a, 'Geometry.device is incorrect'
+    assert check_5b, 'Geometry.dtype is incorrect'
+
+    # Check 6: Test the device on which the Geometry's tensor are located
     # can be changed via the `.to()` method. Note that this check will only
     # be performed if a cuda device is present.
     if torch.cuda.device_count():
@@ -90,10 +96,43 @@ def geometry_basic_helper(device, positions, atomic_numbers):
         new_device = {'cuda': torch.device('cpu'),
                       'cpu': torch.device('cuda:0')}[device.type]
         geom_1_copy = geom_1.to(new_device)
-        check_5 = (geom_1_copy.atomic_numbers.device == new_device
-                   and geom_1_copy.positions.device == new_device)
+        check_6a = (geom_1_copy.atomic_numbers.device == new_device
+                    and geom_1_copy.positions.device == new_device)
 
-        assert check_5, '".to" method failed to set the correct device'
+        # Check that the .device property was correctly set
+        check_6b = new_device == geom_1_copy.device
+        check_6 = check_6a and check_6b
+
+        assert check_6, '".to" method failed to set the correct device'
+
+    # Check 7: Ensure slicing proceeds as anticipated. This should raise an
+    # error for single systems and slice a batch of systems.
+    if batch:
+        attrs = ['positions', 'atomic_numbers', '_mask_dist', 'n_atoms',
+                 '_n_batch', 'device', 'dtype']
+        for slc in [slice(None, 2), slice(-2, None), slice(None, None, 2)]:
+            # Create sliced and reference geometry objects
+            geom_slc = geom_1[slc]
+            geom_ref = Geometry(atomic_numbers_ref[slc], positions_ref[slc])
+
+
+            # Loop over and ensure the attributes are the same
+            for attr in attrs:
+                check_7 = geom_slc.__getattribute__(attr) == geom_ref.__getattribute__(attr)
+                # Some checks will be multidimensional
+                if isinstance(check_7, torch.Tensor):
+                    check_7 = check_7.all()
+                assert check_7, f'Slicing created malformed "{attr}" attribute'
+
+    else:
+        with pytest.raises(IndexError, match=r'Geometry slicing is only *'):
+            _ = geom_1[0]  # <- should fail if geom_1 is a single system
+
+    # Check 8: Error should be raised if the number of systems in the positions
+    # & atomic_numbers arguments disagree with one another
+    if batch:
+        with pytest.raises(AssertionError, match=r'`atomic_numbers` & `pos*'):
+            _ = Geometry(atomic_numbers[slice(None, None, 2)], positions)
 
 
 def test_geometry_single(device):
@@ -109,6 +148,41 @@ def test_geometry_batch(device):
                           atomic_numbers_data(device, True))
     geometry_basic_helper(device, pack(positions_data(device, True)),
                           pack(atomic_numbers_data(device, True)))
+
+
+def test_geometry_addition(device):
+    """Ensure that geometry objects an be added together."""
+    kw = {'device': device}
+    an_1 = torch.tensor([1], **kw)
+    an_2 = torch.tensor([2, 3], **kw)
+    an_3 = torch.tensor([4, 5, 6], **kw)
+    an_4 = torch.tensor([7, 8, 9, 10], **kw)
+
+    pos_1 = torch.tensor([[1, 1, 1.]], **kw)
+    pos_2 = torch.tensor([[2, 2, 2.], [3, 3, 3]], **kw)
+    pos_3 = torch.tensor([[4, 4, 4.], [5, 5, 5], [6, 6, 6]], **kw)
+    pos_4 = torch.tensor([[7, 7, 7.], [8, 8, 8], [9, 9, 9], [10, 10, 10]], **kw)
+
+    geom_b1 = Geometry([an_1, an_2], [pos_1, pos_2])
+    geom_b2 = Geometry([an_3, an_4], [pos_3, pos_4])
+
+    geom_2 = Geometry(an_2, pos_2)
+    geom_3 = Geometry(an_3, pos_3)
+    geom_4 = Geometry(an_4, pos_4)
+
+    # Check 1: two single system geometry objects
+    check_1 = geom_3 + geom_4 == geom_b2
+    assert check_1, 'Single system Geometry addition failed'
+
+    # Check 2: two batched geometry objects
+    check_2 = geom_b1 + geom_b2 == Geometry([an_1, an_2, an_3, an_4],
+                                            [pos_1, pos_2, pos_3, pos_4])
+    assert check_2, 'Batched Geometry addition failed'
+
+    # Check 3: one single and one batched geometry object
+    check_3 = geom_2 + geom_b2 == Geometry([an_2, an_3, an_4],
+                                           [pos_2, pos_3, pos_4])
+    assert check_3, 'Mixed batch/single Geometry addition failed'
 
 
 #####################
@@ -313,7 +387,3 @@ def test_unique_atom_pairs(device):
          [8, 6], [1, 8], [6, 8], [8, 8]], device=device)
     check = (unique_atom_pairs(geom) == ref).all()
     assert check, "unique_atom_pairs returned an unexpected result"
-
-
-if __name__ == '__main__':
-    test_geometry_batch(device=torch.device('cpu'))

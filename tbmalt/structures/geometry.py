@@ -11,7 +11,7 @@ import torch
 import numpy as np
 from h5py import Group
 from ase import Atoms
-from tbmalt.common.batch import pack
+from tbmalt.common.batch import pack, merge
 from tbmalt.data.units import length_units
 from tbmalt.data import chemical_symbols
 Tensor = torch.Tensor
@@ -72,7 +72,7 @@ class Geometry:
     """
 
     __slots__ = ['atomic_numbers', 'positions', 'n_atoms',
-                 '_n_batch', '_mask_dist']
+                 '_n_batch', '_mask_dist', '__dtype', '__device']
 
     def __init__(self, atomic_numbers: Union[Tensor, List[Tensor]],
                  positions: Union[Tensor, List[Tensor]],
@@ -98,6 +98,35 @@ class Geometry:
         # Ensure the distances are in atomic units (bohr)
         if units != 'bohr':
             self.positions: Tensor = self.positions * length_units[units]
+
+        # These are static, private variables and must NEVER be modified!
+        self.__device = self.positions.device
+        self.__dtype = self.positions.dtype
+
+        # Check for size discrepancies in `positions` & `atomic_numbers`
+        if self.atomic_numbers.ndim == 2:
+            check = len(atomic_numbers) == len(positions)
+            assert check, '`atomic_numbers` & `positions` size mismatch found'
+
+        # Ensure tensors are on the same device (only two present currently)
+        if self.positions.device != self.positions.device:
+            raise RuntimeError('All tensors must be on the same device!')
+
+    @property
+    def device(self) -> torch.device:
+        """The device on which the `Geometry` object resides."""
+        return self.__device
+
+    @device.setter
+    def device(self, *args):
+        # Instruct users to use the ".to" method if wanting to change device.
+        raise AttributeError('Geometry object\'s dtype can only be modified '
+                             'via the ".to" method.')
+
+    @property
+    def dtype(self) -> torch.dtype:
+        """Floating point dtype used by geometry object."""
+        return self.__dtype
 
     @property
     def distances(self) -> Tensor:
@@ -134,6 +163,7 @@ class Geometry:
     @classmethod
     def from_ase_atoms(cls, atoms: Union[Atoms, List[Atoms]],
                        device: Optional[torch.device] = None,
+                       dtype: Optional[torch.dtype] = None,
                        units: str = 'angstrom') -> 'Geometry':
         """Instantiates a Geometry instance from an `ase.Atoms` object.
 
@@ -143,6 +173,7 @@ class Geometry:
         Arguments:
             atoms: Atoms object(s) to instantiate a Geometry instance from.
             device: Device on which to create any new tensors. [DEFAULT=None]
+            dtype: dtype to be used for floating point tensors. [DEFAULT=None]
             units: Length unit used by `Atoms` object. [DEFAULT='angstrom']
 
         Returns:
@@ -155,9 +186,10 @@ class Geometry:
             NotImplementedError: If the `ase.Atoms` object has periodic
                 boundary conditions enabled along any axis.
         """
-        # Ensure default dtype is used, rather than inheriting from numpy.
-        # Failing to do this will case some *very* hard to diagnose errors.
-        dtype = torch.get_default_dtype()
+        # If not specified by the user; ensure that the default dtype is used,
+        # rather than inheriting from numpy. Failing to do this will case some
+        # *very* hard to diagnose errors.
+        dtype = torch.get_default_dtype() if dtype is None else dtype
 
         # Temporary catch for periodic systems
         def check_not_periodic(atom_instance):
@@ -185,6 +217,7 @@ class Geometry:
     @classmethod
     def from_hdf5(cls, source: Union[Group, List[Group]],
                   device: Optional[torch.device] = None,
+                  dtype: Optional[torch.dtype] = None,
                   units: str = 'bohr') -> 'Geometry':
         """Instantiate a `Geometry` instances from an HDF5 group.
 
@@ -195,13 +228,17 @@ class Geometry:
         Arguments:
             source: An HDF5 group(s) containing geometry data.
             device: Device on which to place tensors. [DEFAULT=None]
+            dtype: dtype to be used for floating point tensors. [DEFAULT=None]
             units: Unit of length used by the data. [DEFAULT='bohr']
 
         Returns:
             geometry: The resulting ``Geometry`` object.
 
         """
-        dtype = torch.get_default_dtype()
+        # If not specified by the user; ensure that the default dtype is used,
+        # rather than inheriting from numpy. Failing to do this will case some
+        # *very* hard to diagnose errors.
+        dtype = torch.get_default_dtype() if dtype is None else dtype
 
         # If a single system or a batch system
         if not isinstance(source, list):
@@ -264,6 +301,54 @@ class Geometry:
         else:
             return self.__class__(self.atomic_numbers.to(device=device),
                                   self.positions.to(device=device))
+
+    def __getitem__(self, selector) -> 'Geometry':
+        """Permits batched Geometry instances to be sliced as needed."""
+        # Block this if the instance has only a single system
+        if self.atomic_numbers.ndim != 2:
+            raise IndexError(
+                'Geometry slicing is only applicable to batches of systems.')
+
+        return self.__class__(self.atomic_numbers[selector],
+                              self.positions[selector])
+
+    def __add__(self, other: 'Geometry') -> 'Geometry':
+        """Combine two `Geometry` objects together."""
+        if self.__class__ != other.__class__:
+            raise TypeError(
+                'Addition can only take place between two Geometry objects.')
+
+        # Catch for situations where one or both systems are not batched.
+        s_batch = self.atomic_numbers.ndim == 2
+        o_batch = other.atomic_numbers.ndim == 2
+
+        an_1 = torch.atleast_2d(self.atomic_numbers)
+        an_2 = torch.atleast_2d(other.atomic_numbers)
+
+        pos_1 = self.positions
+        pos_2 = other.positions
+
+        pos_1 = pos_1 if s_batch else pos_1.unsqueeze(0)
+        pos_2 = pos_2 if o_batch else pos_2.unsqueeze(0)
+
+        return self.__class__(merge([an_1, an_2]), merge([pos_1, pos_2]))
+
+    def __eq__(self, other: 'Geometry') -> bool:
+        """Check if two `Geometry` objects are equivalent."""
+        # Note that batches with identical systems but a different order will
+        # return False, not True.
+
+        if self.__class__ != other.__class__:
+            raise TypeError(f'"{self.__class__}" ==  "{other.__class__}" '
+                            f'evaluation not implemented.')
+
+        def shape_and_value(a, b):
+            return a.shape == b.shape and torch.allclose(a, b)
+
+        return all([
+            shape_and_value(self.atomic_numbers, other.atomic_numbers),
+            shape_and_value(self.positions, other.positions)
+        ])
 
     def __repr__(self) -> str:
         """Creates a string representation of the Geometry object."""
