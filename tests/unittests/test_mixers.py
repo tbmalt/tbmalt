@@ -329,23 +329,26 @@ def gradient(mixer, device):
         # Tensors must also be symmetrised.
         H, S, G = sym(H), sym(S), sym(G)
 
-        F = H
+        # F = H
+        q_new = q0
         for _ in range(15):
-            F = mixer(faux_SCF(F, q0, H, S, G), F)
+            # F = mixer(faux_SCF(F, q0, H, S, G), F)
+            q_new = mixer(faux_SCC(q_new, q0, H, S, G), q_new)
 
         # Reset mixer before gradchecks next call
         mixer.reset()
 
-        return F
+        # return F
+        return q_new
 
     sizes = torch.tensor([5, 3], device=device)
     # Generate test data
     H, S, G, q0 = gen_systems(device, sizes)
 
     # Enable gradient tracking
-    H.requires_grad = True
-    S.requires_grad = True
-    G.requires_grad = True
+    # H.requires_grad = True
+    # S.requires_grad = True
+    # G.requires_grad = True
     q0.requires_grad = True
 
     grad_is_safe = gradcheck(mixer_proxy, (H, S, G, q0, sizes, mixer),
