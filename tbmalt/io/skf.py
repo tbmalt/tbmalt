@@ -1,488 +1,597 @@
 # -*- coding: utf-8 -*-
-"""Load Slater-Koster Tables."""
-import os
-from typing import Union, List, Tuple, Optional, Literal
-from itertools import combinations_with_replacement
-import torch
+"""Methods for reading from and writing to skf and associated files."""
+import re
+import warnings
+from dataclasses import dataclass
+from os.path import isfile, split, splitext, basename
+from time import time
+from typing import List, Tuple, Union, Dict, Sequence, Any, Optional
+from itertools import product
+
 import h5py
+import numpy as np
+import torch
 from h5py import Group
 from torch import Tensor
-from tbmalt.structures.geometry import batch_chemical_symbols
+
+from tbmalt.common.maths import triangular_root, tetrahedral_root
+from tbmalt.data import atomic_numbers, chemical_symbols
+
+OptTens = Optional[Tensor]
+SkDict = Dict[Tuple[int, int], Tensor]
 
 
 class Skf:
-    """Get data from Skf file or binary file for single element pair.
+    r"""Slater-Koster file parser.
 
-    Read the data from a normal Slater-Koster file as DFTB+, or from the
-    equivalent binary hdf5 file. The Hamiltonian, overlap, repulsive data are
-    optional and can be controlled by arguments in classmethod `read`.
+    This class handles the parsing of DFTB+ skf formatted Slater-Koster files,
+    and their binary analogs. Data can be read from and saved to files using
+    the `read` & `write` methods. Reading a file will return an `Skf` instance
+    holding all stored data.
 
     Arguments:
-        element_pair: Single element number pair.
-        hamiltonian: Hamiltonian data.
-        overlap: Overlap data.
-        repulsive: A dictionary contains all the repulsive data.
-        onsite: On-site data if element_pair is homo.
-        U: Hubbert U data if element_pair is homo.
-
-    Keyword Args:
-        hs_grid: Distance grid points for Hamiltonian or overlap, this will
-            be None if both hamiltonian and overlap are not returned.
-        r_poly: The polynomial coefficients.
-        g_step: Grid distance between `hs_grid`.
-        n_grids: Number of grid points of Hamiltonian or overlap.
-        mass: Mass of the chemical element if homo.
-        occupations: Orbital occupations if homo.
-        device: Device type used in this object.
-        dtype: Tensor dtype used in this object.
+         atom_pair: Atomic numbers of the elements associated with the
+            interaction.
+         hamiltonian: Dictionary keyed by azimuthal-number-pairs (ℓ₁, ℓ₂) and
+            valued by m×d Hamiltonian integral tensors; where m and d iterate
+            over bond-order (σ, π, etc.) and distances respectively.
+         overlap: Dictionary storing the overlap integrals in a manner akin to
+            ``hamiltonian``.
+         grid: Distances at which the ``hamiltonian`` & ``overlap`` elements
+            were evaluated.
+         r_spline: A :class:`.RSpline` object detailing the repulsive
+            spline. [DEFAULT=None]
+         r_poly: A :class:`.RPoly` object detailing the repulsive
+            polynomial. [DEFAULT=None]
+         on_sites: On site terms, homo-atomic systems only. [DEFAULT=None]
+         hubbard_us: Hubbard U terms, homo-atomic systems only. [DEFAULT=None]
+         mass: Atomic mass, homo-atomic systems only. [DEFAULT=None]
+         occupations: Occupations of the orbitals, homo-atomic systems only.
+            [DEFAULT=None]
 
     Attributes:
-        element_pair: Single element number pair.
-        homo: If the element_pair is homo or hetero.
-        hamiltonian: Hamiltonian data.
-        overlap: Overlap data.
-        repulsive: All the repulsive keys from input repulsive dictionary.
-        onsite: On-site data if element_pair is homo.
-        U: Hubbert U data if element_pair is homo.
-        kwargs: All the keys from input kwargs dictionary.
+        atomic: True if the system contains atomic data, only relevant to the
+            homo-atomic cases.
+
+    .. _Notes:
+    Notes:
+        HOMO atomic systems commonly, but not always, include additional
+        "atomic" data; namely atomic mass, on-site terms, occupations, and
+        the Hubbard-U values. These can be optionally specified using the
+        ``mass``, ``on_sites``, ``occupations``, and ``hubbard_us`` attributes
+        respectively. However, these attributes are mutually inclusive, i.e.
+        either all are specified or none are. Furthermore, values contained
+        within such tensors should be ordered from lowest azimuthal number
+        to highest, where applicable.
+
+        Further information regarding the skf file format specification can be
+        found in the document: "`Format of the v1.0 Slater-Koster Files`_".
 
     Warnings:
         This may fail to parse files which do not strictly adhere to the skf
-        file format.
+        file format. Some skf files, such as those from the "pbc" parameter
+        set, contain non-trivial errors in them, e.g. incorrectly specified
+        number of grid points. Such files require fixing before they can be
+        read in.
 
-    Examples:
-        Evaluating load mio SKF files with defined path to skf:
+        The ``atom_pair`` argument is order sensitive, i.e. [6, 7] ≠ [7, 6].
+        For example, the p-orbital of the s-p-σ interaction would be located
+        on N when ``atom_pair`` is [6, 7] but on C when it is [7, 6].
 
-        >>> from tbmalt.io.skf import Skf
-        >>> path = '../../tests/unittests/data/slko/mio/H-H.skf'
-        >>> skf = Skf.read(path, 'from_skf', torch.tensor([1, 1]))
-        >>> print(skf.g_step)
-        >>> 0.02
-        >>> print(skf.hamiltonian.shape)
-        >>> torch.Size([500, 10])
+    Raises:
+        ValueError: if some but not all atomic attributes are specified. See
+            the :ref:`Notes` section for more details.
+
+    .. _Format of the v1.0 Slater-Koster Files:
+        https://dftb.org/fileadmin/DFTB/public/misc/slakoformat.pdf
 
     """
 
-    def __init__(
-            self, element_pair: Tensor, hamiltonian: Optional[Tensor] = None,
-            overlap: Optional[Tensor] = None, repulsive: Optional[dict] = None,
-            onsite: Optional[Tensor] = None, U: Optional[Tensor] = None, **kwargs):
-        self.element_pair = element_pair
-        self.homo = self.element_pair[0] == self.element_pair[1]
+    # Used to reorder hamiltonian and overlap data read in from skf files.
+    _sorter = [9, 8, 7, 5, 6, 3, 4, 0, 1, 2]
+    _sorter_e = [19, 18, 17, 16, 14, 15, 12, 13, 10, 11,
+                 7, 8,  9,  4,  5,  6,  0, 1,  2,  3]
 
-        # HS is controlled by read_hamiltonian, read_overlap
+    # Dataclasses for holding the repulsive interaction data.
+    @dataclass
+    class RPoly:
+        """Dataclass container for the repulsive polynomial.
+
+        Arguments:
+            cutoff: Cutoff radius of the repulsive interaction.
+            coef: The eight polynomial coefficients (c2-c9).
+            """
+        cutoff: Tensor
+        coef: Tensor
+
+    @dataclass
+    class RSpline:
+        """Dataclass container for the repulsive spline.
+
+        Arguments:
+            grid: Distance for the primary spline segments.
+            cutoff: Cutoff radius for the tail spline.
+            spline_coef: The primary spline's Coefficients (four per segment).
+            exp_coef: The exponential expression's coefficients a1, a2 & a3.
+            tail_coef: The six coefficients of the terminal tail spline.
+
+        """
+        grid: Tensor
+        cutoff: Tensor
+        spline_coef: Tensor
+        exp_coef: Tensor
+        tail_coef: Tensor
+
+    # HDF5-SK version number. Updated when introducing a change that would
+    # break backwards compatibility with previously created HDF5-skf file.
+    version = '0.1'
+
+    def __init__(
+            self, atom_pair: Tensor, hamiltonian: SkDict, overlap: SkDict,
+            grid: Tensor, r_spline: Optional[RSpline] = None,
+            r_poly: Optional[RPoly] = None, hubbard_us: OptTens = None,
+            on_sites: OptTens = None, occupations: OptTens = None,
+            mass: OptTens = None):
+
+        self.atom_pair = atom_pair
+
+        # SkDict attributes
         self.hamiltonian = hamiltonian
         self.overlap = overlap
+        self.grid = grid
 
-        # set all repulsive attributes
-        self.repulsive = True if repulsive is not None else repulsive
-        if repulsive is not None:
-            for irep in repulsive.keys():
-                setattr(self, irep, repulsive[irep])
+        # Ensure grid is uniformly spaced
+        if not (grid.diff().diff().abs() < 1E-5).all():
+            raise ValueError('Electronic integral grid spacing is not uniform')
 
-        # If in hetero element_pair, U and onsite will be None
-        self.onsite, self.U = onsite, U
+        # Repulsive attributes
+        self.r_spline = r_spline
+        self.r_poly = r_poly
 
-        # all the rest parameters in kwargs dict
-        for iarg in kwargs:
-            setattr(self, iarg, kwargs[iarg])
+        # Either the system contains atomic information or it does not; it is
+        # illogical to have some atomic attributes but not others.
+        check = [i is not None for i in [on_sites, hubbard_us,
+                                         occupations, mass]]
+        if all(check) != any(check):
+            raise ValueError(
+                'Either all or no atomic attributes must be supplied:'
+                '\n\t- on_sites\n\t- hubbard_us\n\t- mass\n\t- occupations')
+
+        # Atomic attributes
+        self.atomic: bool = all(check)
+        self.on_sites = on_sites
+        self.hubbard_us = hubbard_us
+        self.mass = mass
+        self.occupations = occupations
 
     @classmethod
-    def read(cls, path_to_file: str, skf_type: Literal['from_hdf', 'from_skf'],
-             element_pair: Tensor, mask_hs: Optional[bool] = False,
-             interactions: Optional[List[Tuple[int, int, int]]] = None,
+    def read(cls, path: str, atom_pair: Sequence[int] = None,
              **kwargs) -> 'Skf':
-        """Read different type SKF files according to interactions.
-
-        To minimize the data memory, the Hamiltonian and overlap beyond the
-        minimal basis will never be uesed, therefore selective Hamiltonian
-        and overlap are applied and controlled by `mask_hs`. If `mask_hs`
-        is True, `interactions` should be assigned, the default is False.
+        """Parse Slater-Koster data from skf files and their binary analogs.
 
         Arguments:
-            path_to_file: Joint path to SKF files or binary hdf with SKF data.
-            skf_type: The input file type, 'from_hdf' or 'from_skf'.
-            element_pair: Single element number pair.
-            mask_hs: If use mask to generate only the used Hamiltonian or
-                overlap, the default is False.
-            interactions: A list of orbital interactions, which is determined
-                by the maximum of quantum number ℓ of each element pair.
-                `interactions` should be offered if mask_hs is True.
+            path: Path to the file that is to be read (.skf or .hdf5).
+            atom_pair: Atomic numbers of the element pair. This is only used
+                when reading from an HDF5 file with more than one SK entry.
+                [DEFAULT=None]
+
+        Keyword Arguments:
+            device: Device on which to place tensors. [DEFAULT=None]
+            dtype: dtype to be used for floating point tensors. [DEFAULT=None]
 
         Returns:
-            Skf: All attributes of object `Skf`.
-
+            skf: `Skf` object contain all data parsed from the specified file.
         """
-        # Check if the joint path to the SKF file exists
-        if not os.path.isfile(path_to_file):
-            raise FileNotFoundError(f'do not find: {path_to_file}')
+        if not isfile(path):  # Verify the target file exists
+            raise FileNotFoundError(f'Could not find: {path}')
 
-        if mask_hs:
-            assert interactions is not None, \
-                'mask_hs is True, interactions should be defined'
+        if 'sk' in splitext(path)[1].lower():  # If path points to an skf file
+            # Issue a waring if the user specifies `atom_pair` for an skf file
+            if atom_pair is not None:
+                warnings.warn('"atom_pair" argument is only used when reading'
+                              'from HDF5 files with multiple SK entries.')
 
-        return getattr(Skf, skf_type)(
-            path_to_file, element_pair, mask_hs, interactions, **kwargs)
+            return cls.from_skf(path, **kwargs)
+
+        with h5py.File(path, 'r') as db:  # Otherwise must be an hdf5 database
+            # If atom_pair is specified use this to identify the target
+            # name = '-'.join([chemical_symbols[int[i]] for i in atom_pair])
+            if atom_pair is not None:
+                name = '-'.join([chemical_symbols[int(i)] for i in atom_pair])
+            else:
+                # Otherwise scan for valid entries: if only 1 SK entry exists
+                # then assume it's the target; if multiple entries exist then
+                # it's impossible to know which the user wanted.
+                e = '[A-Z][a-z]*'
+                entries = [k for k in db if re.fullmatch(f'{e}-{e}', k)]
+                if len(entries) == 1:
+                    name = entries[0]
+                else:
+                    raise ValueError('Use atom_pair when database have '
+                                     f'more than one entry: {basename(path)}')
+
+            return cls.from_hdf5(db[name], **kwargs)
 
     @classmethod
-    def from_skf(cls, path_to_skf: str, element_pair: Tensor,
-                 mask_hs: Optional[bool] = False,
-                 interactions: Optional[List[Tuple[int, int, int]]] = None,
-                 **kwargs) -> 'Skf':
-        """Read a skf file and return an `Skf` instance.
+    def from_skf(cls, path: str, dtype: Optional[torch.dtype] = None,
+                 device: Optional[torch.device] = None) -> 'Skf':
+        """Parse and skf file into an `Skf` instance.
 
-        File names should follow the naming convention X-Y.skf where X and
-        Y are the names of chemical symbols.
+        File names should follow the naming convention X-Y.skf where X & Y are
+        the chemical symbols of the associated elements. However, any file
+        which **ends** in X.Y will be successfully parsed (where "." is any
+        character (including no character)).
 
         Arguments:
-            path_to_skf: Path to the target skf file.
-            element_pair: Current element number pair.
-            mask_hs: If use mask to generate only the used Hamiltonian or
-                overlap, the default is False.
-            interactions: A list of orbital interactions, which is determined
-                by the maximum of quantum number ℓ of each element pair.
-
-        Keyword Args:
-            read_hamiltonian: If read Hamiltonian data.
-            read_overlap: If read overlap data.
-            read_repulsive: If read repulsive data.
-            read_onsite: If read onsite data.
-            read_U: If read Hubbert U.
-            read_other_params: If read the rest of parameters.
-            device: A device type used in this classmethod.
-            dtype: A data dtype used in this classmethod.
+            path: Path to the target skf file.
+            device: Device on which to place tensors. [DEFAULT=None]
+            dtype: dtype to be used for floating point tensors. [DEFAULT=None]
 
         Returns:
-            Skf: Return the arguments in `Skf` object.
+            skf: Return the arguments in `Skf` object.
 
         """
-        read_hamiltonian = kwargs.get('read_hamiltonian', True)
-        read_overlap = kwargs.get('read_overlap', True)
-        read_repulsive = kwargs.get('read_repulsive', True)
-        device = kwargs.get('device', torch.device('cpu'))
-        dtype = kwargs.get('dtype', torch.get_default_dtype())
+        dd = {'dtype': dtype, 'device': device}
+        kwargs_in = {}
 
-        homo = element_pair[0] == element_pair[1]
+        # Identify the elements involved according to the file name
+        e = '[A-Z][a-z]?'
+        try:
+            atom_pair = torch.tensor([atomic_numbers[i] for i in re.findall(
+                e, re.search(rf'{e}.?{e}(?=.)', split(path)[-1]).group(0))])
+        except AttributeError as error:
+            raise ValueError(
+                'Could not parse element names form file.') from error
 
-        file = open(path_to_skf, 'r').read()
-        lines = file.split('\n')
+        lines = open(path, 'r').readlines()
 
-        # @ will be in first line for extended format with f orbital
-        if '@' in lines[0]:
-            raise NotImplementedError('extended format not implemented')
-
-        # check if asterisk in SKF files
-        is_asterisk = '*' in lines[2] or '*' in lines[2 + homo]
+        # Remove the comment line if present
+        lines = lines[1:] if lines[0].startswith('@') else lines
 
         # 0th line, grid distance and grid points number
         g_step, n_grids = lines[0].replace(',', ' ').split()[:2]
         g_step, n_grids = float(g_step), int(n_grids)
+        grid = torch.arange(1, n_grids + 1, **dd) * g_step
 
-        # read on-site energies, spe, Hubbard U and occupations
-        if homo:
-            if is_asterisk:
-                homo_ln = _asterisk_to_repeat_tensor(_asterisk(
-                    lines[1].replace(',', ' ')), dtype, device)
-            else:
-                homo_ln = torch.tensor(_lmf(lines[1])).to(device).to(dtype)
-            n = int((len(homo_ln) - 1) / 3)  # -> Number of shells specified
-            onsite, spe, U, occupations = homo_ln.split_with_sizes([n, 1, n, n])
+        # Determine if this is the homo/atomic case (from the file's contents)
+        atomic = len(atom_ln := _s2t(_esr(lines[1]), **dd)) in [10, 13]
 
-        # return None for on-site, spe, U and occupations if hetero
-        else:
-            onsite, spe, U, occupations = None, None, None, None
+        # Read in the mass and polynomial repulsion coefficients
+        mass, r_poly, r_cut = _s2t(_esr(lines[1 + atomic]),
+                                   **dd)[:10].split([1, 8, 1])
 
-        # read 1 + homo line data, which contains mass, rcut and cutoff
-        if is_asterisk:
-            mass, *r_poly, rcut = _asterisk_to_repeat_tensor(_asterisk(
-                lines[1 + homo].replace(',', '')), dtype, device)[:10]
-        else:
-            mass, *r_poly, rcut = torch.tensor(
-                _lmf(lines[1 + homo]), dtype=dtype, device=device)[:10]
-        mass, rcut, r_poly = float(mass), float(rcut), torch.stack(r_poly)
+        # If polynomial coefficients are valid, create an r_poly object
+        if (r_poly != 0).any():
+            kwargs_in['r_poly'] = cls.RPoly(r_cut, r_poly)
 
-        # to avoid error when reading PBC SKF, in PBC, lines of HS < n_grids
-        rep_line = lines.index('Spline') + 1
-        line_hs_end = min(rep_line - 1, n_grids + 2 + homo)
+        # Parse hamiltonian/overlap integrals.
+        h_data, s_data = _s2t(_esr('  '.join(
+            lines[2 + atomic: 2 + atomic + n_grids])),
+            **dd).view(n_grids, -1).chunk(2, 1)
 
-        # read the hamiltonian and overlap tables with '*' in each line
-        if is_asterisk and read_hamiltonian + read_overlap:
-            h_data, s_data = torch.stack([_asterisk_to_repeat_tensor(
-                _asterisk(ii.replace(',', ' ')), dtype, device)
-                for ii in lines[2 + homo: line_hs_end]]).chunk(2, 1)
-        elif not is_asterisk and read_hamiltonian + read_overlap:
-            h_data, s_data = torch.tensor(
-                [_lmf(ii) for ii in lines[2 + homo: line_hs_end]],
-                dtype=dtype, device=device).chunk(2, 1)
+        # H/S tables are reordered so the lowest l comes first, broken up into
+        # into shell-pair chunks, e.g. ss, sp, sd, pp, etc, before finally
+        # being placed into dictionaries.
+        count = h_data.shape[-1]
+        sort = cls._sorter if count == 10 else cls._sorter_e  # ◂──────┐
+        max_l = round(tetrahedral_root(count) - 1)  # ◂─f-orbital catch┘
 
-        if read_hamiltonian + read_overlap:
-            # get the mask for Hamiltonian (mask_h) and overlap (mask_s)
-            len_hs = h_data.shape[1]
-            mask_h = _get_hs_mask(len_hs, read_hamiltonian, mask_hs, interactions)
-            mask_s = _get_hs_mask(len_hs, read_overlap, mask_hs, interactions)
-            hs_grid = torch.arange(1, len(h_data) + 1, device=device) * g_step
-            h_data, s_data = h_data[..., mask_h], s_data[..., mask_s]
-        else:
-            h_data, s_data, hs_grid = None, None, None
+        # Sort, segmentation and parse the tables into a pair of dictionaries
+        l_pairs = torch.triu_indices(max_l+1, max_l+1).T
+        h_data, s_data = [{
+            tuple(l_pair.tolist()): integral for l_pair, integral in
+            #            |   ↓ Sorting ↓   |    ↓ Segmentation by ℓ pair ↓    |
+            zip(l_pairs, integrals.T[sort].split((l_pairs[:, 0] + 1).tolist()))
+            if not (integral == 0.).all()}  # ← Ignore any dummy interactions
+            for integrals in [h_data, s_data]]
 
-        kwd = {'hs_grid': hs_grid, 'r_poly': r_poly, 'n_grids': n_grids,
-               'g_step': g_step, 'rcut': rcut, 'device': device, 'dtype': dtype}
+        if atomic:  # Parse homo data; on-site/Hubbard-U/occupations. (skip spe)
+            n = int((len(atom_ln) - 1) / 3)  # -> Number of shells specified
+            occs, hubb_u, _, on_site = atom_ln.flip(0).split([n, n, 1, n])
+            # If integrals were culled; atomic data must be too.
+            max_l = int(triangular_root(len(h_data)) - 1) + 1
+            kwargs_in.update({
+                'mass': mass, 'occupations': occs[:max_l + 1],
+                'on_sites': on_site[:max_l], 'hubbard_us': hubb_u[:max_l]})
 
-        if homo:  # Passed only if homo case
-            kwd.update({'mass': mass, 'occupations': occupations, 'spe': spe})
+        # Parse repulsive spline (if present)
+        if 'Spline\n' in lines:
+            ln = lines.index('Spline\n') + 2
+            n_int, r_cutoff = lines[ln - 1].split()
+            r_tab = _s2t(lines[ln + 1: ln + int(n_int)], **dd).view(-1, 6)
+            r_grid = torch.cat((r_tab[:, 0], r_tab[None, -1, 1]))
+            kwargs_in['r_spline'] = cls.RSpline(
+                # Repulsive grid, cutoff & repulsive spline coefficients.
+                r_grid, torch.tensor(float(r_cutoff), **dd), r_tab[:, 2:],
+                # The exponential and tail spline's coefficients.
+                _s2t(lines[ln], **dd), _s2t(lines[ln + int(n_int)], **dd)[2:])
 
-        # Check if there is a spline representation
-        if read_repulsive:
-            r_int, r_cutoff = lines[rep_line].split()  # -> 1st line
-            r_int, r_cutoff = int(r_int), float(r_cutoff)
-            r_a123 = torch.tensor(_lmf(lines[rep_line + 1])).to(device).to(dtype)
-            r_tab = torch.tensor([_lmf(line) for line in lines[
-                rep_line + 2: rep_line + 1 + r_int]]).to(device).to(dtype)
-            rep = r_tab[:, 2:]  # -> repulsive tables
-            r_grid = torch.tensor([*r_tab[:, 0], r_tab[-1, 1]]).to(device).to(dtype)
-            r_long_tab = torch.tensor(
-                _lmf(lines[rep_line + 1 + r_int])).to(device).to(dtype)
-            r_long_grid = r_long_tab[:2]  # last line start, end
-            r_c_0to5 = r_long_tab[2:]  # last line values
-
-        rep = {'r_int': r_int, 'r_table': rep, 'r_long_grid': r_long_grid,
-               'r_grid': r_grid, 'r_a123': r_a123, 'r_c_0to5': r_c_0to5,
-               'r_cutoff': r_cutoff} if read_repulsive else None
-
-        return cls(element_pair, h_data, s_data, rep, onsite, U, **kwd)
+        return cls(atom_pair, h_data, s_data, grid, **kwargs_in)
 
     @classmethod
-    def from_hdf(cls, path_to_hdf: str, element_pair: Union[Tensor, str],
-                 mask_hs: Optional[bool] = False,
-                 interactions: Optional[List[Tuple[int, int, int]]] = None,
-                 **kwargs) -> 'Skf':
-        """Generate integral from h5py binary data.
+    def from_hdf5(cls, source: Group, dtype: Optional[torch.dtype] = None,
+                  device: Optional[torch.device] = None) -> 'Skf':
+        """Instantiate a `Skf` instances from an HDF5 group.
 
         Arguments:
-            path_to_hdf: Path to the target binary file.
-            element_pair: Current element number pair.
-            mask_hs: If use mask to generate only the used Hamiltonian or
-                overlap, the default is False.
-            interactions: A list of orbital interactions, which is determined
-                by the maximum of quantum number ℓ of each element pair.
-
-        Keyword Args:
-            read_hamiltonian: If read Hamiltonian data.
-            read_overlap: If read overlap data.
-            read_repulsive: If read repulsive data.
-            read_onsite: If read onsite data.
-            read_U: If read Hubbert U.
-            read_other_params: If read the rest of parameters.
-            device: Device type used in this classmethod.
-            dtype: Tensor dtype used in this classmethod.
+            source: An HDF5 group containing slater-koster data.
+            device: Device on which to place tensors. [DEFAULT=None]
+            dtype: dtype to be used for floating point tensors. [DEFAULT=None]
 
         Returns:
-            Skf: Return the arguments in `Skf` object.
-
+            skf: The resulting `Skf` object.
         """
-        read_hamiltonian = kwargs.get('read_hamiltonian', True)
-        read_overlap = kwargs.get('read_overlap', True)
-        read_repulsive = kwargs.get('read_repulsive', True)
-        read_onsite = kwargs.get('read_onsite', True)
-        read_U = kwargs.get('read_U', True)
-        read_other_params = kwargs.get('read_other_params', True)
-        device = kwargs.get('device', torch.device('cpu'))
-        dtype = kwargs.get('dtype', torch.get_default_dtype())
-        homo = element_pair[0] == element_pair[1]
+        def tt(group, name):
+            """Convenience function to convert to data into tensors"""
+            return torch.tensor(group[name][()], **dd)
 
-        # get the group name with chemical element name
-        if isinstance(element_pair, Tensor):
-            element_name_pair = batch_chemical_symbols(element_pair)
-        this_name = element_name_pair[0] + '-' + element_name_pair[1]
+        dd = {'dtype': dtype, 'device': device}
 
-        with h5py.File(path_to_hdf, 'r') as f:
+        # Check that the version is compatible
+        if float(source.attrs['version']) > float(cls.version):
+            warnings.warn('HDF5-skf file Version exceeds local code version.')
 
-            if read_hamiltonian:
-                maskh = _get_hs_mask(
-                    f[this_name + '/hamiltonian'][()].shape[1],
-                    read_hamiltonian, mask_hs, interactions)
-                h_data = torch.from_numpy(f[this_name + '/hamiltonian'][()][
-                    ..., maskh]).to(device).to(dtype)
-            else:
-                h_data = None
+        kwargs = {}
+        atom_pair = torch.tensor(source.attrs['atoms'])
 
-            if read_overlap:
-                masks = _get_hs_mask(f[this_name + '/overlap'][()].shape[1],
-                                     read_overlap, mask_hs, interactions)
-                s_data = torch.from_numpy(f[this_name + '/overlap'][()][
-                    ..., masks]).to(device).to(dtype)
-            else:
-                s_data = None
+        # Retrieve integral data
+        ints = source['integrals']
+        # Convert structured numpy arrays into a dictionary of tensors
+        H, S = ({
+            # Convert name-string > Tuple[int, int] & np.array > torch.tensor
+            tuple(map(int, n.split('-'))): torch.tensor(i[n], **dd)
+            # Loop over field names (strings like "ℓ₁-ℓ₂") & their numpy arrays
+            for n in i.dtype.fields.keys()}
+            for i in [ints['H'], ints['S']])
+        grid = (torch.arange(0, ints['count'][()], **dd) + 1) * ints['step'][()]
 
-            if read_repulsive:
-                rep = {ipr: torch.from_numpy(f[
-                    this_name + '/' + ipr][()]).to(device).to(dtype) for ipr
-                    in ['r_table', 'r_grid', 'r_a123', 'r_long_grid', 'r_c_0to5']}
-                rep.update({'r_cutoff': f[this_name + '/r_cutoff'][()]})
-                rep.update({'r_int': f[this_name + '/r_int'][()]})
-            else:
-                rep = None
+        if source.attrs['has_r_spline']:  # Repulsive spline data
+            r = source['r_spline']
+            kwargs['r_spline'] = cls.RSpline(
+                tt(r, 'grid'), tt(r, 'cutoff'), tt(r, 'spline_coef'),
+                tt(r, 'exp_coef'), tt(r, 'tail_coef'))
 
-            onsite = torch.from_numpy(f[this_name + '/onsite'][()]).to(
-                device).to(dtype) if read_onsite and homo else None
+        if source.attrs['has_r_poly']:  # Repulsive polynomial
+            r = source['r_poly']
+            kwargs['r_poly'] = cls.RPoly(tt(r, 'cutoff'), tt(r, 'coef'))
 
-            U = torch.from_numpy(f[this_name + '/U'][()]).to(device).to(
-                dtype) if read_U and homo else None
+        if source.attrs['is_atomic']:  # Atomic data
+            a = source['atomic']
+            kwargs.update({'on_sites': tt(a, 'on_sites'),
+                           'hubbard_us': tt(a, 'hubbard_us'),
+                           'mass': tt(a, 'mass'),
+                           'occupations': tt(a, 'occupations')})
 
-            if read_other_params:
-                kwd = {ipara: f[this_name + '/' + ipara][()] for ipara in
-                       ['rcut', 'g_step', 'n_grids']}
-                kwd.update({'hs_grid': torch.from_numpy(
-                    f[this_name + '/hs_grid'][()]).to(device).to(dtype)})
+        return cls(atom_pair, H, S, grid, **kwargs)
 
-                # update homo element_pair
-                if homo:
-                    kwd.update({'occupations': torch.from_numpy(
-                        f[this_name + '/occupations'][()]).to(device).to(dtype)})
-                    kwd.update({'mass': f[this_name + '/mass'][()]})
-            else:
-                kwd = {}  # create empty dict
-            kwd.update({'device': device, 'dtype': dtype})
+    def write(self, path: str, overwrite: Optional[bool] = False):
+        """Save the Slater-Koster data to a file.
 
-        return cls(element_pair, h_data, s_data, rep, onsite, U, **kwd)
-
-    @staticmethod
-    def to_hdf(target: Union[str, Group], skf: object, mode: str = 'a'):
-        """Write standard Slater-Koster data to hdf type.
+        The target file can be either an skf file or an hdf5 database. Desired
+        file format will be inferred from the file's name.
 
         Arguments:
-            target: The string will be the name of the target to be written,
-                the Group type will be the opened `File` object in h5py.
-            skf: Object with Slater-Koster raw data.
-            mode: Mode to write data, same to the h5py mode.
+            path: path to the file in which the data is to be saved.
+            overwrite: Existing skf-files/HDF5-groups can only be overwritten
+                when ``overwrite`` is True. [DEFAULT=False]
 
         """
-        if isinstance(target, str):
-            # Create a HDF5 database and save the feed to it
-            target = h5py.File(target, mode=mode)
+        if 'sk' in splitext(path)[1].lower():  # If path points to an skf file
+            if isfile(path) and not overwrite:
+                raise FileExistsError(
+                    'File already exists; use "overwrite" to permit '
+                    'overwriting.')
+            self.to_skf(path)
 
-        # get the group name with chemical element name
-        if isinstance(skf.element_pair, Tensor):
-            chemical_name_pair = batch_chemical_symbols(skf.element_pair)
-        else:
-            chemical_name_pair = skf.element_pair
-        g_name = chemical_name_pair[0] + '-' + chemical_name_pair[1]
+        else:  # Otherwise it must be an HDF5 file
+            with h5py.File(path, 'a') as db:  # Create/open the HDF5 file
+                name = '-'.join([chemical_symbols[int(i)]
+                                 for i in self.atom_pair])
+                if name in db:  # If an entry already exists in this database
+                    if not overwrite:  # Then raise an exception
+                        raise FileExistsError(
+                            f'Entry {name} already exists; use "overwrite" '
+                            'to permit overwriting.')
+                    else:  # Unless told to overwrite it
+                        del db[name]
+                # Create the HDF5 entry & fill it with data via `to_hdf5`.
+                self.to_hdf5(db.create_group(name))
 
-        # If element pair is not in target, create new group
-        g = target[g_name] if g_name in target.keys() else \
-            target.create_group(g_name)
+    def to_skf(self, path: str):
 
-        # write hamiltonian, overlap, onsite and U, currently gradient is not
-        # included in skf object, detach is not necessary, cpu() will avoid
-        # error if data type is cuda
-        if skf.hamiltonian is not None:
-            g.create_dataset('hamiltonian', data=skf.hamiltonian.cpu())
+        def t2a(t):
+            """Converts a torch tensor to numpy array."""
+            return t.detach().cpu().numpy()
 
-        if skf.overlap is not None:
-            g.create_dataset('overlap', data=skf.overlap.cpu())
+        def a2s(a, f):
+            """Converts a numpy array into a formatted string."""
+            # Slow but easy way to convert array to string
+            if a.ndim == 1:
+                return ''.join(f'{j:{f}}' for j in a)
+            else:
+                return '\n'.join([a2s(j, f) for j in a])
 
-        if skf.onsite is not None and skf.homo:
-            g.create_dataset('onsite', data=skf.onsite.cpu())
+        # Used for working out array lengths later on
+        max_l = max(max(self.hamiltonian)[0], 2)
 
-        if skf.U is not None and skf.homo:
-            g.create_dataset('U', data=skf.U.cpu())
+        # Build the first line defining the integral data's grid.
+        # Format: {grid step size} {number of grid points}
+        grid_n = len(self.grid)
+        grid_step = self.grid.diff()[0]
+        output = f'{grid_step:<12.8f}{grid_n:>5}'
 
-        if skf.repulsive is not None:
-            g.create_dataset('repulsive', data=skf.repulsive)
-            g.create_dataset('r_int', data=skf.r_int)
-            g.create_dataset('r_cutoff', data=skf.r_cutoff)
-            for ipr in ['r_table', 'r_grid', 'r_a123', 'r_long_grid', 'r_c_0to5']:
-                g.create_dataset(ipr, data=getattr(skf, ipr).cpu())
+        # Parse the atomic data into a string.
+        # Format: {on site terms} {SPE} {hubbard u values} {occupancies}
+        if self.atomic:
+            # Care must be taken when parsing atomic data ase some elements of
+            # these arrays may have been culled at read time.
+            homo = np.zeros((max_l + 1) * 3)  # Parse in standard atomic data
+            for n, i in enumerate([self.occupations, self.hubbard_us,
+                                   self.on_sites]):
+                homo[(start := (max_l + 1) * n):start + len(i)] = t2a(i)
+            # Add dummy SPE value and reverse the array's order
+            homo = np.flip(np.insert(homo, (max_l + 1) * 2, 0.))
+            # Finally append the homo data to the output string
+            output += '\n' + a2s(homo, '>21.12E')
 
-        for ipr in ['g_step', 'n_grids', 'rcut']:
-            if ipr in skf.__dict__.keys():
-                g.create_dataset(ipr, data=getattr(skf, ipr))
+        # Generate the repulsive polynomial line.
+        # Format {mass} {coefficients} {cutoff} {ZEROS}
+        coef = np.zeros(7) if self.r_poly is None else t2a(self.r_poly.coef)
+        r = np.zeros(1) if self.r_poly is None else t2a(self.r_poly.cutoff)
+        mass = t2a(self.mass) if self.atomic else np.zeros(1)
+        r_poly_data = np.hstack((mass, coef, r, np.zeros(10)))
 
-        for ipr in ['hs_grid', 'r_poly']:
-            if ipr in skf.__dict__.keys():
-                g.create_dataset(ipr, data=getattr(skf, ipr).cpu())
+        output += '\n' + a2s(r_poly_data, '>21.12E')
 
-        if skf.homo:
-            if 'mass' in skf.__dict__.keys():
-                g.create_dataset('mass', data=skf.mass)
-            if 'occupations' in skf.__dict__.keys():
-                g.create_dataset('occupations', data=skf.occupations.cpu())
+        # Build HS data
+        ls = range(max_l, -1, -1)
+        lps = [i for i in product(ls, ls) if i[0] <= i[1]]
+        hs_data = np.hstack([  # Concatenate H & S matrices.
+            np.hstack(  # Collate each integral, adding dummy data as needed.
+                [t2a(torch.atleast_2d(i.get(l, torch.zeros(l[0], grid_n)))).T
+                 for l in lps])
+            for i in [self.hamiltonian, self.overlap]])
+        output += '\n' + a2s(hs_data, '>21.12E')
+
+        # Append the repulsive spline data, is present.
+        if (rs_data := self.r_spline) is not None:
+            grid = rs_data.grid
+            # Header
+            output += '\nSpline'
+            # Grid data: {number of grid points} {cutoff}
+            output += f'\n{len(grid):<5} {rs_data.cutoff:>12.8f}'
+            # Exponential: {coefficients}
+            output += '\n' + a2s(rs_data.exp_coef, '>21.12E')
+            # Primary spline: {from} {to} {coefficients}
+            s_data = t2a(torch.cat((grid[:-1].view(-1, 1),
+                                    grid[1:].view(-1, 1),
+                                    rs_data.spline_coef), -1))
+            output += '\n' + a2s(s_data, '>21.12E')
+            # Spline tail: {from} {to} {coefficients}
+            tail = t2a(torch.cat((grid[-1:], rs_data.cutoff[None],
+                                  rs_data.tail_coef)))
+            output += '\n' + a2s(tail, '>21.12E')
+
+        # Write the results to the target file
+        open(path, 'w').write(output)
+
+    def to_hdf5(self, target: Group):
+        """Saves the `Skf` instance into a target HDF5 Group.
+
+        Arguments:
+            target: The hdf5 group to which the skf data should be saved.
+
+        Notes:
+            This function does not create its own group as it expects that
+            ``target`` is the group into which data should be writen.
+        """
+        def t2n(t: Tensor) -> np.ndarray:
+            """Convert torch tensor to a numpy array."""
+            return t.detach().cpu().numpy()
+
+        def add_data(entities: Dict[str, Any], to: str):
+            """Create a new group and add multiple datasets to it."""
+            to = target.create_group(to)
+            for name, data in entities.items():
+                # Convert any torch tensor into numpy arrays.
+                data = t2n(data) if isinstance(data, Tensor) else data
+                to.create_dataset(name, data=data)
+
+        # Attributes
+        target.attrs.update(
+            {'atoms': t2n(self.atom_pair), 'version': self.version,
+             'has_r_poly': self.r_poly is not None, 'is_atomic': self.atomic,
+             'has_r_spline': self.r_spline is not None})
+
+        # Convert electronic integral matrices into structured numpy arrays.
+        dtype = np.dtype([('%s-%s' % k, np.float64, tuple(v.shape))
+                          for k, v in self.hamiltonian.items()])
+        h_data, s_data = [np.array(tuple(t2n(i) for i in j.values()), dtype)
+                          for j in [self.hamiltonian, self.overlap]]
+
+        # SkDict component
+        add_data({'H': h_data, 'count': len(self.grid), 'S': s_data,
+                  'step': self.grid.diff()[0]}, 'integrals')
+
+        if (p := self.r_poly) is not None:  # Repulsive polynomial
+            add_data({'coef': p.coef, 'cutoff': p.cutoff}, 'r_poly')
+
+        if (s := self.r_spline) is not None:  # Repulsive spline
+            add_data(
+                {'grid': s.grid, 'cutoff': s.cutoff, 'exp_coef': s.exp_coef,
+                 'step': s.grid.diff()[0], 'tail_coef': s.tail_coef,
+                 'spline_coef': s.spline_coef, }, 'r_spline')
+
+        if self.atomic:  # Atomic
+            add_data(
+                {'on_sites': self.on_sites, 'hubbard_us': self.hubbard_us,
+                 'occupations': self.occupations, 'mass': self.mass}, 'atomic')
+
+        # Metadata
+        add_data({'time_created': time()}, 'metadata')
+
+    def __str__(self) -> str:
+        """Returns a string representing the `Skf` object."""
+        cls_name = self.__class__.__name__
+        name = '-'.join([chemical_symbols[int(i)] for i in self.atom_pair])
+        r_spline = 'No' if self.r_spline is None else 'Yes'
+        r_poly = 'No' if self.r_poly is None else 'Yes'
+        atomic = 'No' if self.atomic is None else 'Yes'
+        return f'{cls_name}({name}, r-spline: {r_spline}, r-poly: {r_poly}, ' \
+               f'atomic-data: {atomic})'
+
+    def __repr__(self) -> str:
+        """Returns a simple string representation of the `Skf` object."""
+        cls_name = self.__class__.__name__
+        name = '-'.join([chemical_symbols[int(i)] for i in self.atom_pair])
+        return f'{cls_name}({name})'
 
 
-class CompressionRSkf:
-    pass
+#########################
+# Convenience Functions #
+#########################
+def _s2t(text: Union[str, List[str]], sep: str = ' \t', **kwargs) -> Tensor:
+    """Converts string to tensor.
 
-
-def _get_hs_mask(n_interaction: int, read_ski: bool, mask_hs: bool,
-                 interactions: List[Tuple[int, int, int]]) -> List[bool]:
-    """Return the mask for Hamiltonian or overlap.
-
-    The `read_ski` determines if read Hamiltonian or overlap, if False, the
-    mask will return False for all interactions. If `read_ski` is True and
-    `mask_hs` is False, the mask will return True for all interactions, it
-    suggests that all Hamiltonian or overlap will be returned. If `read_ski`
-    is True and `mask_hs` is True, the mask will be applied to select the
-    interactions according to `interactions`.
+    This uses the `np.fromstring` method to quickly convert blocks of text
+    into arrays, which are then converted into tensors.
 
     Arguments:
-        n_interaction: The total number of Hamiltonian or overlap interactions.
-        read_ski: If read Hamiltonian or overlap.
-        mask_hs: If use mask to select Hamiltonian or overlap.
-        interactions: A list of orbital interactions, which is determined
-            by the maximum of quantum number ℓ of each element pair.
+        text: string to extract the tensor from. If a list of strings is
+            supplied then they will be joined prior to tensor extraction.
+        sep: possible delimiters. [DEFAULT=' \t']
 
-    Returns:
-        mask: Mask the interactions in Hamiltonian or overlap to select
-            Hamiltonian or overlap.
+    Keyword Arguments:
+        kwargs: these will be passed into the `torch.tensor` call.
 
     """
-    if mask_hs and read_ski:
-        # In normal SKF, the total Hamiltonian and overlap in each line
-        # is 20, in extended format, it will be 40. The number of interactions
-        # will be the half.
-        assert n_interaction in (10, 20), \
-            f'Number of interactions should be 10 or 20 but get {n_interaction}'
-        assert len(interactions) <= n_interaction, \
-            f'number of interactions {len(interactions)} is more than' + \
-                f' the total interactions size: {n_interaction}'
-
-        sk_i = _interaction[2] if n_interaction == 10 else _interaction[3]
-
-        return [True if interaction in interactions else False
-                for interaction in sk_i]
-
-    # do not use mask, return True to read all Hamiltonian or overlap
-    elif not mask_hs and read_ski:
-        return [True] * n_interaction
-
-    # do not read Hamiltonian or overlap, return False
-    elif not read_ski:
-        return [False] * n_interaction
+    text = sep.join(text) if isinstance(text, list) else text
+    return torch.tensor(np.fromstring(text, sep=sep, dtype=np.float64),
+                        **kwargs)
 
 
-def _asterisk_to_repeat_tensor(
-        xx: list, dtype=torch.float64, device=torch.device('cpu')) -> Tensor:
-    """Transfer data with asterisk to Tensor."""
-    return torch.cat([torch.tensor([float(ii.split('*')[1])]).repeat(
-        int(ii.split('*')[0])) if '*' in ii else torch.tensor([float(ii)])
-        for ii in xx]).to(device).to(dtype)
+def _esr(text: str) -> str:
+    """Expand stared number representations.
 
+    This is primarily used to resolve the skf file specification violations
+    which are found in some of the early skf files. Specifically the user of
+    started notations like `10*1.0` to represent a value of one repeated ten
+    times, or the mixed use of spaces, tabs and commas.
 
-def _get_interaction(lm):
-    """Helper function to generate interactions in Slater-Koster files."""
-    _int = [(l1, l2, im) for l1, l2 in combinations_with_replacement(lm, 2)
-            for im in range(l1, -1, -1)]
-    return list(reversed(_int))
+    Arguments:
+        text: string to be rectified.
 
+    Returns:
+        r_text: rectified string.
 
-# alias for common code structure to deal with SK tables each line
-_lmf = lambda xx: list(map(float, xx.split()))
-_asterisk = lambda xx: list(map(str.strip, xx.split()))
-
-
-# default interactions for each max quantum number, to make sure the order of
-# interactions will be always fixed
-_ls, _lp, _ld, _lf = (
-    list(range(1)), list(range(2)), list(range(3)), list(range(4)))
-_interaction = {0: _get_interaction(_ls), 1: _get_interaction(_lp),
-                2: _get_interaction(_ld), 3: _get_interaction(_lf)}
+    Notes:
+        This finds strings like `3*.0` & `10*1` and replaces them with
+        `.0 .0 .0` & `1 1 1 1 1 1 1 1 1 1` respectively.
+    """
+    # Strip out unnecessary commas
+    text = text.replace(',', ' ')
+    if '*' in text:
+        for i in set(re.findall(r'[0-9]+\*[0-9|.]+', text)):
+            n, val = i.strip(',').split('*')
+            text = text.replace(i, f"{' '.join([val] * int(n))}")
+    return text

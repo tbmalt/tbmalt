@@ -7,6 +7,7 @@ mathematical functions.
 from typing import Tuple, Union, Literal, Optional
 import torch
 import numpy as np
+from numbers import Real
 Tensor = torch.Tensor
 
 
@@ -620,3 +621,68 @@ def sym(x: Tensor, dim0: int = -1, dim1: int = -2) -> Tensor:
 
     """
     return (x + x.transpose(dim0, dim1)) / 2
+
+
+def triangular_number(n: Union[Tensor, Real]) -> Union[Tensor, Real]:
+    r"""Triangular number of ``n``.
+
+    Calculates the triangular number of a given input:
+
+    .. math:: T_{n} = \frac{n (n + 1)}{2}
+
+    Arguments:
+        n: Value whose triangular number is to be calculated.
+
+    Returns:
+        t: Triangular number of ``n``
+    """
+    return (n * (n + 1)) / 2
+
+
+def tetrahedral_number(n: Union[Tensor, Real]) -> Union[Tensor, Real]:
+    r"""Tetrahedral number of ``n``.
+
+    Calculates the tetrahedral number of a given input:
+
+    .. math:: Te_{n} = \frac{n (n + 1)(n + 2)}{6}
+
+    Arguments:
+        n: Value whose tetrahedral number is to be calculated.
+
+    Returns:
+        te: Tetrahedral number of ``n``
+    """
+    return (n * (n + 1) * (n + 2)) / 6
+
+
+def triangular_root(x: Union[Tensor, Real]) -> Union[Tensor, Real]:
+    r"""Triangular root of ``x``.
+
+    Calculates the triangular root of a given input:
+
+    .. math:: n = \frac{\sqrt(8x + 1) - 1)}{2}
+
+    Arguments:
+        x: Value whose triangular root is to be calculated.
+
+    Returns:
+        n: Triangular root of ``x``.
+    """
+    return ((8 * x + 1) ** 0.5 - 1) / 2
+
+
+def tetrahedral_root(x: Union[Tensor, Real]) -> Union[Tensor, Real]:
+    r"""Tetrahedral root of ``x``.
+
+    Calculates the tetrahedral root of a given input:
+
+    .. math:: n = \sqrt[3]{3x+\sqrt{9{x^2}-\frac{1}{27}}} + \sqrt[3]{3x-\sqrt{9{x^2}-\frac{1}{27}}} -1
+
+    Arguments:
+        x: Value whose tetrahedral root is to be calculated.
+
+    Returns:
+        n: Tetrahedral root of ``x``.
+    """
+    a = (9 * x ** 2 - (1 / 27)) ** 0.5
+    return (3 * x + a)**(1/3) + (3 * x - a)**(1/3) - 1
