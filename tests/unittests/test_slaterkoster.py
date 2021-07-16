@@ -25,6 +25,7 @@ from tbmalt import Geometry, Basis
 ####################
 l_dict = {'s': 0, 'p': 1, 'd': 2, 'f': 3}
 max_ls = {1: 0, 6: 1, 79: 2, 57: 3}
+shell_dict = {1: [0], 6: [0, 1], 79: [0, 1, 2], 57: [0, 1, 2, 3]}
 
 
 class FoundOffSiteTestKwarg(Exception):
@@ -103,7 +104,10 @@ class _TestSkFeed(_SkFeed):
                                 for l2 in range(max_ls[atom_2] + 1)
                                 if l1 <= l2}
 
-    def off_site(self, atom_pair, l_pair, distances, **kwargs):
+        self.off_site_values.update({(k[1], k[0], k[3], k[2]): v
+                                     for k, v in self.off_site_values.items()})
+
+    def off_site(self, atom_pair, shell_pair, distances, **kwargs):
         """This creates and returns dummy off-site Slater-Koster integrals.
 
         The integral value returned is just the product of the distance and a
@@ -121,10 +125,14 @@ class _TestSkFeed(_SkFeed):
             if not check:
                 raise AtomIndicesIncorrect()
 
-        sorter = l_pair.argsort()
-        l_pair = l_pair[sorter].tolist()
-        atom_pair = atom_pair[sorter].tolist()
-        return (self.off_site_values[(*atom_pair, *l_pair)].view(1, -1)
+        sorter = atom_pair.argsort()
+        shell_pair = shell_pair[sorter]
+        atom_pair = atom_pair[sorter]
+
+        if atom_pair[0] == atom_pair[1] and shell_pair[0] > shell_pair[1]:
+            shell_pair = shell_pair.flip(-1)
+
+        return (self.off_site_values[(*atom_pair.tolist(), *shell_pair.tolist())].view(1, -1)
                 * distances.view(-1, 1))
 
     def on_site(self, atomic_numbers, **kwargs):
@@ -475,7 +483,7 @@ def test_gather_on_site_general(device):
     """
     atomic_numbers, positions = molecules(device, 1)
     geometry = Geometry(atomic_numbers, positions)
-    basis = Basis(atomic_numbers, max_ls)
+    basis = Basis(atomic_numbers, shell_dict)
     sk_feed = _TestSkFeed(atomic_numbers.unique().tolist(), device=device)
 
     try:
@@ -501,7 +509,7 @@ def test_gather_on_site_single(device):
              for a1 in atoms for a2 in atoms if a1 <= a2]
 
     for geometry in geoms:
-        basis = Basis(geometry.atomic_numbers, max_ls)
+        basis = Basis(geometry.atomic_numbers, shell_dict)
         pred = _gather_on_site(geometry, basis, sk_feed)
         ref = torch.cat(sk_feed.on_site(geometry.atomic_numbers))
         check_1 = torch.allclose(ref, pred)
@@ -520,11 +528,11 @@ def test_gather_on_site_batch(device):
     atoms = [1, 6, 79, 57]
     geoms = [build_geom(a1, a2, device=device)
              for a1 in atoms for a2 in atoms if a1 <= a2]
-    bases = [Basis(i.atomic_numbers, max_ls) for i in geoms]
+    bases = [Basis(i.atomic_numbers, shell_dict) for i in geoms]
 
     geometry = Geometry([i.atomic_numbers for i in geoms],
                         [i.positions for i in geoms])
-    basis = Basis([i.atomic_numbers for i in geoms], max_ls)
+    basis = Basis([i.atomic_numbers for i in geoms], shell_dict)
     pred = _gather_on_site(geometry, basis, sk_feed)
     ref = pack([torch.cat(sk_feed.on_site(i.atomic_numbers))
                 for i in geoms])
@@ -552,13 +560,13 @@ def test_gather_on_site_grad(device):
     sk_feed_s = _TestSkFeed(device=device, requires_grad=True)
     atomic_numbers_s = torch.tensor([57, 57])
     geom_s = Geometry(atomic_numbers_s, torch.rand(2, 3, device=device))
-    basis_s = Basis(atomic_numbers_s, max_ls)
+    basis_s = Basis(atomic_numbers_s, shell_dict)
 
     sk_feed_b = _TestSkFeed(device=device, requires_grad=True)
     atomic_numbers_b = [torch.tensor(i) for i in [[1, 1], [1, 6], [57, 57]]]
     geom_b = Geometry(atomic_numbers_b,
                       [torch.rand(2, 3, device=device) for _ in range(3)])
-    basis_b = Basis(atomic_numbers_b, max_ls)
+    basis_b = Basis(atomic_numbers_b, shell_dict)
 
     # Perform the grad checks
     grad_s = gradcheck(single_proxy,
@@ -587,23 +595,25 @@ def test_gather_off_site_general(device):
     # pair corresponds to the atom index given
 
     l_pair = torch.tensor([0, 1])
-    basis = Basis(torch.tensor([6, 1, 6, 6, 1, 6]), max_ls)
+    basis = Basis(torch.tensor([6, 1, 6, 6, 1, 6]), shell_dict)
     sk_feed = _TestSkFeed(basis.atomic_numbers.unique().tolist(),
                           device=device)
 
     # The following code is just ripped out of the hs_matrix function
-    l_mat_b = basis.azimuthal_matrix('block', mask_lower=False)
-    i_mat_b = basis.index_matrix('block')
+    l_mat_s = basis.azimuthal_matrix('shell', mask_lower=False)
+    i_mat_s = basis.index_matrix('shell')
+    s_mat_s = basis.shell_number_matrix('shell')
     an_mat_a = basis.atomic_number_matrix('atomic')
 
-    index_mask_b = torch.nonzero((l_mat_b == l_pair).all(dim=-1)).T
-    index_mask_a = i_mat_b[[*index_mask_b]].T
+    index_mask_b = torch.nonzero((l_mat_s == l_pair).all(dim=-1)).T
+    shells = s_mat_s[[*index_mask_b]]
+    index_mask_a = i_mat_s[[*index_mask_b]].T
     g_anum = an_mat_a[[*index_mask_a]]
     dists = torch.rand(len(g_anum), device=device)
 
     # Check for kwarg passthrough
     try:
-        _gather_off_site(g_anum, l_pair, dists, sk_feed,
+        _gather_off_site(g_anum, shells, dists, sk_feed,
                          test_off_site_kwarg_passthrough=None)
         pytest.fail(
             'kwargs not passed-through to the SkFeed off_site method')
@@ -613,7 +623,7 @@ def test_gather_off_site_general(device):
     # Ensure atom_indices are passed through correctly (a special check is
     # required as _gather_off_site manipulates the tensor).
     try:
-        _gather_off_site(g_anum, l_pair, dists, sk_feed,
+        _gather_off_site(g_anum, shells, dists, sk_feed,
                          atom_indices=index_mask_a)
     except AtomIndicesIncorrect:
         pytest.fail('Atom indices passed to off_site were incorrect')
@@ -648,13 +658,17 @@ def test_gather_off_site(device):
     sk_feed = _TestSkFeed(device=device)
 
     # Perform tests using different azimuthal pairs.
-    for l_pair in torch.tensor([[i, j] for i in range(4) for j in range(4)]):
+    for l_pair in torch.tensor([[i, j] for i in range(4) for j in range(4)], device=device):
         atom_pairs, distances = get_interactions(l_pair, 20)
-        viable_atom_pairs = []
+        shells = l_pair.expand(20, -1).clone()
 
-        pred = _gather_off_site(atom_pairs, l_pair, distances, sk_feed)
-        ref = torch.cat([sk_feed.off_site(i, l_pair, j)
-                         for i, j in zip(atom_pairs, distances)], dim=0)
+        # Flip some elements of atom_pairs & shells to test the sorting code
+        atom_pairs = torch.vstack((atom_pairs[:-10], atom_pairs[-10:].flip(-1)))
+        shells = torch.vstack((shells[:-10], shells[-10:].flip(-1)))
+
+        pred = _gather_off_site(atom_pairs, shells, distances, sk_feed)
+        ref = torch.cat([sk_feed.off_site(i, j, k)
+                         for i, j, k in zip(atom_pairs, shells, distances)], dim=0)
         check_1 = torch.allclose(pred, ref)
         check_2 = pred.device == device
 
@@ -668,12 +682,13 @@ def test_gather_off_site_grad(device):
     """Checks gradient stability of the `_gather_off_site` function."""
 
     def proxy(*args):
-        return _gather_off_site(atom_pairs, l_pair, distances, sk_feed)
+        return _gather_off_site(atom_pairs, shell_pairs, distances, sk_feed)
 
     # Instantiate the SkFeed object
     sk_feed = _TestSkFeed(device=device, requires_grad=True)
     l_pair = torch.tensor([1, 3])
     atom_pairs = torch.full((6, 2), 57)
+    shell_pairs = l_pair.expand(6, -1)
     distances = torch.rand(6, device=device)
 
     grad = gradcheck(proxy, (sk_feed.off_site_values[(57, 57, 1, 3)],),
@@ -689,7 +704,7 @@ def test_hs_matrix_general(device):
     sk_feed = _TestSkFeed([1], device=device)
     atomic_numbers, positions = molecules(device=device)
     geometry = Geometry(atomic_numbers[0], positions[0])
-    basis = Basis(atomic_numbers[0], max_ls)
+    basis = Basis(atomic_numbers[0], shell_dict)
 
     try:
         hs_matrix(geometry, basis, sk_feed,
@@ -714,7 +729,7 @@ def test_hs_matrix_single(device):
     sk_feed = _TestSkFeed(device=device)
     for atomic_numbers, positions in zip(*molecules(device=device)):
         geometry = Geometry(atomic_numbers, positions)
-        basis = Basis(atomic_numbers, max_ls)
+        basis = Basis(atomic_numbers, shell_dict)
         res = hs_matrix(geometry, basis, sk_feed)
 
         # Tolerance threshold tests are not implemented, so just fail here
@@ -732,7 +747,7 @@ def test_hs_matrix_batch(device):
 
     atomic_numbers, positions = molecules(device=device)
     geometry = Geometry(atomic_numbers, positions)
-    basis = Basis(atomic_numbers, max_ls)
+    basis = Basis(atomic_numbers, shell_dict)
     res = hs_matrix(geometry, basis, sk_feed)
 
     # Tolerance threshold tests are not implemented, so just fail here
@@ -768,12 +783,12 @@ def test_hs_matrix_grad(device):
             *sk_feed.on_site_values.values())
 
     geom_s = Geometry(atomic_numbers[1], positions[1])
-    basis_s = Basis(atomic_numbers[1], max_ls)
+    basis_s = Basis(atomic_numbers[1], shell_dict)
     grad_s = gradcheck(proxy, (geom_s, basis_s, sk_feed, *args),
                        raise_exception=False)
 
     geom_b = Geometry(atomic_numbers[:-1], positions[:-1])
-    basis_b = Basis(atomic_numbers[:-1], max_ls)
+    basis_b = Basis(atomic_numbers[:-1], shell_dict)
     grad_b = gradcheck(proxy, (geom_b, basis_b, sk_feed, *args),
                        raise_exception=False)
 

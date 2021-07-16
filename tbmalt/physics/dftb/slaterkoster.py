@@ -63,8 +63,10 @@ def hs_matrix(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
     # ----------------
     # CPU/memory efficiency can be improved here, but such changes have been
     # proposed until a later date. Variables named "*_mat_*" hold data that's
-    # used to build masks or is gathered by other masks. Suffixes _f, _b & _a
-    # indicate whether a tensor is full, block-wise or atom-wise resolved.
+    # used to build masks or is gathered by other masks. Suffixes _f, _s & _a
+    # indicate whether a tensor is full, shell-wise or atom-wise resolved.
+    # Time permitting a change should be introduced which caches the rotation
+    # matrices for rather than recomputing them every time.
 
     # The device on which the results matrix sits is defined by the geometry
     # object. This choice has been made as such objects are made to be moved
@@ -72,11 +74,15 @@ def hs_matrix(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
     mat = torch.zeros(basis.orbital_matrix_shape,  # <- Results matrix
                       device=geometry.positions.device)
 
+    # True of the hamiltonian is square (used for safety checks)
+    mat_is_square = mat.shape[-1] == mat.shape[-2]
+
     # Matrix Initialisation
-    l_mat_f = basis.azimuthal_matrix(mask_lower=False)
-    l_mat_b = basis.azimuthal_matrix('block', mask_lower=False)
-    i_mat_b = basis.index_matrix('block')
+    l_mat_f = basis.azimuthal_matrix(mask_diag=True, mask_on_site=True)
+    l_mat_s = basis.azimuthal_matrix('shell', mask_on_site=True)
+    i_mat_s = basis.index_matrix('shell')
     an_mat_a = basis.atomic_number_matrix('atomic')
+    sn_mat_s = basis.shell_number_matrix('shell')
     dist_mat_a = geometry.distances
     vec_mat_a = -normalize(geometry.distance_vectors, 2, -1)  # Unit vectors
 
@@ -87,14 +93,22 @@ def hs_matrix(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
 
     for l_pair in l_pairs:
         # Mask identifying indices associated with the current l_pair target
-        index_mask_b = torch.nonzero((l_mat_b == l_pair).all(dim=-1)).T
+        index_mask_s = torch.nonzero((l_mat_s == l_pair).all(dim=-1)).T
 
-        if len(index_mask_b[0]) == 0:  # Skip if no l_pair blocks are found
+        # Ignore duplicate operations in the lower triangle when ℓ₁=ℓ₂
+        if l_pair[0] == l_pair[1:] and mat_is_square:
+            # If the matrix is not square this will case many problems!
+            index_mask_s = index_mask_s.T[index_mask_s[0] < index_mask_s[1]].T
+
+        if len(index_mask_s[0]) == 0:  # Skip if no l_pair blocks are found
             continue
 
-        # Gather from i_mat_b to get the atom index mask.
-        index_mask_a = index_mask_b.clone()  # <- batch agnostic approach
-        index_mask_a[-2:] = i_mat_b[[*index_mask_b]].T
+        # Gather shell numbers associated with the selected (masked) orbitals
+        shell_pairs = sn_mat_s[[*index_mask_s]]
+
+        # Gather from i_mat_s to get the atom index mask.
+        index_mask_a = index_mask_s.clone()  # <- batch agnostic approach
+        index_mask_a[-2:] = i_mat_s[[*index_mask_s]].T
 
         # Gather the atomic numbers, distances, and unit vectors.
         g_anum = an_mat_a[[*index_mask_a]]
@@ -105,7 +119,7 @@ def hs_matrix(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
         # provided by the user. If the SK-feed is environmentally dependent,
         # then it will need the indices of the atoms; as this data cannot be
         # provided by the user it must be explicitly added to the kwargs here.
-        integrals = _gather_off_site(g_anum, l_pair, g_dist, sk_feed,
+        integrals = _gather_off_site(g_anum, shell_pairs, g_dist, sk_feed,
                                      **kwargs, atom_indices=index_mask_a)
 
         # Make a call to the relevant Slater-Koster function to get the sk-block
@@ -131,12 +145,17 @@ def hs_matrix(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
         # during the final assignment by flipping the indices.
 
         # Split SK-data into row-wise slices, flatten, then concatenate.
-        groupings = index_mask_b[:-1].unique_consecutive(False, True, 1)[1]
+        groupings = index_mask_s[:-1].unique_consecutive(False, True, 1)[1]
         groups = split_by_size(sk_data, groupings)
         sk_data = torch.cat([g.transpose(1, 0).flatten() for g in groups])
 
         # Create the full sized index mask and assign the results.
         a_mask = torch.nonzero((l_mat_f == l_pair).all(-1)).T
+
+        # Mask lower triangle like before (as appropriate)
+        if l_pair[0] == l_pair[1:] and mat_is_square:
+            a_mask = a_mask.T[a_mask[0] < a_mask[1]].T
+
         mat[[*a_mask]] = sk_data  # (ℓ_1, ℓ_2) blocks, i.e. the row blocks
         mat.transpose(-1, -2)[[*a_mask]] = sk_data  # (ℓ_2, ℓ_1) column-wise
 
@@ -191,8 +210,9 @@ def _gather_on_site(geometry: Geometry, basis: Basis, sk_feed: SkFeed,
 
 
 def _gather_off_site(
-        atom_pairs: Tensor, l_pair: Tensor, distances: Tensor,
+        atom_pairs: Tensor, shell_pairs: Tensor, distances: Tensor,
         sk_feed: SkFeed, **kwargs) -> Tensor:
+
     """Retrieves integrals from a target feed in a batch-wise manner.
 
     This convenience function mediates the integral retrieval operation by
@@ -201,8 +221,9 @@ def _gather_off_site(
 
     Arguments:
         atom_pairs: Atomic numbers of each atom pair.
+        shell_pairs: Shell numbers associated with each interaction. Note that
+            all shells must correspond to identical azimuthal numbers.
         distances: Distances between the atom pairs.
-        l_pair: Azimuthal quantum numbers associated with all interactions.
         sk_feed: The Slater-Koster feed entity responsible for providing the
             requisite Slater Koster integrals and on-site terms.
 
@@ -225,42 +246,66 @@ def _gather_off_site(
         during function calls. Integrals can only be evaluated for a single
         azimuthal pair at a time.
 
+    Warnings:
+        All shells specified in ``shell_pairs`` must have a common azimuthal
+        number / angular momentum. This is because shells with azimuthal
+        quantum numbers will return a different number of integrals, which
+        will cause size mismatch issues.
+
     """
     # Block the passing of vectors, which can cause hard to diagnose issues
     if distances.ndim >= 2:
         raise ValueError('Argument "distances" must be a 1d torch.tensor.')
 
-    # Create an NxM tensor to hold the resulting integrals; where N is the
-    # the number of integral sets & M is the number of elements per-set
-    integrals = torch.zeros((len(atom_pairs), l_pair.min() + 1),
-                            dtype=distances.dtype, device=distances.device)
+    integrals = None
 
-    # Identify all unique element-element pairs
-    unique_atom_pairs = atom_pairs.unique(dim=0)
+    # Sort lists so that separate calls are not needed for O-H and H-O
+    sorter = atom_pairs.argsort(-1)
+    atom_pairs = atom_pairs.gather(-1, sorter)
+    shell_pairs = shell_pairs.gather(-1, sorter)
+
+    # Identify all unique [atom|atom|shell|shell] sets.
+    as_pairs = torch.cat((atom_pairs, shell_pairs), -1)
+    as_pairs_u = as_pairs.unique(dim=0)
 
     # If "atom_indices" was passed, make sure only the relevant atom indices
-    # are passed during each call.
+    # get passed during each call.
     atom_indices = kwargs.get('atom_indices', None)
-    atom_indices_selected = None
     if atom_indices is not None:
         del kwargs['atom_indices']
 
     # Loop over each of the unique atom_pairs
-    for atom_pair in unique_atom_pairs:
+    for as_pair in as_pairs_u:
         # Construct an index mask for gather & scatter operations
-        index_mask = torch.where((atom_pairs == atom_pair).all(1))[0]
+        mask = torch.where((as_pairs == as_pair).all(1))[0]
 
-        if atom_indices is not None:
-            atom_indices_selected = atom_indices.T[index_mask]
+        # Select the required atom indices (if applicable)
+        ai_select = atom_indices.T[mask] if atom_indices is not None else None
 
-        # Retrieve the integrals & assign them to the "integrals" tensor. All
-        # arguments must be passed in as keywords to maintain flexibility of
-        # the _SkIntegralFeed class.
-        integrals[index_mask] = sk_feed.off_site(
-            atom_pair=atom_pair, l_pair=l_pair,
-            distances=distances[index_mask],
-            atom_indices=atom_indices_selected, **kwargs)
+        # Retrieve the integrals & assign them to the "integrals" tensor. The
+        # SkFeed class requires all arguments to be passed in as keywords.
+        off_sites = sk_feed.off_site(
+            atom_pair=as_pair[..., :-2], shell_pair=as_pair[..., -2:],
+            distances=distances[mask],
+            atom_indices=ai_select, **kwargs)
 
+        # The result tensor's shape cannot be *safely* identified prior to the
+        # first sk_feed call, thus it must be instantiated in the first loop.
+        if integrals is None:
+            integrals = torch.zeros((len(as_pairs), off_sites.shape[-1]),
+                                    dtype=distances.dtype,
+                                    device=distances.device)
+
+        # If shells with differing angular momenta are provided then a shape
+        # mismatch error will be raised. However, the message given is not
+        # exactly useful thus the exception's message needs to be modified.
+        try:
+            integrals[mask] = off_sites
+        except RuntimeError as e:
+            if str(e).startswith('shape mismatch'):
+                raise type(e)(
+                    f'{e!s}. This could be due to shells with mismatching '
+                    'angular momenta being provided.')
     # Return the resulting integrals
     return integrals
 

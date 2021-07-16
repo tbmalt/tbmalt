@@ -38,7 +38,7 @@ class _SkFeed(ABC):
         subclasses' `off_site` or `on_site` methods. Both methods must accept
         an arbitrary number of keyword arguments, i.e. `**kwargs`. The
         `off_site` & `on_site` method must take the keyword arguments
-        (atom_pair, l_pair, distances) and (atomic_numbers) respectively.
+        (atom_pair, shell_pair, distances) and (atomic_numbers) respectively.
 
         This behaviour is enforced to maintain consistency between the various
         subclasses of `_SkFeed`'; which is necessary as the various subclasses
@@ -65,25 +65,25 @@ class _SkFeed(ABC):
                      f'arbitrary keyword arguments, i.e. **kwargs.',
                      stacklevel=4)
 
-        check(cls.off_site, {'atom_pair', 'l_pair', 'distances'})
+        check(cls.off_site, {'atom_pair', 'shell_pair', 'distances'})
         check(cls.on_site, {'atomic_numbers'})
 
 
     @abstractmethod
-    def off_site(self, atom_pair: Tensor, l_pair: Tensor, distances: Tensor,
-                 **kwargs) -> Tensor:
+    def off_site(self, atom_pair: Tensor, shell_pair: Tensor,
+                 distances: Tensor, **kwargs) -> Tensor:
         """Evaluate the selected off-site Slater-Koster integrals.
 
         This evaluates & returns the off-site Slater-Koster integrals between
         orbitals `l_pair` on atoms `atom_pair` at the distances specified by
-        `distances`. Note that only one `atom_pair` & `l_pair` can be
+        `distances`. Note that only one `atom_pair` & `shell_pair` can be
         evaluated at at time. The dimensionality of the the returned tensor
         depends on the number of distances evaluated & the number of bonding
         integrals associated with the interaction.
 
         Arguments:
             atom_pair: Atomic numbers of the associated atoms.
-            l_pair: Azimuthal quantum numbers associated with the interaction.
+            shell_pair: Shell numbers associated with the interaction.
             distances: Distances between the atoms pairs.
 
         Keyword Arguments:
@@ -92,13 +92,13 @@ class _SkFeed(ABC):
                  the Slater-Koster transformation code.
 
         Return:
-            integrals: Off-site integrals between orbitals ``l_pair`` on atoms
-                ``atom_pair`` at the specified distances.
+            integrals: Off-site integrals between orbitals ``shell_pair`` on
+                atoms ``atom_pair`` at the specified distances.
 
         Developers Notes:
-            The Slater-Koster transformation passes "atom_pair", "l_pair", &
-            "distances" as keyword arguments. This avoids having to change the
-            Slater-Koster transformation code every time a new feed is
+            The Slater-Koster transformation passes "atom_pair", "shell_pair",
+            & "distances" as keyword arguments. This avoids having to change
+            the Slater-Koster transformation code every time a new feed is
             created. These four arguments were made default as they will be
             required by most Slater-Koster feed implementations. A warning
             will be issued if a `_SkFeed` subclass is found to be missing any

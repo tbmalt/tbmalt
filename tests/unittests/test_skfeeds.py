@@ -17,8 +17,8 @@ def test_skfeed_abc():
     `off_site` methods check out. Thus, that is all that is tested here.
     """
 
-    off_site_args = ['atom_pair', 'l_pair', 'distances', 'ski_type', '**kwargs']
-    on_site_args = ['atomic_numbers', 'ski_type', '**kwargs']
+    off_site_args = ['atom_pair', 'shell_pair', 'distances', '**kwargs']
+    on_site_args = ['atomic_numbers', '**kwargs']
 
     # Check 1: Ensure warnings are raised if **kwargs is missing from either
     # the `on_site` or `off_site` method; even if check_sig=False is issued.
@@ -26,9 +26,9 @@ def test_skfeed_abc():
             UserWarning, match='Signature Warning:.+kwargs') as warn:
 
         class _(_SkFeed, check_sig=False):
-            def on_site(self, atomic_numbers, ski_type): ...
-            def off_site(self, atom_pair, l_pair, distances, ski_type, **kwargs): ...
-            def to(self, atomic_numbers, ski_type): ...
+            def on_site(self, atomic_numbers): ...
+            def off_site(self, atom_pair, shell_pair, distances, **kwargs): ...
+            def to(self, device): ...
 
         if not warn:
             pytest.fail(
@@ -36,9 +36,9 @@ def test_skfeed_abc():
                 'on_site method. This must be issued even if check_sig=False.')
 
         class _(_SkFeed, check_sig=False):
-            def on_site(self, atomic_numbers, ski_type, **kwargs): ...
-            def off_site(self, atom_pair, l_pair, distances, ski_type): ...
-            def to(self, atomic_numbers, ski_type): ...
+            def on_site(self, atomic_numbers, **kwargs): ...
+            def off_site(self, atom_pair, l_pair, distances): ...
+            def to(self, device): ...
 
         if not warn:
             pytest.fail(
@@ -56,7 +56,7 @@ def test_skfeed_abc():
             class _(_SkFeed):
                 exec(f'def on_site(self, {", ".join(on_site_args_clone)}): ...')
                 exec(f'def off_site(self, {", ".join(off_site_args)}): ...')
-                def to(self, atomic_numbers, ski_type): ...
+                def to(self, device): ...
 
             if not warn:
                 pytest.fail(f'UserWarning failed to issue when `{arg}` '
@@ -74,7 +74,7 @@ def test_skfeed_abc():
             class _(_SkFeed):
                 exec(f'def on_site(self, {", ".join(on_site_args)}): ...')
                 exec(f'def off_site(self, {", ".join(off_site_args_clone)}): ...')
-                def to(self, atomic_numbers, ski_type): ...
+                def to(self, device): ...
 
             if not warn:
                 pytest.fail(f'UserWarning failed to issue when `{arg}` '
