@@ -12,15 +12,10 @@ import torch
 from torch import Tensor, Size, arange
 from tbmalt.common.batch import pack
 from tbmalt.common import split_by_size
+from tbmalt.common.constants import MAX_ATOMIC_NUMBER
 
 
 Form = Literal['full', 'shell', 'atomic']
-
-
-def _repeat_range(tensor, **kwargs):
-    """Combines `torch.arange` and `torch.repeat_interleave` methods."""
-    # Convenience function to abstract repeated verbose calls
-    return arange(len(tensor), **kwargs).repeat_interleave(tensor)
 
 
 class Basis:
@@ -84,32 +79,36 @@ class Basis:
         # __META ATTRIBUTES__
         self.__device = self.atomic_numbers.device  # <- Don't change directly
         # pylint: disable=C0103
-        _batch = self.atomic_numbers.ndim == 2  # <─┬ Used only during init
+        batch = self.atomic_numbers.ndim == 2  # <─┬ Used only during init
         kwargs = {'device': self.__device}  # <─────┘
 
         # __HELPER ATTRIBUTES__
-        def map_helper(i):  # Helps to build _shells/orbitals_per_species
-            return torch.zeros(294, dtype=torch.long).scatter(
-                0, torch.tensor(list(shell_dict.keys())), torch.tensor(i)
-            ).to(**kwargs)
+
+        def map_to_atom_number(val):
+            """Helps to build _shells/orbitals_per_species"""
+            return (torch.zeros(MAX_ATOMIC_NUMBER, dtype=torch.long)
+                .scatter(0, torch.tensor(list(shell_dict.keys())),
+                torch.tensor(val)).to(**kwargs))
 
         # These allow for the Nº of shells/orbitals on a given species to be
         # looked-up in a batch-wise manor without the need for dictionaries.
-        self._shells_per_species = map_helper(
+        self._shells_per_species = map_to_atom_number(
             [len(v) for v in shell_dict.values()])
-        self._orbitals_per_species = map_helper(
+        self._orbitals_per_species = map_to_atom_number(
             [sum([l * 2 + 1 for l in v]) for v in shell_dict.values()])
 
         self.shell_ns, self.shell_ls = torch.tensor(
             [(i, l) for n in self.atomic_numbers.view(-1) if n != 0
              for i, l in enumerate(shell_dict[int(n)])], **kwargs).T
 
-        if _batch:  # Reshape "shell_ns" & "shell_ls" if batched
-            for attr in ['shell_ns', 'shell_ls']:  # Hack to avoid duplication
-                self.__setattr__(attr, pack(split_by_size(
-                    self.__getattribute__(attr),
+        if batch:
+            def batch_reshape(t):
+                """Reshape "shell_ns" & "shell_ls" if batched"""
+                return pack(split_by_size(t,
                     self._shells_per_species[self.atomic_numbers].sum(-1)),
-                    value=-1))
+                    value=-1)
+            self.shell_ns = batch_reshape(self.shell_ns)
+            self.shell_ls = batch_reshape(self.shell_ls)
 
         # __COUNTABLE ATTRIBUTES__
         self.n_atoms: Tensor = self.atomic_numbers.count_nonzero(-1)
@@ -117,14 +116,14 @@ class Basis:
         self.n_orbitals: Tensor = self.orbs_per_atom.sum(-1)
 
         # __SHAPE ATTRIBUTES__
-        # pylint: disable=C0103
-        _m1, _m2 = self.n_atoms.max(), self.n_shells.max()
-        _m3 = self.n_orbitals.max()
+        m1 = self.n_atoms.max()
+        m2 = self.n_shells.max()
+        m3 = self.n_orbitals.max()
         # _n adds an extra dimension when in batch mode
-        _n = Size([len(self.atomic_numbers)]) if _batch else Size()
-        self.atomic_matrix_shape: Size = _n + Size([_m1, _m1])
-        self.shell_matrix_shape: Size = _n + Size([_m2, _m2])
-        self.orbital_matrix_shape: Size = _n + Size([_m3, _m3])
+        n = Size([len(self.atomic_numbers)]) if batch else Size()
+        self.atomic_matrix_shape: Size = n + Size([m1, m1])
+        self.shell_matrix_shape: Size = n + Size([m2, m2])
+        self.orbital_matrix_shape: Size = n + Size([m3, m3])
 
     @property
     def device(self) -> torch.device:
@@ -371,7 +370,7 @@ class Basis:
             basis_list = self.shell_ls
 
         # Repeat and expand the vectors to get the final NxNx2 matrix tensor.
-        l_mat = self._rows_to_NxNx2(basis_list, shape, -1)
+        l_mat = _rows_to_NxNx2(basis_list, shape, -1)
 
         # If masking out parts of the matrix
         if mask_on_site | mask_lower | mask_diag:
@@ -437,7 +436,7 @@ class Basis:
                 s_mat = pack(split_by_size(s_mat, self.n_orbitals), value=-1)
 
         # Convert the rows into a full NxNx2 tensor and return it
-        return self._rows_to_NxNx2(s_mat, self.matrix_shape(form), -1)
+        return _rows_to_NxNx2(s_mat, self.matrix_shape(form), -1)
 
     def atomic_number_matrix(self, form: Form = 'full') -> Tensor:
         r"""Atomic numbers associated with each orbital-orbital pair.
@@ -484,7 +483,7 @@ class Basis:
             an_mat = self.atomic_numbers
 
         # Convert the rows into a full NxNx2 tensor and return it
-        return self._rows_to_NxNx2(an_mat, self.matrix_shape(form), 0)
+        return _rows_to_NxNx2(an_mat, self.matrix_shape(form), 0)
 
     def index_matrix(self, form: Form = 'full') -> Tensor:
         """Indices of the atoms associated with each orbital pair.
@@ -534,21 +533,27 @@ class Basis:
             i_mat[ans == 0] = -1  # Pre-mask to make masking work later on
 
         # Convert the rows into a full NxNx2 tensor and return it
-        return self._rows_to_NxNx2(i_mat, shape, -1)
+        return _rows_to_NxNx2(i_mat, shape, -1)
 
-    @staticmethod
-    def _rows_to_NxNx2(vec: Tensor, shape: Size, pad: Optional[Any] = None
-                       ) -> Tensor:
-        """Takes a row & converts it into its final NxNx2 shape.
 
-        Arguments:
-            vec: The vector that is to be expanded into a tensor.
-            shape: The final, batch agnostic, shape of the tensor.
-            pad: Values which are to be padded after expansion.
+def _rows_to_NxNx2(vec: Tensor, shape: Size, pad: Optional[Any] = None
+    ) -> Tensor:
+    """Takes a row & converts it into its final NxNx2 shape.
 
-        """
-        # Expand rows into first NxN slice of the matrix and mask as needed
-        mat = vec.unsqueeze(-2).expand(shape).clone()
-        mat[mat[..., 0, :] == pad] = pad  # Mask down columns
-        # Form the NxN slice into the full NxNx2 tensor and return it.
-        return torch.stack((mat.transpose(-1, -2), mat), -1)
+    Arguments:
+        vec: The vector that is to be expanded into a tensor.
+        shape: The final, batch agnostic, shape of the tensor.
+        pad: Values which are to be padded after expansion.
+
+    """
+    # Expand rows into first NxN slice of the matrix and mask as needed
+    mat = vec.unsqueeze(-2).expand(shape).clone()
+    mat[mat[..., 0, :] == pad] = pad  # Mask down columns
+    # Form the NxN slice into the full NxNx2 tensor and return it.
+    return torch.stack((mat.transpose(-1, -2), mat), -1)
+
+
+def _repeat_range(tensor, **kwargs):
+    """Combines `torch.arange` and `torch.repeat_interleave` methods."""
+    # Convenience function to abstract repeated verbose calls
+    return arange(len(tensor), **kwargs).repeat_interleave(tensor)
