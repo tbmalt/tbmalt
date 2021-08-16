@@ -148,8 +148,6 @@ def test_gaussian_grad(device):
 #################################
 # TBMaLT.common.maths.hellinger #
 #################################
-
-
 @fix_seed
 def test_hellinger_single(device):
     """Single point test of the hellinger distance function."""

@@ -1,8 +1,10 @@
+# -*- coding: utf-8 -*-
 """Helper functions for batch operations.
 
 This module contains classes and helper functions associated with batch
 construction, handling and maintenance.
 """
+from functools import reduce, partial
 from typing import Optional, Any, Tuple, List, Union
 import numpy as np
 from collections import namedtuple
@@ -11,8 +13,10 @@ import torch
 from tbmalt.common import bool_like
 Tensor = torch.Tensor
 __sort = namedtuple('sort', ('values', 'indices'))
+Sliceable = Union[List[Tensor], Tuple[Tensor]]
 
-def pack(tensors: Union[List[Tensor], Tuple[Tensor]], axis: int = 0,
+
+def pack(tensors: Sliceable, axis: int = 0,
          value: Any = 0, size: Optional[Union[Tuple[int], torch.Size]] = None,
          return_mask: bool = False) -> Union[Tensor, Optional[Tensor]]:
     """Pad and pack a sequence of tensors together.
@@ -40,6 +44,9 @@ def pack(tensors: Union[List[Tensor], Tuple[Tensor]], axis: int = 0,
         ``packed_tensors`` maintains the same order as ``tensors``. This
         is faster & more flexible than the internal pytorch pack & pad
         functions (at this particularly task).
+
+        If a ``tensors`` is a `torch.tensor` it will be immedatly returned.
+        This helps with batch agnostic programming.
 
     Examples:
         Multiple tensors can be packed into a single tensor like so:
@@ -73,11 +80,19 @@ def pack(tensors: Union[List[Tensor], Tuple[Tensor]], axis: int = 0,
                 [ True,  True,  True]])
 
     """
+    # If "tensors" is already a Tensor then return it immediately as there is
+    # nothing more that can be done. This helps with batch agnostic
+    # programming.
+    if isinstance(tensors, Tensor):
+        return tensors
+
     # Gather some general setup info
     count, device, dtype = len(tensors), tensors[0].device, tensors[0].dtype
 
     # Identify the maximum size, if one was not specified.
-    size = np.max([i.shape for i in tensors], 0) if size is None else size
+    if size is None:
+        size = torch.tensor([i.shape for i in tensors]).max(0).values
+
 
     # Tensor to pack into, filled with padding value.
     padded = torch.full((count, *size), value, dtype=dtype, device=device)
@@ -174,3 +189,148 @@ def psort(tensor: Tensor, mask: Optional[bool_like] = None, dim: int = -1
         indices = pargsort(tensor, mask, dim)
         return __sort(tensor.gather(dim, indices), indices)
 
+      
+def merge(tensors: Sliceable, value: Any = 0, axis: int = 0) -> Tensor:
+    """Merge two or more packed tensors into a single packed tensor.
+
+    Arguments:
+        tensors: Packed tensors which are to be merged.
+        value: Value with which the tensor were/are to be padded. [DEFAULT=0]
+        axis: Axis along which ``tensors`` are to be stacked. [DEFAULT=0]
+
+    Returns:
+        merged: The tensors ``tensors`` merged along the axis ``axis``.
+
+    Warnings:
+        Care must be taken to ensure the correct padding value is specified as
+        erroneous behaviour may otherwise ensue. As the correct padding value
+        cannot be reliably detected in situ it defaults to zero.
+    """
+
+    # Merging is performed along the 0'th axis internally. If a non-zero axis
+    # is requested then tensors must be reshaped during input and output.
+    if axis != 0:
+        tensors = [t.transpose(0, axis) for t in tensors]
+
+    # Tensor to merge into, filled with padding value.
+    shapes = torch.tensor([i.shape for i in tensors])
+    merged = torch.full(
+        (shapes.sum(0)[0], *shapes.max(0).values[1:]),
+        value, dtype=tensors[0].dtype, device=tensors[0].device)
+
+    n = 0  # <- batch dimension offset
+    for src, size in zip(tensors, shapes):  # Assign values to tensor
+        merged[(slice(n, size[0] + n), *[slice(0, s) for s in size[1:]])] = src
+        n += size[0]
+
+    # Return the merged tensor, transposing back as required
+    return merged if axis == 0 else merged.transpose(0, axis)
+
+
+def deflate(tensor: Tensor, value: Any = 0, axis: Optional[int] = None
+            ) -> Tensor:
+    """Shrinks ``tensor`` to remove extraneous, trailing padding values.
+
+    Returns a narrowed view of ``tensor`` containing no superfluous trailing
+    padding values. For single systems this is equivalent to removing padding.
+
+    All axes are deflated by default, however ``axis`` can be used to forbid
+    the deflation of a specific axis. This permits excess padding to be safely
+    excised from a batch without inadvertently removing a system from it. This
+    is normally the value supplied to the `pack` method for ``axis``.
+
+    Arguments:
+        tensor: Tensor to be deflated.
+        value: Identity of padding value. [DEFAULT=0]
+        axis: Specifies which, if any, an axis exempt from deflation.
+            [DEFAULT=None]
+
+    Returns:
+        deflated: ``tensor`` after deflation.
+
+    Note:
+        Only trailing padding values will be culled; i.e. columns will only be
+        removed from the end of a matrix, not the start or the middle.
+
+        Deflation cannot be performed on one dimensional systems when ``axis``
+        is not `None`.
+
+    Examples:
+        `deflate` can be used to remove unessiary padding from a batch:
+
+        >>> from tbmalt.common.batch import deflate
+        >>> over_packed = torch.tensor([
+        >>>     [0, 1, 2, 0, 0, 0],
+        >>>     [3, 4, 5, 6, 0, 0],
+        >>> ])
+
+        >>> print(deflate(over_packed, value=0, axis=0))
+        tensor([[0, 1, 2, 0],
+                [3, 4, 5, 6]])
+
+        or to remove padding from a system which was once part of a batch:
+
+        >>> packed = torch.tensor([
+        >>>     [0, 1, 0, 0],
+        >>>     [3, 4, 0, 0],
+        >>>     [0, 0, 0, 0],
+        >>>     [0, 0, 0, 0]])
+
+        >>> print(deflate(packed, value=0))
+        tensor([[0, 1],
+                [3, 4]])
+
+    Warnings:
+        Under certain circumstances "real" elements may be misidentified as
+        padding values if they are equivalent. However, such complication can
+        be mitigated though the selection of an appropriate padding value.
+
+    Raises:
+         ValueError: If ``tensor`` is 0 dimensional, or 1 dimensional when
+            ``axis`` is not None.
+    """
+
+    # Check shape is viable.
+    if axis is not None and tensor.ndim <= 1:
+        raise ValueError(
+            'Tensor must be at least 2D when specifying an ``axis``.')
+
+    mask = tensor == value
+    if axis is not None:
+        mask = mask.all(axis)
+
+    slices = []
+    if (ndim := mask.ndim) > 1:  # When multidimensional `all` is required
+        for dim in reversed(torch.combinations(torch.arange(ndim), ndim-1)):
+            # Count Nº of trailing padding values. Reduce/partial used here as
+            # torch.all cannot operate on multiple dimensions like numpy.
+            v, c = reduce(partial(torch.all, keepdims=True), dim, mask
+                          ).squeeze().unique_consecutive(return_counts=True)
+
+            # Slicer will be None if there are no trailing padding values.
+            slices.append(slice(None, -c[-1] if v[-1] else None))
+
+    else:  # If mask is one dimensional, then no loop is needed
+        v, c = mask.unique_consecutive(return_counts=True)
+        slices.append(slice(None, -c[-1] if v[-1] else None))
+
+    if axis is not None:
+        slices.insert(axis, ...)  # <- dummy index for batch-axis
+
+    return tensor[slices]
+
+
+def unpack(tensor: Tensor, value: Any = 0, axis: int = 0) -> Tuple[Tensor]:
+    """Unpacks packed tensors into their constituents and removes padding.
+
+    This acts as the inverse of the `pack` operation.
+
+    Arguments:
+        tensor: Tensor to be unpacked.
+        value: Identity of padding value. [DEFAULT=0]
+        axis: Axis along which ``tensor`` was packed. [DEFAULT=0]
+
+    Returns:
+        tensors: Tuple of constituent tensors.
+    """
+    return tuple(deflate(i, value) for i in tensor.movedim(axis, 0))

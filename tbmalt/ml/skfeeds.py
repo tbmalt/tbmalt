@@ -23,6 +23,10 @@ class _SkFeed(ABC):
     the Slater-Koster integrals needed to construct the Hamiltonian & overlap
     matrices.
 
+    Arguments:
+        device: Device on which the `SkFeed` object and its contents resides.
+        dtype: Floating point dtype used by `SkFeed` object.
+
     Developers Notes:
         This class provides a common fabric upon which all Slater-Koster
         integral feed objects are built. As the `_SkFeed` class is in its
@@ -30,6 +34,11 @@ class _SkFeed(ABC):
         method which allows relevant model variables to be updated via a
         single call during backpropagation.
     """
+
+    def __init__(self, device: torch.device, dtype: torch.dtype):
+        # These are static, private variables and must NEVER be modified!
+        self.__device = device
+        self.__dtype = dtype
 
     def __init_subclass__(cls, check_sig: bool = True):
         """Check the signature of subclasses' methods.
@@ -68,6 +77,22 @@ class _SkFeed(ABC):
         check(cls.off_site, {'atom_pair', 'shell_pair', 'distances'})
         check(cls.on_site, {'atomic_numbers'})
 
+    @property
+    def device(self) -> torch.device:
+        """The device on which the geometry object resides."""
+        return self.__device
+
+    @device.setter
+    def device(self, value):
+        # Instruct users to use the ".to" method if wanting to change device.
+        name = self.__class__.__name__
+        raise AttributeError(f'{name} object\'s dtype can only be modified '
+                             'via the ".to" method.')
+
+    @property
+    def dtype(self) -> torch.dtype:
+        """Floating point dtype used by geometry object."""
+        return self.__dtype
 
     @abstractmethod
     def off_site(self, atom_pair: Tensor, shell_pair: Tensor,
