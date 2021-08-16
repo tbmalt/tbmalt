@@ -42,7 +42,6 @@ def test_pack(device):
     assert same_device_mask, 'Device persistence check (mask)'
 
 
-
 @pytest.mark.grad
 @fix_seed
 def test_pack_grad(device):
@@ -56,3 +55,29 @@ def test_pack_grad(device):
 
     grad_is_safe = gradcheck(proxy, tensors, raise_exception=False)
     assert grad_is_safe, 'Gradient stability test'
+
+
+@fix_seed
+def test_sort(device):
+    """Ensures that the ``psort`` and ``pargsort`` methods work as intended.
+
+    Notes:
+        A separate check is not needed for the ``pargsort`` method as ``psort``
+        just wraps around it.
+    """
+
+    # Test on with multiple different dimensions
+    for d in range(1, 4):
+        tensors = [torch.rand((*[i] * d,), device=device) for i in
+                   np.random.randint(3, 10, (10,))]
+
+        packed, mask = batch.pack(tensors, return_mask=True)
+
+        pred = batch.psort(packed, mask).values
+        ref = batch.pack([i.sort().values for i in tensors])
+
+        check_1 = (pred == ref).all()
+        assert check_1, 'Values were incorrectly sorted'
+
+        check_2 = pred.device == device
+        assert check_2, 'Device persistence check failed'

@@ -1,16 +1,20 @@
+# -*- coding: utf-8 -*-
+"""Test the tbmalt.physics.filling module."""
 import numpy as np
 from scipy.special import erfc
 import pytest
 import torch
 from torch.autograd import gradcheck
-from tbmalt.physics.electronics import (
-    get_smearing_function, fermi_smearing, gaussian_smearing, Schemes,
-    fermi_search, smearing_entropy
+from tbmalt.physics.filling import (
+    fermi_smearing, gaussian_smearing,
+    fermi_search,
+    fermi_entropy, gaussian_entropy
 )
 from tbmalt.common.batch import pack
 from tbmalt import Basis
 
 torch.set_default_dtype(torch.float64)
+
 
 # Suppress numpy floating point overflow warnings
 np.seterr(over='ignore')
@@ -110,37 +114,102 @@ def Au13(device):
     return e_vals, kt, e_fermi, entropy, n_elec
 
 
-#########################
-# get_smearing_function #
-#########################
-def test_get_smearing_function():
-    """Ensures `get_smearing_function` returns the expected result.
+def _entropy_single(e_func, device):
+    """Helper for testing single system performance of entropy functions."""
+    e_func_name = e_func.__name__
+    ref_data_name = {'fermi_entropy': 'fermi',
+                     'gaussian_entropy': 'gaussian'}[e_func_name]
+    molecules = [H2, H2O, CH4, H2COH, Au13]
+    for mol in molecules:
+        e_vals, kt, e_fermi, entropy, _ = mol(device)
+        ts = e_func(e_vals, e_fermi[ref_data_name], kt)
 
-    Tests that:
-        1) The correct function is returned.
-        2) An error is raised when an unexpected name is encountered.
-        3) The `Schemes` type is updated when a new method is added.
+        # Check 1: Tolerance check
+        check_1 = torch.isclose(ts, entropy[ref_data_name])
+        name = mol.__name__
+        assert check_1, f'Incorrect fermi-entropy value returned for {name} ({ref_data_name})'
+
+        # Check 2: Ensure masking works for single systems by masking all states.
+        ts = e_func(e_vals, e_fermi['fermi'], kt, torch.tensor(False))
+        check_2 = torch.allclose(ts, torch.tensor(0., device=device))
+        assert check_2, f'Attempt to mask states failed ({ref_data_name})'
+
+        # Check 3: run the test on unrestricted systems
+        check_3 = torch.allclose(
+            e_func(e_vals, e_fermi[ref_data_name], kt) * 2,
+            e_func(e_vals.repeat(2, 1), e_fermi[ref_data_name], kt))
+
+        assert check_3, 'Results incorrect when using spin unrestricted'
+
+        # Check 4: Ensure results are returned on the correct device
+        check_4 = ts.device == device
+        assert check_4, f'Device persistence check failed ({ref_data_name})'
+
+
+def _entropy_batch(e_func, device):
+    """Helper for testing batch system performance of the entropy functions.
+
+    Warnings:
+        This function is dependant on `torch.common.batch.pack`.
     """
-    schemes = {'fermi': fermi_smearing,
-               'gaussian': gaussian_smearing}
+    e_func_name = e_func.__name__
+    ref_data_name = {'fermi_entropy': 'fermi',
+                     'gaussian_entropy': 'gaussian'}[e_func_name]
 
-    # Check 1
-    for name, expected_function in schemes.items():
-        if (func := get_smearing_function(name)) is not expected_function:
-            pytest.fail(f'Expected "{expected_function}" to be returned, '
-                        f'got "{func}" instead.')
+    mols = [i(device) for i in [H2, H2O, CH4, H2COH, Au13]]
+    e_vals, mask = pack([i[0] for i in mols], return_mask=True)
+    kt = torch.stack([i[1] for i in mols])
+    ef = torch.stack([i[2][ref_data_name] for i in mols])
+    ts = e_func(e_vals, ef, kt, mask)
 
-    # Check 2
-    with pytest.raises(KeyError):
-        get_smearing_function('not_a_real_smearing_function_name')
+    # Check 1: tolerance check
+    check_1a = torch.allclose(
+        ts, torch.stack([i[3][ref_data_name] for i in mols]))
 
-    # Check 3
-    known = set(Schemes.__args__)
-    tested = set(schemes.keys())
-    if len(tested ^ known) != 0:
-        pytest.fail(f'Smearing schemes known do not match those tested:\n'
-                    f'\t- Schemes literal: {known}\n'
-                    f'\t- Schemes tested: {tested}')
+    assert check_1a, f'Incorrect entropy value returned ({e_func_name})'
+
+    # Check 2: run the test on unrestricted systems
+    check_2 = torch.allclose(
+        e_func(e_vals, ef, kt, mask) * 2,
+        e_func(e_vals.unsqueeze(1).repeat(1, 2, 1), ef, kt,
+               mask.unsqueeze(1).repeat(1, 2, 1)))
+
+    assert check_2, 'Results incorrect when using spin unrestricted'
+
+    # Check 3: Ensure results are returned on the correct device
+    check_3 = ts.device == device
+    assert check_3, f'Device persistence check failed {({e_func_name})}'
+
+    # Check 4: ensure a `basis` object can be used inplace of an e_mask
+    basis = Basis(
+        [torch.tensor(i) for i in [[1, 1], [8, 1, 1], [6, 1, 1, 1, 1], [1, 1, 1, 6, 8], [79] * 13]],
+        {1: [0], 6: [0, 1], 8: [0, 1], 79: [0, 1, 2]})
+
+    res_a = e_func(e_vals, ef, 0.0036749, e_mask=mask)
+    res_b = e_func(e_vals, ef, 0.0036749, e_mask=basis)
+    check_4 = torch.allclose(res_a, res_b)
+    assert check_4, f'Failed to convert basis instance to mask ({e_func_name}).'
+
+    # Check 5: test with a batch of size one
+    check_5 = torch.allclose(e_func(e_vals[0:1], ef[0:1], kt[0:1], mask[0:1]),
+                             e_func(e_vals, ef, kt, mask)[0:1])
+    assert check_5, 'Failed when passed a batch of size one'
+
+
+def _entropy_grad(e_func, device):
+    """Test the gradient stability of the `ft_entropy` method."""
+    e_func_name = e_func.__name__
+    ref_data_name = {'fermi_entropy': 'fermi',
+                     'gaussian_entropy': 'gaussian'}[e_func_name]
+
+    molecules = [H2, H2O, CH4, H2COH, Au13]
+    for mol in molecules:
+        e_vals, kt, e_fermi, *_ = mol(device)
+        e_vals.requires_grad = True
+        check_1 = gradcheck(
+            e_func, (e_vals, e_fermi[ref_data_name], kt), raise_exception=False)
+
+        assert check_1, f'{e_func_name} based gradient check failed on {mol.__name__}'
 
 
 ##################
@@ -195,6 +264,12 @@ def test_fermi_smearing_single(device):
     except Exception as e:
         pytest.fail('Failed when given single eigenvalue')
         raise e
+
+    # Check 7: run test on spin unrestricted system
+    check_7 = torch.allclose(
+        fermi_smearing(eps, torch.tensor(fe), kt).repeat(2, 1),
+        fermi_smearing(eps.repeat(2, 1), torch.tensor(fe), kt))
+    assert check_7, 'Results incorrect when using spin unrestricted'
 
 
 def test_fermi_smearing_batch(device):
@@ -254,6 +329,18 @@ def test_fermi_smearing_batch(device):
     # Check 6: device persistence check.
     check_6 = fermi_smearing(eps, fes, kts).device == device
     assert check_6, 'Device persistence check failed'
+
+    # Check 7: Ensure batches of size one work without issue
+    check_7 = torch.allclose(fermi_smearing(eps[0:1], fes[0:1], kts[0:1]),
+                             fermi_smearing(eps, fe, kts)[0])
+
+    assert check_7, 'Failed when passed a batch of size one'
+
+    # Check 8: run test on spin unrestricted system
+    check_8 = torch.allclose(
+        fermi_smearing(eps, fes, kt).unsqueeze(1).repeat(1, 2, 1),
+        fermi_smearing(eps.unsqueeze(1).repeat(1, 2, 1), fes, kt))
+    assert check_8, 'Results incorrect when using spin unrestricted'
 
 
 @pytest.mark.grad
@@ -320,6 +407,12 @@ def test_gaussian_smearing_single(device):
         pytest.fail('Failed when given single eigenvalue')
         raise e
 
+    # Check 7: run test on spin unrestricted system
+    check_7 = torch.allclose(
+        gaussian_smearing(eps, torch.tensor(fe), kt).repeat(2, 1),
+        gaussian_smearing(eps.repeat(2, 1), torch.tensor(fe), kt))
+    assert check_7, 'Results incorrect when using spin unrestricted'
+
 
 def test_gaussian_smearing_batch(device):
     """Tests batch operability of the `gaussian_smearing` function."""
@@ -379,6 +472,18 @@ def test_gaussian_smearing_batch(device):
     check_6 = gaussian_smearing(eps, fes, kts).device == device
     assert check_6, 'Device persistence check failed'
 
+    # Check 7: Ensure batches of size one work without issue
+    check_7 = torch.allclose(gaussian_smearing(eps[0:1], fes[0:1], kts[0:1]),
+                             gaussian_smearing(eps, fe, kts)[0])
+
+    assert check_7, 'Failed when passed a batch of size one'
+
+    # Check 8: run test on spin unrestricted system
+    check_8 = torch.allclose(
+        gaussian_smearing(eps, fes, kt).unsqueeze(1).repeat(1, 2, 1),
+        gaussian_smearing(eps.unsqueeze(1).repeat(1, 2, 1), fes, kt))
+    assert check_8, 'Results incorrect when using spin unrestricted'
+
 
 @pytest.mark.grad
 def test_gaussian_smearing_grad(device):
@@ -409,11 +514,7 @@ def test_fermi_search_general(device):
     with pytest.raises(ValueError, match='Tolerance*'):
         fermi_search(ev, 2, tolerance=1E-16)
 
-    # Check 2: tolerance is negative
-    with pytest.raises(ValueError, match='Tolerance value*'):
-        fermi_search(ev, 2, tolerance=-1)
-
-    # Check 3: kT is negative [single & batch]
+    # Check 2: kT is negative [single & batch]
     with pytest.raises(ValueError, match='kT must be*'):
         fermi_search(ev, 2, -0.1)
 
@@ -421,7 +522,7 @@ def test_fermi_search_general(device):
         fermi_search(ev_batch, torch.tensor([2, 2], **dv),
                      torch.tensor([1., -1.], **dv), e_mask=mask)
 
-    # Check 4: no electrons [single & batch]
+    # Check 3: no electrons [single & batch]
     with pytest.raises(ValueError, match='Number of elections cannot be zero'):
         fermi_search(ev, 0, 0.1)
 
@@ -429,7 +530,7 @@ def test_fermi_search_general(device):
         fermi_search(ev_batch, torch.tensor([2, 0], **dv),
                      torch.tensor([1., 1.], **dv), e_mask=mask)
 
-    # Check 5: too many electrons [single & batch]
+    # Check 4: too many electrons [single & batch]
     with pytest.raises(ValueError, match='Number of electrons cannot exceed*'):
         fermi_search(ev, 10, 0.1)
 
@@ -437,63 +538,63 @@ def test_fermi_search_general(device):
         fermi_search(ev_batch, torch.tensor([2, 10], **dv),
                      torch.tensor([1., 1.], **dv), e_mask=mask)
 
-    # Check 6: missing mask
-    with pytest.raises(RuntimeError, match='A mask is required when in batch-mode!'):
-        fermi_search(ev_batch, torch.tensor([2, 3], **dv),
-                     torch.tensor([1., 2.], **dv))
-
-    # Check 7: fermi search works without broadening (single and batch).
+    # Check 5: fermi search works without broadening (single and batch).
     fe_s = fermi_search(torch.tensor([0.0, 1.0], **dv), 2)
     fe_b = fermi_search(
         torch.tensor([[0.0, 1.0, 0.0], [1.0, 2.0, 3.0]], **dv),
-        torch.tensor([2, 4], **dv))
+        torch.tensor([2, 4], **dv),
+        e_mask=torch.tensor([[1, 1, 0], [1, 1, 1]], dtype=bool, **dv))
 
-    check_7a = torch.isclose(fe_s, torch.tensor(0.5, **dv))
-    check_7b = torch.allclose(fe_b, torch.tensor([0.5, 2.5], **dv))
+    check_5a = torch.isclose(fe_s, torch.tensor(0.5, **dv))
+    check_5b = torch.allclose(fe_b, torch.tensor([0.5, 2.5], **dv))
 
-    assert check_7a, 'Fermi search failed without searing (single)'
-    assert check_7b, 'Fermi search failed without searing (batch)'
+    assert check_5a, 'Fermi search failed without searing (single)'
+    assert check_5b, 'Fermi search failed without searing (batch)'
 
-    # Check 8: ensure a `basis` object can be used inplace of an e_mask
+    # Check 6: ensure a `basis` object can be used inplace of an e_mask
     e_vals, mask = pack([H2(device)[0], CH4(device)[0]], return_mask=True)
-    basis = Basis(torch.tensor([[6, 1, 1, 1, 1],
-                                [1, 1, 0, 0, 0]]), {1: [0], 6: [0, 1]})
-    res_a = fermi_search(e_vals, 0.0036749, e_mask=mask)
-    res_b = fermi_search(e_vals, 0.0036749, e_mask=basis)
-    check_8 = torch.allclose(res_a, res_b)
+    basis = Basis(
+        torch.tensor([[1, 1, 0, 0, 0], [6, 1, 1, 1, 1]]),
+        {1: [0], 6: [0, 1]}).to(device)
+    n_elec = torch.tensor([H2(device)[-1], CH4(device)[-1]], **dv)
+    res_a = fermi_search(e_vals, n_elec, 0.0036749, e_mask=mask)
+    res_b = fermi_search(e_vals, n_elec, 0.0036749, e_mask=basis)
+    check_6 = torch.allclose(res_a, res_b)
 
-    assert check_8, 'Failed to convert basis instance to mask.'
+    assert check_6, 'Failed to convert basis instance to mask.'
 
 
 def test_fermi_search_single(device):
     """Check single system performance of the `fermi_search` function."""
     molecules = [H2, H2O, CH4, H2COH, Au13]
 
-    # Ensure all test systems converge to the anticipated value. Both
-    # fermi & gaussian schemes are tested here. Some molecules converge at the
-    # middle-gap approximation while others require a full bisection search.
-    for mol in molecules:
-        e_vals, kt, e_fermi, _, n_elec = mol(device)
-        ef_fermi = fermi_search(e_vals, n_elec, kt, scheme='fermi', max_iter=1000)
-        ef_gaussian = fermi_search(e_vals, n_elec, kt, scheme='gaussian', max_iter=1000)
+    for scheme in [fermi_smearing, gaussian_smearing]:
+        # Ensure all test systems converge to the anticipated value. Both
+        # fermi & gaussian schemes are tested here. Some molecules converge at the
+        # middle-gap approximation while others require a full bisection search.
+        for mol in molecules:
+            scheme_name = scheme.__name__
+            ref_data_name = {'fermi_smearing': 'fermi',
+                             'gaussian_smearing': 'gaussian'}[scheme_name]
 
-        # Check 1: tolerance check
-        check_1a = torch.isclose(ef_fermi, e_fermi['fermi'])
-        check_1b = torch.isclose(ef_gaussian, e_fermi['gaussian'])
-        name = mol.__name__
-        assert check_1a, f'{name} failed to converge with fermi smearing'
-        assert check_1b, f'{name} failed to converge with gaussian smearing'
+            e_vals, kt, e_fermi_ref, _, n_elec = mol(device)
+            e_fermi = fermi_search(e_vals, n_elec, kt, scheme=scheme, max_iter=1000)
 
-        # Check 2: Ensure masking works for single systems. If all state are
-        # masked out correctly then there should be no place to put the
-        # electrons, thus a "too many electrons" exception should be raised.
-        with pytest.raises(ValueError, match='Number of electrons*'):
-            _ = fermi_search(e_vals, n_elec, kt, scheme='fermi',
-                             e_mask=torch.tensor(False, device=device))
+            # Check 1: tolerance check
+            check_1 = torch.isclose(e_fermi, e_fermi_ref[ref_data_name])
 
-        # Check 3: Ensure results are returned on the correct device
-        check_3 = ef_fermi.device == device and ef_gaussian.device == device
-        assert check_3, 'Device persistence check failed'
+            name = mol.__name__
+            assert check_1, f'{name} failed to converge when smeared by {scheme_name}'
+
+            # Check 2: Repeat with spin unrestricted colinear
+            e_fermi_u = fermi_search(e_vals.unsqueeze(0).repeat(2, 1),
+                                     n_elec, kt, scheme=scheme)
+            check_2 = torch.allclose(e_fermi, e_fermi_u),
+            assert check_2, 'Failed to converge spin unrestricted system'
+
+            # Check 3: Ensure results are returned on the correct device
+            check_3 = e_fermi.device == device
+            assert check_3, f'Device persistence check failed ({scheme_name})'
 
 
 def test_fermi_search_batch(device):
@@ -511,112 +612,73 @@ def test_fermi_search_batch(device):
     kt = torch.stack([i[1] for i in mols])
     n_elec = torch.tensor([i[4] for i in mols], device=device)
 
-    ef_fermi = fermi_search(e_vals, n_elec, kt, scheme='fermi', e_mask=mask)
-    ef_gaussian = fermi_search(e_vals, n_elec, kt, scheme='gaussian', e_mask=mask)
+    for scheme in [fermi_smearing, gaussian_smearing]:
+        scheme_name = scheme.__name__
+        ref_data_name = {'fermi_smearing': 'fermi',
+                         'gaussian_smearing': 'gaussian'}[scheme_name]
 
-    # Check 1: tolerance check
-    check_1a = torch.allclose(ef_fermi, torch.stack([i[2]['fermi'] for i in mols]))
-    check_1b = torch.allclose(ef_gaussian, torch.stack([i[2]['gaussian'] for i in mols]))
+        e_fermi = fermi_search(e_vals, n_elec, kt, scheme=scheme, e_mask=mask)
 
-    assert check_1a, 'Failed to converge with fermi smearing'
-    assert check_1b, 'Failed to converge with gaussian smearing'
+        # Check 1: tolerance check
+        check_1 = torch.allclose(e_fermi, torch.stack([i[2][ref_data_name] for i in mols]))
+        assert check_1, f'Failed to converge with {scheme_name} smearing'
 
-    # Check 2: Ensure results are returned on the correct device
-    check_2 = ef_fermi.device == device and ef_gaussian.device == device
-    assert check_2, 'Device persistence check failed'
+        # Check 2: Repeat with spin unrestricted colinear
+        e_fermi_u = fermi_search(
+            e_vals.unsqueeze(1).repeat(1, 2, 1), n_elec, kt, scheme=scheme,
+            e_mask=mask.unsqueeze(1).repeat(1, 2, 1))
 
-
-##############
-# ft_entropy #
-##############
-def test_smearing_entropy_single(device):
-    """Test single system performance of the `ft_entropy` function."""
-
-    molecules = [H2, H2O, CH4, H2COH, Au13]
-    for mol in molecules:
-        #
-        e_vals, kt, e_fermi, entropy, _ = mol(device)
-        ts_fermi = smearing_entropy(e_vals, e_fermi['fermi'], kt, 'fermi')
-        ts_gaussian = smearing_entropy(e_vals, e_fermi['gaussian'], kt, 'gaussian')
-
-        # Check 2: Tolerance check
-        check_1a = torch.isclose(ts_fermi, entropy['fermi'])
-        check_1b = torch.isclose(ts_gaussian, entropy['gaussian'])
-        name = mol.__name__
-        assert check_1a, f'Incorrect fermi-entropy value returned for {name}'
-        assert check_1b, f'Incorrect gaussian-entropy value returned for {name}'
-
-        # Check 2: Ensure masking works for single systems by masking all states.
-        ts = smearing_entropy(e_vals, e_fermi['fermi'], kt, 'fermi', torch.tensor(False))
-        check_2 = torch.allclose(ts, torch.tensor(0., device=device))
-        assert check_2, 'Attempt to mask states failed'
+        check_2 = torch.allclose(e_fermi, e_fermi_u),
+        assert check_2, 'Failed to converge spin unrestricted system'
 
         # Check 3: Ensure results are returned on the correct device
-        check_3 = ts_fermi.device == device and ts_gaussian.device == device
-        assert check_3, 'Device persistence check failed'
+        check_3 = e_fermi.device == device
+        assert check_3, f'Device persistence check failed ({scheme_name})'
+
+    # Ensure that batches of size one work without issue
+    for mol in [H2, H2COH]:
+        e_vals, kt, e_fermi_ref, _, n_elec = mol(device)
+        e_fermi = fermi_search(
+            e_vals.unsqueeze(0), torch.tensor([n_elec], device=device), kt,
+            scheme=fermi_smearing,
+            e_mask=torch.full_like(e_vals.unsqueeze(0), True, dtype=bool))
+        check_4 = torch.allclose(e_fermi, e_fermi_ref['fermi'])
+        assert check_4, 'Failed to converge batch of size one'
 
 
-def test_smearing_entropy_batch(device):
-    """Test batch system performance of the `ft_entropy` function.
-
-    Warnings:
-        This function is dependant on `torch.common.batch.pack`.
-    """
-
-    mols = [i(device) for i in [H2, H2O, CH4, H2COH, Au13]]
-    e_vals, mask = pack([i[0] for i in mols], return_mask=True)
-    kt = torch.stack([i[1] for i in mols])
-    ef_fermi = torch.stack([i[2]['fermi'] for i in mols])
-    ef_gaussian = torch.stack([i[2]['gaussian'] for i in mols])
-
-    ts_fermi= smearing_entropy(e_vals, ef_fermi, kt, 'fermi', mask)
-    ts_gaussian = smearing_entropy(e_vals, ef_gaussian, kt, 'gaussian', mask)
-
-    # Check 1: tolerance check
-    check_1a = torch.allclose(ts_fermi,
-                              torch.stack([i[3]['fermi'] for i in mols]))
-    check_1b = torch.allclose(ts_gaussian,
-                              torch.stack([i[3]['gaussian'] for i in mols]))
-
-    assert check_1a, 'Incorrect fermi-entropy value returned'
-    assert check_1b, 'Incorrect gaussian-entropy value returned'
-
-    # Check 2: ensure an error is raised when passing in a batch without a mask.
-    with pytest.raises(RuntimeError, match='A mask is required when*'):
-        smearing_entropy(e_vals, ef_fermi, kt, 'fermi')
-
-    # Check 3: Ensure results are returned on the correct device
-    check_3 = ts_fermi.device == device and ts_gaussian.device == device
-    assert check_3, 'Device persistence check failed'
+#################
+# fermi_entropy #
+#################
+def test_fermi_entropy_single(device):
+    """Test batch system performance of the `fermi_entropy` function."""
+    _entropy_single(fermi_entropy, device)
 
 
-    # Check 4: ensure a `basis` object can be used inplace of an e_mask
-    basis = Basis(
-        [torch.tensor(i) for i in [[1, 1], [8, 1, 1], [6, 1, 1, 1, 1], [1, 1, 1, 6, 8], [79] * 13]],
-        {1: [0], 6: [0, 1], 8: [0, 1], 79: [0, 1, 2]})
-
-    res_a = smearing_entropy(e_vals, ef_fermi, 0.0036749, 'fermi', e_mask=mask)
-    res_b = smearing_entropy(e_vals, ef_fermi, 0.0036749, 'fermi', e_mask=basis)
-
-    check_4 = torch.allclose(res_a, res_b)
-
-    assert check_4, 'Failed to convert basis instance to mask.'
+def test_fermi_entropy_batch(device):
+    """Test batch system performance of the `fermi_entropy` function."""
+    _entropy_batch(fermi_entropy, device)
 
 
 @pytest.mark.grad
-def test_smearing_entropy_grad(device):
-    """Test the gradient stability of the `ft_entropy` method."""
+def test_fermi_entropy_grad(device):
+    """Test batch system performance of the `fermi_entropy` function."""
+    _entropy_grad(fermi_entropy, device)
 
-    molecules = [H2, H2O, CH4, H2COH, Au13]
-    for mol in molecules:
-        e_vals, kt, e_fermi, *_ = mol(device)
-        e_vals.requires_grad = True
-        check_1a = gradcheck(
-            smearing_entropy, (e_vals, e_fermi['fermi'], kt, 'fermi'),
-            raise_exception=False)
-        check_1b = gradcheck(
-            smearing_entropy, (e_vals, e_fermi['gaussian'], kt, 'gaussian'),
-            raise_exception=False)
 
-        assert check_1a, f'Fermi based gradient check failed on {mol.__name__}'
-        assert check_1b, f'Gaussian based gradient check failed on {mol.__name__}'
+####################
+# gaussian_entropy #
+####################
+def test_gaussian_entropy_single(device):
+    """Test batch system performance of the `gaussian_entropy` function."""
+    _entropy_single(gaussian_entropy, device)
+
+
+def test_gaussian_entropy_batch(device):
+    """Test batch system performance of the `gaussian_entropy` function."""
+    _entropy_batch(gaussian_entropy, device)
+
+
+@pytest.mark.grad
+def test_gaussian_entropy_grad(device):
+    """Test batch system performance of the `gaussian_entropy` function."""
+    _entropy_grad(gaussian_entropy, device)

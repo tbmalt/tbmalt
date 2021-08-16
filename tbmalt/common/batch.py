@@ -5,9 +5,12 @@ construction, handling and maintenance.
 """
 from typing import Optional, Any, Tuple, List, Union
 import numpy as np
+from collections import namedtuple
 import torch
-Tensor = torch.Tensor
 
+from tbmalt.common import bool_like
+Tensor = torch.Tensor
+__sort = namedtuple('sort', ('values', 'indices'))
 
 def pack(tensors: Union[List[Tensor], Tuple[Tensor]], axis: int = 0,
          value: Any = 0, size: Optional[Union[Tuple[int], torch.Size]] = None,
@@ -110,3 +113,64 @@ def pack(tensors: Union[List[Tensor], Tuple[Tensor]], axis: int = 0,
 
     # Return the packed tensor, and the mask if requested.
     return (padded, mask) if return_mask else padded
+
+
+def pargsort(tensor: Tensor, mask: Optional[bool_like] = None, dim: int = -1
+             ) -> Tensor:
+    """Returns indices that sort packed tensors while ignoring padding values.
+
+    Returns the indices that sorts the elements of ``tensor`` along ``dim`` in
+    ascending order by value while ensuring padding values are shuffled to the
+    end of the dimension.
+
+    Arguments:
+        tensor: the input tensor.
+        mask: a boolean tensor which is True & False for "real" & padding
+            values restively. [DEFAULT=None]
+        dim: the dimension to sort along. [DEFAULT=-1]
+
+    Returns:
+        out: ``indices`` which along the dimension ``dim``.
+
+    Notes:
+        This will redirect to `torch.argsort` if no ``mask`` is supplied.
+    """
+    if mask is None:
+        return torch.argsort(tensor, dim=dim)
+    else:
+        # A secondary sorter is used to reorder the primary sorter so that padding
+        # values are moved to the end.
+        n = tensor.shape[dim]
+        s1 = tensor.argsort(dim)
+        s2 = ((torch.arange(n, device=tensor.device)
+               + (~mask.gather(dim, s1) * n)).argsort(dim))
+        return s1.gather(dim, s2)
+
+
+def psort(tensor: Tensor, mask: Optional[bool_like] = None, dim: int = -1
+          ) -> __sort:
+    """Sort a packed ``tensor`` while ignoring any padding values.
+
+    Sorts the elements of ``tensor`` along ``dim`` in ascending order by value
+    while ensuring padding values are shuffled to the end of the dimension.
+
+    Arguments:
+        tensor: the input tensor.
+        mask: a boolean tensor which is True & False for "real" & padding
+            values restively. [DEFAULT=None]
+        dim: the dimension to sort along. [DEFAULT=-1]
+
+    Returns:
+        out: A namedtuple of (values, indices) is returned, where the values
+             are the sorted values and indices are the indices of the elements
+             in the original input tensor.
+
+    Notes:
+        This will redirect to `torch.sort` if no ``mask`` is supplied.
+    """
+    if mask is None:
+        return torch.sort(tensor, dim=dim)
+    else:
+        indices = pargsort(tensor, mask, dim)
+        return __sort(tensor.gather(dim, indices), indices)
+
