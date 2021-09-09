@@ -3,7 +3,7 @@ import torch
 from torch.autograd import gradcheck
 import pytest
 import numpy as np
-from tbmalt.common.batch import pack, unpack, merge, deflate
+from tbmalt.common.batch import pack, unpack, merge, deflate, psort, pargsort
 from tests.test_utils import fix_seed
 
 
@@ -55,6 +55,32 @@ def test_pack_grad(device):
 
     grad_is_safe = gradcheck(proxy, tensors, raise_exception=False)
     assert grad_is_safe, 'Gradient stability test'
+
+
+@fix_seed
+def test_sort(device):
+    """Ensures that the ``psort`` and ``pargsort`` methods work as intended.
+
+    Notes:
+        A separate check is not needed for the ``pargsort`` method as ``psort``
+        just wraps around it.
+    """
+
+    # Test on with multiple different dimensions
+    for d in range(1, 4):
+        tensors = [torch.rand((*[i] * d,), device=device) for i in
+                   np.random.randint(3, 10, (10,))]
+
+        packed, mask = pack(tensors, return_mask=True)
+
+        pred = psort(packed, mask).values
+        ref = pack([i.sort().values for i in tensors])
+
+        check_1 = (pred == ref).all()
+        assert check_1, 'Values were incorrectly sorted'
+
+        check_2 = pred.device == device
+        assert check_2, 'Device persistence check failed'
 
 
 def test_deflate(device):
@@ -206,4 +232,3 @@ def test_unpack(device):
     # Check 3: device persistence check.
     check_3 = all(i.device == device for i in unpack(a))
     assert check_3, 'Device persistence check failed'
-

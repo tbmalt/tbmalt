@@ -8,6 +8,9 @@ from typing import Tuple, Union, List
 import torch
 from torch import Tensor
 
+# Types
+float_like = Union[Tensor, float]
+bool_like = Union[Tensor, bool]
 
 def split_by_size(tensor: Tensor, sizes: Union[Tensor, List[int]],
                   dim: int = 0) -> Tuple[Tensor]:
