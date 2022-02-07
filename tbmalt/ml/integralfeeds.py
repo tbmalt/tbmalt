@@ -9,8 +9,9 @@ class methods respectively.
 Warning this is development stage code and is subject to significant change.
 """
 from abc import ABC
-from typing import Union
+from typing import Union, Tuple
 
+import numpy as np
 import torch
 from h5py import Group
 from numpy import ndarray as Array
@@ -99,31 +100,55 @@ class IntegralFeed(ABC):
         """
         pass
 
-    # @abstractmethod
-    def off_site_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-                        geometry: Geometry, basis: Basis) -> Tensor:
-        r"""Compute off-site atomic interaction blocks.
+    @staticmethod
+    def _partition_blocks(atomic_idx_1: Array, atomic_idx_2: Array
+                          ) -> Array:
+        """Mask identifying on-site interaction pairs.
 
-        Constructs the off-site atom-atom sub-blocks associated with the atoms
-        in ``atomic_idx_1`` interacting with those in ``atomic_idx_2``. The №
-        of interaction blocks returned will be equal to the length of the two
-        index lists; i.e. *not* one for every combination.
+        This helper function constructs a mask which is True wherever the
+        associated atom index pair corresponds to an on-site interaction.
 
         Arguments:
             atomic_idx_1: Atomic indices of the 1'st atom associated with each
-                desired off-site interaction block.
+                desired interaction block.
             atomic_idx_2: Atomic indices of the 2'nd atom associated with each
-                desired off-site interaction block.
+                desired interaction block.
+
+        Returns:
+            on_site_mask: A numpy array that is truthy wherever the atom index
+                pair corresponds to an on-site interaction.
+        """
+        return np.array(list(map(np.all, atomic_idx_1 == atomic_idx_2)))
+
+    # @abstractmethod
+    def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
+               geometry: Geometry, basis: Basis) -> Tensor:
+        r"""Compute atomic interaction blocks.
+
+        Returns the atomic blocks associated with the atoms in ``atomic_idx_1``
+        interacting with those in ``atomic_idx_2``. The № of interaction blocks
+        returned will be equal to the length of the two index lists; i.e. *not*
+        one for every combination.
+
+        Arguments:
+            atomic_idx_1: Atomic indices of the 1'st atom associated with each
+                desired interaction block.
+            atomic_idx_2: Atomic indices of the 2'nd atom associated with each
+                desired interaction block.
             geometry: The systems to which the atomic indices relate.
             basis: Orbital information associated with said systems.
 
         Returns:
-            off_site_blocks: Requested off-site atomic interaction sub-blocks.
+            blocks: Requested atomic interaction sub-blocks.
 
         Warnings:
             All requested blocks must have the same shape & size.
 
         Notes:
+            If both indices of an index pair refer to the same atom then the
+            block will represent an on-site interaction, otherwise it will be
+            an off-site interaction.
+
             Indices are passed as numpy arrays as advanced indexing is not
             always triggered when indexing with tensors and as no clean
             alternative is readily apparent. Furthermore, the index array has
@@ -142,48 +167,20 @@ class IntegralFeed(ABC):
         # be a significant issue; however, batch agnostic code is hard to write
         # when advanced indexing works for some systems but not others. Thus
         # a pair of numpy arrays are used instead. Do *NOT* use torch tensors
-        # as they will result highly inconsistent behaviour. Later, a wrapper
+        # as they will result in highly inconsistent behaviour. Later, a wrapper
         # will decorate this function to ensure spurious tensors are converted
         # to arrays. Any alternative solutions are very much welcome here!
         #
         # This method is mostly called from ``matrix``; which loops over all
         # species combinations, H-C, H-C, C-C, ..., etc. & request all of the
-        # off-site interaction sub-blocks associated with that species pair.
-        #
-        # It is possible that some models may be added in the future which do
-        # not care for any distinction between on and off site blocks. Thus
-        # it may be possible to add a third function. However this will only
-        # be done if necessary.
+        # interaction blocks associated with that species pair.
         #
         # The index arrays can be used to retrieve information, such as
         # positions, like so ``geometry.positions[atomic_idx_1.T]``.
         #
-        raise NotImplementedError()
-
-    # @abstractmethod
-    def on_site_blocks(self, atomic_idx: Array, geometry: Geometry,
-                       basis: Basis) -> Tensor:
-        """Compute on-site atom blocks.
-
-        Constructs the on-site atomic sub-blocks for the atoms specified in
-        the atom index list ``atomic_idx``.
-
-        Arguments:
-            atomic_idx: Indices of the atoms whose on-site blocks are to be
-                constructed.
-            geometry: The systems to which the specified atoms belong.
-            basis: Orbital information associated with said systems.
-
-        Returns:
-            on_site_blocks: Requested on-site atomic sub-blocks.
-
-        Warnings:
-            All requested blocks must have the same shape & size.
-
-        Notes:
-            See :meth:`.off_site_blocks` for a more detailed discussion of
-            ``atomic_idx``.
-        """
+        # The ``_partition_blocks`` helper method make splitting interactions
+        # into off- and on-site blocks easier when necessary.
+        #
         raise NotImplementedError()
 
     def matrix(self, geometry: Geometry, basis: Basis) -> Tensor:
@@ -206,8 +203,8 @@ class IntegralFeed(ABC):
         # discounts optimisation, cleaning, and improving batch agnosticism.
 
         # Construct the matrix into which the results will be placed
-        matrix = torch.zeros(basis.orbital_matrix_shape,
-                             dtype=self.dtype, device=self.device)
+        mat = torch.zeros(basis.orbital_matrix_shape,
+                          dtype=self.dtype, device=self.device)
 
         # Identify all unique species combinations.
         unique_interactions = torch.combinations(
@@ -235,43 +232,18 @@ class IntegralFeed(ABC):
             if a_idx.nelement() == 0:
                 continue
 
-            # If this is a homo-atomic interaction
+            # Cull the lower triangle of homo-atomic interactions to avoid
+            # double computation.
             if interaction[0] == interaction[1]:
-                # Cull the lower triangle to avoid double computation.
                 a_idx = a_idx[torch.where(a_idx[..., -2].le(a_idx[..., -1]))]
-
-                # Identify, filter out, and then construct the on-site blocks
-                is_on_site = a_idx[:, -2].eq(a_idx[:, -1])
-                a_idx_on = a_idx[is_on_site]
-                a_idx = a_idx[~is_on_site]
-
-                a_idx_l = a_idx_on[:, :-1].squeeze(1).cpu().numpy()
-
-                on_site_blocks = self.on_site_blocks(a_idx_l, geometry, basis)
-
-                # Place the on-site sub-blocks into the matrix. This code is a
-                # short form of that used by the off-site assignment operation.
-                # This code will be used until the assignment operation can be
-                # abstracted.
-                m = on_site_blocks.shape[-1]  # Nasty temporary code
-                r_i, c_i = ((i.view(-1, 1) + block_starts[a_idx_l.T]).T.flatten()
-                            for i in indices((m, m), device=self.device))
-                b_i = a_idx_on.T[0].repeat_interleave(m * m) if matrix.ndim == 3 else ...
-                matrix[b_i, r_i, c_i] = on_site_blocks.flatten()
-
-                # If after removing the on-site blocks there are no off-site
-                # blocks to compute then skip the remainder of this loop.
-                if a_idx.nelement() == 0:
-                    continue
 
             # Reshape atom index list to be more amenable to advanced indexing.
             # This approach is a little messy but reduces memory on the cpu.
             a_idx_l = a_idx[:, :-1].squeeze(1).cpu().numpy()
             b_idx_l = a_idx[:, 3 - a_idx.shape[-1]::2].squeeze(1).cpu().numpy()
 
-            # Construct the off-site blocks for these interactions
-            off_site_blocks = self.off_site_blocks(a_idx_l, b_idx_l,
-                                                   geometry, basis)
+            # Construct the blocks for these interactions
+            blocks = self.blocks(a_idx_l, b_idx_l, geometry, basis)
 
             # During assigment, data is normally assigned row-by-row. While
             # this isn't an issue for single row blocks it will cause mangling
@@ -286,29 +258,33 @@ class IntegralFeed(ABC):
             #   │ .  .  .  .  .  .  .  .  . │   │ .  .  .  .  .  .  .  .  . │
             #   └                           ┘   └                           ┘
             # Thus an indexing tensor is required that can map the flattened
-            # block data into the results tensor without mangling.
+            # block data into the results tensor without mangling. The code
+            # for this operation have been intentionally left verbose to make
+            # modification easier.
 
-            m, n = off_site_blocks.shape[-2:]  # Block shape
+            m, n = blocks.shape[-2:]  # Block shape
 
             # Row and column offset reference tensors; this is effectively an
             # index mask that is able to rebuild a flattened block.
             rt, ct = indices((m, n), device=self.device)
 
             # Row & column indicating where each block starts in the final
-            # # matrix; this should be the top left corner.
+            # matrix; this should be the top left corner.
             block_start_row = block_starts[a_idx_l.T]
             block_start_column = block_starts[b_idx_l.T]
 
             # Finally build the row, column, & batch index maps
             c_i = (ct.view(-1, 1) + block_start_column).T.flatten()
             r_i = (rt.view(-1, 1) + block_start_row).T.flatten()
-            b_i = a_idx.T[0].repeat_interleave(n*m) if matrix.ndim == 3 else ...
+            b_i = a_idx.T[0].repeat_interleave(n*m) if mat.ndim == 3 else ...
 
-            # Place the data into the results matrix
-            matrix[b_i, r_i, c_i] = off_site_blocks.flatten()
-            matrix[b_i, c_i, r_i] = off_site_blocks.flatten().conj()
+            # Assign data to the results matrix. Note that on-site blocks are
+            # not masked out during the transpose assignment. Thus, transpose
+            # assignment must be done first.
+            mat[b_i, c_i, r_i] = blocks.flatten().conj()
+            mat[b_i, r_i, c_i] = blocks.flatten()
 
-        return matrix
+        return mat
 
     #@abstractmethod
     def to(self, device: torch.device) -> 'IntegralFeed':
@@ -378,8 +354,8 @@ class TestFeed(IntegralFeed):
         super().__init__(torch.long, None)
         self.c = 0
 
-    def off_site_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-                        geometry: Geometry, basis: Basis) -> Tensor:
+    def _off_site_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
+                         geometry: Geometry, basis: Basis) -> Tensor:
         # The off-site blocks returned by this implementation are complete
         # gibberish; but are a little more useful during initial debugging
         # than using random numbers.
@@ -393,11 +369,31 @@ class TestFeed(IntegralFeed):
         self.c += len(atomic_idx_1)
         return block
 
-    def on_site_blocks(self, atomic_idx: Array, geometry: Geometry,
+    def _on_site_blocks(self, atomic_idx: Array, geometry: Geometry,
                        basis: Basis) -> Tensor:
         # Again this will return gibberish
         no = basis.orbs_per_atom[atomic_idx.T][0]
         return torch.eye(no, dtype=self.dtype).repeat((len(atomic_idx), 1, 1))
+
+    def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
+               geometry: Geometry, basis: Basis) -> Tensor:
+
+        opa = basis.orbs_per_atom
+        no1, no2 = opa[atomic_idx_1.T][0], opa[atomic_idx_2.T][0]
+
+        results = torch.empty(len(atomic_idx_1), no1, no2, dtype=self.dtype)
+
+        is_on_site = self._partition_blocks(atomic_idx_1, atomic_idx_2)
+
+        if any(is_on_site):
+            results[is_on_site] = self._on_site_blocks(
+                atomic_idx_1[is_on_site], geometry, basis)
+
+        if any(~is_on_site):
+            results[~is_on_site] = self._off_site_blocks(
+                atomic_idx_1[~is_on_site], atomic_idx_2[~is_on_site], geometry, basis)
+
+        return results
 
 
 if __name__ == '__main__':
@@ -406,7 +402,6 @@ if __name__ == '__main__':
     # Construct and look at a pair of systems a bach & an isolated system.
     for geometry in [Geometry.from_ase_atoms([molecule('CH4'), molecule('C2H4')]),
                      Geometry.from_ase_atoms(molecule('CH4'))]:
-
         # Build the basis object
         basis = Basis(geometry.atomic_numbers, {1: [0], 6: [0, 1]}, True)
         # Construct a simple test feed
