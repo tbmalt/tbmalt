@@ -1,11 +1,10 @@
-# This file is part of tbmalt.
-# SPDX-Identifier: LGPL-3.0-or-later
-
+# -*- coding: utf-8 -*-
 """
 Self-consistent extended tight binding Hamiltonian with isotropic second order
 electrostatic contributions and third order on-site contributions.
 
-Geometry, frequency and non-covalent interactions parametrisation for elements up to Z=86.
+Geometry, frequency and non-covalent interactions parametrisation for elements
+up to Z=86.
 
 Cite as:
 S. Grimme, C. Bannwarth, P. Shushkov,

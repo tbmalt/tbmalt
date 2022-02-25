@@ -1,16 +1,16 @@
-# This file is part of tbmalt.
-# SPDX-Identifier: LGPL-3.0-or-later
+# -*- coding: utf-8 -*-
+"""Full parametrization data for extended tight-binding methods.
 
-"""
-Definition of the full parametrization data for the extended tight-binding methods.
-
-The dataclass can represent a complete parametrization file produced by the `tblite`_
-library, however it only stores the raw data rather than the full representation.
+The dataclass can represent a complete parametrization file produced by the
+`tblite`_ library, however it only stores the raw data rather than the full
+representation.
 
 The parametrization of a calculator with the model data must account for missing
 transformations, like extracting the principal quantum numbers from the shells.
 The respective checks are therefore deferred to the instantiation of the calculator,
 while a deserialized model in `tblite`_ is already verified at this stage.
+
+.. _tblite: https://tblite.readthedocs.io
 """
 
 from typing import Dict, Optional

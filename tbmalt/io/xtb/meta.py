@@ -1,8 +1,7 @@
-# This file is part of tbmalt.
-# SPDX-Identifier: LGPL-3.0-or-later
+# -*- coding: utf-8 -*-
+"""Meta data associated with a parametrization.
 
-"""
-Meta data associated with a parametrization. Mainly used for identification of data format.
+This is primarily used for data format identification.
 """
 
 from typing import Optional
@@ -10,9 +9,7 @@ from pydantic import BaseModel
 
 
 class Meta(BaseModel):
-    """
-    Representation of the meta data for a parametrization.
-    """
+    """Representation of the meta data for a parametrization."""
 
     name: Optional[str]
     """Name of the represented method"""

@@ -1,23 +1,23 @@
-# This file is part of tbmalt.
-# SPDX-Identifier: LGPL-3.0-or-later
-
+# -*- coding: utf-8 -*-
 """
 Definition of the global core Hamiltonian parameters.
 
-The core Hamiltonian is rescaling the shell-blocks of the overlap integrals formed
-over the basis set by the average of the atomic self-energies and an additional
-distance dependent function formed from the element parametrization.
+The core Hamiltonian is rescaling the shell-blocks of the overlap integrals
+formed over the basis set by the average of the atomic self-energies and an
+additional distance dependent function formed from the element parametrization.
 """
 
-from typing import Dict, Tuple, Optional
+from typing import Dict, Optional
 from pydantic import BaseModel
 
 
 class XTBHamiltonian(BaseModel):
-    """
-    Global parameters for the formation of the core Hamiltonian from the overlap integrals.
-    Contains the required atomic and shell dependent scaling parameters to obtain the
-    off-site scaling functions independent of the self-energy and the distance polynomial.
+    """Core Hamiltonian formation parameters.
+
+    Global parameters for the formation of the core Hamiltonian from the overlap
+    integrals. Contains the required atomic & shell dependent scaling parameters
+    to obtain the off-site scaling functions independent of the self-energy and
+    the distance polynomial.
     """
 
     shell: Dict[str, float]
@@ -35,8 +35,10 @@ class XTBHamiltonian(BaseModel):
 
 
 class Hamiltonian(BaseModel):
-    """
-    Possible Hamiltonian parametrizations. Currently only the xTB Hamiltonian is supported.
+    """Possible Hamiltonian parametrizations.
+
+    Notes:
+        Currently only the xTB Hamiltonian is supported.
     """
 
     xtb: XTBHamiltonian

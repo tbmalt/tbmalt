@@ -1,17 +1,16 @@
-# This file is part of tbmalt.
-# SPDX-Identifier: LGPL-3.0-or-later
-
+# -*- coding: utf-8 -*-
 """
 Element parametrization record containing the adjustable parameters for each species.
 """
 
-from typing import List, Optional, Tuple
+
+from typing import List
 from pydantic import BaseModel
 
 
 class Element(BaseModel):
     """
-    Representation of the parameters for a specie.
+    Representation of the parameters for a species.
     """
 
     zeff: float
