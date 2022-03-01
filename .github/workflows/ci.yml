@@ -33,7 +33,7 @@ jobs:
         # Dependencies are not installed via 'requirements.txt' to prevent the download of 800 MB.
         run: |
           python -m pip install --upgrade pip
-          pip install pytest h5py ase typing
+          pip install pytest h5py ase typing pydantic tomli
           pip3 install torch==1.8.1+cpu -f https://download.pytorch.org/whl/torch_stable.html
 
       - name: Test with pytest
