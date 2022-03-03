@@ -178,6 +178,14 @@ class Basis:
         # This property allows for resolution agnostic programming.
         return self.on_shells if self.shell_resolved else self.on_atoms
 
+    def n_orbs_on_species(self, species: Union[int, Tensor]) -> Tensor:
+        """Returns the number of orbitals on a given species."""
+        return self._orbitals_per_species[species]
+
+    def n_shells_on_species(self, species: Union[int, Tensor]) -> Tensor:
+        """Returns the number of shells on a given species."""
+        return self._shells_per_species[species]
+
     def to(self, device: device) -> 'Basis':
         """Returns a copy of the `Basis` instance on the specified device.
 

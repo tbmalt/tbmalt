@@ -9,7 +9,7 @@ class methods respectively.
 Warning this is development stage code and is subject to significant change.
 """
 from abc import ABC
-from typing import Union, Tuple
+from typing import Union
 
 import numpy as np
 import torch
@@ -122,7 +122,7 @@ class IntegralFeed(ABC):
 
     # @abstractmethod
     def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-               geometry: Geometry, basis: Basis) -> Tensor:
+               geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
         r"""Compute atomic interaction blocks.
 
         Returns the atomic blocks associated with the atoms in ``atomic_idx_1``
@@ -183,12 +183,16 @@ class IntegralFeed(ABC):
         #
         raise NotImplementedError()
 
-    def matrix(self, geometry: Geometry, basis: Basis) -> Tensor:
+    def matrix(self, geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
         """Construct the hermitian matrix associated with this feed.
 
         Arguments:
             geometry: Systems whose matrices are to be constructed.
             basis: Orbital information associated with said systems.
+
+        Keyword Arguments:
+            kwargs: Any keyword arguments provided are passed during calls to
+                the `blocks` method.
 
         Returns:
             matrix: The resulting matrices.
@@ -196,8 +200,8 @@ class IntegralFeed(ABC):
         Warnings:
             This method is in rapid development and is thus subject to change
             and or abstraction.
-        """
 
+        """
         # Developers Notes
         # There is still quite a bit left to do in this function; even when one
         # discounts optimisation, cleaning, and improving batch agnosticism.
@@ -210,31 +214,23 @@ class IntegralFeed(ABC):
         unique_interactions = torch.combinations(
             geometry.unique_atomic_numbers(), with_replacement=True)
 
-        # Find the index at which each atomic block starts.
-        block_starts = (opa := basis.orbs_per_atom).cumsum(-1) - opa
-
         # Construct an element-element pair matrix
         an_mat_a = basis.atomic_number_matrix('atomic')
 
-        # Loop over the unique interaction pairs
-        for interaction in unique_interactions:
-            # Create a tensor specifying the indices for each atom in each
-            # relevant interaction; but only look for interactions within
-            # systems not between different systems (obviously). For a batch
-            # of systems this will take the form:
+        for pair in unique_interactions:  # Loop over the unique interactions
+            # Get the indices of the atoms in each relevant interaction; but
+            # only look for interactions within, and not between, systems. For
+            # a batch of systems this will take the form:
             #   [[batch_idx, atom_1_idx, atom_2_idx]... for each interaction]
             # and for a single system:
             #   [[atom_1_idx, atom_2_idx]... for each interaction]
-            a_idx = torch.nonzero((an_mat_a == interaction).all(-1))
+            a_idx = torch.nonzero((an_mat_a == pair).all(-1))
 
-            # If no relevant interactions are encountered then skip this loop.
-            # This can be removed once unique_atomic_numbers has been updated.
+            # Skip the loop if no interactions are found and ignore homo-atomic
+            # blocks in the lower triangle to avoid double computation.
             if a_idx.nelement() == 0:
                 continue
-
-            # Cull the lower triangle of homo-atomic interactions to avoid
-            # double computation.
-            if interaction[0] == interaction[1]:
+            elif pair[0] == pair[1]:
                 a_idx = a_idx[torch.where(a_idx[..., -2].le(a_idx[..., -1]))]
 
             # Reshape atom index list to be more amenable to advanced indexing.
@@ -242,51 +238,67 @@ class IntegralFeed(ABC):
             a_idx_l = a_idx[:, :-1].squeeze(1).cpu().numpy()
             b_idx_l = a_idx[:, 3 - a_idx.shape[-1]::2].squeeze(1).cpu().numpy()
 
+            # Get the matrix indices associated with the target blocks.
+            blk_idx = self.atomic_block_indices(a_idx_l, b_idx_l, basis)
+
             # Construct the blocks for these interactions
-            blocks = self.blocks(a_idx_l, b_idx_l, geometry, basis)
+            blks = self.blocks(a_idx_l, b_idx_l, geometry, basis, **kwargs)
 
-            # During assigment, data is normally assigned row-by-row. While
-            # this isn't an issue for single row blocks it will cause mangling
-            # of multi-row data to; e.g, when attempting to assign two 3x3
-            # blocks [a-i & j-r] to a tensor, the desired outcome would be
-            # tensor A), however, a more likely outcome is the tensor B).
-            # A)┌                           ┐ B)┌                           ┐
-            #   │ .  .  .  .  .  .  .  .  . │   │ .  .  .  .  .  .  .  .  . │
-            #   │ a  b  c  .  .  .  j  k  l │   │ a  b  c  .  .  .  d  e  f │
-            #   │ d  e  f  .  .  .  m  n  o │   │ g  h  i  .  .  .  j  k  l │
-            #   │ g  h  i  .  .  .  p  q  r │   │ m  n  o  .  .  .  p  q  r │
-            #   │ .  .  .  .  .  .  .  .  . │   │ .  .  .  .  .  .  .  .  . │
-            #   └                           ┘   └                           ┘
-            # Thus an indexing tensor is required that can map the flattened
-            # block data into the results tensor without mangling. The code
-            # for this operation have been intentionally left verbose to make
-            # modification easier.
-
-            m, n = blocks.shape[-2:]  # Block shape
-
-            # Row and column offset reference tensors; this is effectively an
-            # index mask that is able to rebuild a flattened block.
-            rt, ct = indices((m, n), device=self.device)
-
-            # Row & column indicating where each block starts in the final
-            # matrix; this should be the top left corner.
-            block_start_row = block_starts[a_idx_l.T]
-            block_start_column = block_starts[b_idx_l.T]
-
-            # Finally build the row, column, & batch index maps
-            c_i = (ct.view(-1, 1) + block_start_column).T.flatten()
-            r_i = (rt.view(-1, 1) + block_start_row).T.flatten()
-            b_i = a_idx.T[0].repeat_interleave(n*m) if mat.ndim == 3 else ...
-
-            # Assign data to the results matrix. Note that on-site blocks are
-            # not masked out during the transpose assignment. Thus, transpose
-            # assignment must be done first.
-            mat[b_i, c_i, r_i] = blocks.flatten().conj()
-            mat[b_i, r_i, c_i] = blocks.flatten()
+            # Assign data to the matrix. As on-site blocks are not masked out
+            # during the transpose assignment the transpose assignment must
+            # be done first (this is only matters for complex diagonal blocks).
+            mat.transpose(-1, -2)[blk_idx] = blks.conj()
+            mat[blk_idx] = blks
 
         return mat
 
-    #@abstractmethod
+    def atomic_block_indices(self, atomic_idx_1: Array, atomic_idx_2: Array,
+                             basis: Basis) -> Array:
+        """Returns the indices of the specified blocks.
+
+        This method identifies the blocks associated with the specified atom
+        pairs and returns the indexing arrays that can be used to retrieve
+        said blocks.
+
+        Arguments:
+            atomic_idx_1: Atomic indices of the 1'st atom associated with each
+                desired interaction block.
+            atomic_idx_2: Atomic indices of the 2'nd atom associated with each
+                desired interaction block.
+            basis: Orbital information associated with said systems.
+
+        Returns:
+            block_indices: the indices of associate with the specified blocks.
+        """
+
+        # Ensure the indexing arrays are numpy arrays and not tensors
+        if isinstance(atomic_idx_1, Tensor):
+            atomic_idx_1 = atomic_idx_1.cpu().numpy()
+        if isinstance(atomic_idx_2, Tensor):
+            atomic_idx_2 = atomic_idx_2.cpu().numpy()
+
+        # They are always used in their transposed form
+        idx_i, idx_j = atomic_idx_1.T, atomic_idx_2.T
+
+        # Find the index at which each atomic block starts.
+        blk_starts = (opa := basis.orbs_per_atom).cumsum(-1) - opa
+
+        # Row/column offset template; used to build the indices specifying
+        # the location of a block's elements in the target matrix
+        rt, ct = indices((opa[i[..., 0:1]][0] for i in [idx_i, idx_j]),
+                         device=self.device)
+
+        # Get the block's row & column indices.
+        blk_idx = torch.stack((rt + blk_starts[idx_i].view(-1, 1, 1),
+                               ct + blk_starts[idx_j].view(-1, 1, 1)))
+
+        if idx_i.ndim == 2:  # Add bach indices, if appropriate.
+            b_idx = torch.tensor(idx_i[0], device=self.device)
+            blk_idx = torch.cat((b_idx.expand(*rt.T.shape, -1).T[None, :], blk_idx))
+
+        return blk_idx.cpu().numpy()
+
+    # @abstractmethod
     def to(self, device: torch.device) -> 'IntegralFeed':
         """Returns a copy of the `SkFeed` instance on the specified device.
 
@@ -347,67 +359,3 @@ class IntegralFeed(ABC):
         elif isinstance(target, Group):
             # Create a new group, save the feed in it and add it to the Group
             raise NotImplementedError()
-
-
-class TestFeed(IntegralFeed):
-    def __init__(self):
-        super().__init__(torch.long, None)
-        self.c = 0
-
-    def _off_site_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-                         geometry: Geometry, basis: Basis) -> Tensor:
-        # The off-site blocks returned by this implementation are complete
-        # gibberish; but are a little more useful during initial debugging
-        # than using random numbers.
-        opa = basis.orbs_per_atom
-        no1, no2 = opa[atomic_idx_1.T][0], opa[atomic_idx_2.T][0]
-
-        # Generate reproducible gibberish
-        t1 = torch.arange(no1 * no2, dtype=torch.long).view(
-            1, no1, no2).repeat(len(atomic_idx_1), 1, 1).clone()
-        block = t1 + torch.arange(self.c, self.c + len(atomic_idx_1)).view(-1, 1, 1)
-        self.c += len(atomic_idx_1)
-        return block
-
-    def _on_site_blocks(self, atomic_idx: Array, geometry: Geometry,
-                       basis: Basis) -> Tensor:
-        # Again this will return gibberish
-        no = basis.orbs_per_atom[atomic_idx.T][0]
-        return torch.eye(no, dtype=self.dtype).repeat((len(atomic_idx), 1, 1))
-
-    def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-               geometry: Geometry, basis: Basis) -> Tensor:
-
-        opa = basis.orbs_per_atom
-        no1, no2 = opa[atomic_idx_1.T][0], opa[atomic_idx_2.T][0]
-
-        results = torch.empty(len(atomic_idx_1), no1, no2, dtype=self.dtype)
-
-        is_on_site = self._partition_blocks(atomic_idx_1, atomic_idx_2)
-
-        if any(is_on_site):
-            results[is_on_site] = self._on_site_blocks(
-                atomic_idx_1[is_on_site], geometry, basis)
-
-        if any(~is_on_site):
-            results[~is_on_site] = self._off_site_blocks(
-                atomic_idx_1[~is_on_site], atomic_idx_2[~is_on_site], geometry, basis)
-
-        return results
-
-
-if __name__ == '__main__':
-    from ase.build import molecule
-    torch.set_printoptions(linewidth=2000)
-    # Construct and look at a pair of systems a bach & an isolated system.
-    for geometry in [Geometry.from_ase_atoms([molecule('CH4'), molecule('C2H4')]),
-                     Geometry.from_ase_atoms(molecule('CH4'))]:
-        # Build the basis object
-        basis = Basis(geometry.atomic_numbers, {1: [0], 6: [0, 1]}, True)
-        # Construct a simple test feed
-        feed = TestFeed()
-        # Get the matrix
-        matrix = feed.matrix(geometry, basis)
-        # Print it out and check it is symmetric.
-        print(matrix)
-        assert torch.allclose(matrix, matrix.transpose(-1,-2))
