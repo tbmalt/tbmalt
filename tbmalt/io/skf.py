@@ -3,10 +3,11 @@
 import re
 import warnings
 from dataclasses import dataclass
-from os.path import isfile, split, splitext, basename
+from os.path import isfile, split, splitext, basename, isdir, exists, join
 from time import time
 from typing import List, Tuple, Union, Dict, Sequence, Any, Optional
 from itertools import product
+import glob
 
 import h5py
 import numpy as np
@@ -56,7 +57,7 @@ class Skf:
     .. _Notes:
     Notes:
         HOMO atomic systems commonly, but not always, include additional
-        "atomic" data; namely atomic mass, on-site terms, occupations, and
+        "atomic" data; nam`ely atomic mass, on-site terms, occupations, and
         the Hubbard-U values. These can be optionally specified using the
         ``mass``, ``on_sites``, ``occupations``, and ``hubbard_us`` attributes
         respectively. However, these attributes are mutually inclusive, i.e.
@@ -165,7 +166,7 @@ class Skf:
         self.occupations = occupations
 
     @classmethod
-    def read(cls, path: str, atom_pair: Sequence[int] = None,
+    def read(cls, path: str, atom_pair: Optional[Sequence[int]] = None,
              **kwargs) -> 'Skf':
         """Parse Slater-Koster data from skf files and their binary analogs.
 
@@ -180,7 +181,8 @@ class Skf:
             dtype: dtype to be used for floating point tensors. [DEFAULT=None]
 
         Returns:
-            skf: `Skf` object contain all data parsed from the specified file.
+            skf: `Skf` object containing all data parsed from the specified
+                file.
         """
         if not isfile(path):  # Verify the target file exists
             raise FileNotFoundError(f'Could not find: {path}')
@@ -195,7 +197,6 @@ class Skf:
 
         with h5py.File(path, 'r') as db:  # Otherwise must be an hdf5 database
             # If atom_pair is specified use this to identify the target
-            # name = '-'.join([chemical_symbols[int[i]] for i in atom_pair])
             if atom_pair is not None:
                 name = '-'.join([chemical_symbols[int(i)] for i in atom_pair])
             else:
@@ -321,47 +322,9 @@ class Skf:
         Returns:
             skf: The resulting `Skf` object.
         """
-        def tt(group, name):
-            """Convenience function to convert to data into tensors"""
-            return torch.tensor(group[name][()], **dd)
-
-        dd = {'dtype': dtype, 'device': device}
-
-        # Check that the version is compatible
-        if float(source.attrs['version']) > float(cls.version):
-            warnings.warn('HDF5-skf file Version exceeds local code version.')
-
-        kwargs = {}
-        atom_pair = torch.tensor(source.attrs['atoms'])
-
-        # Retrieve integral data
-        ints = source['integrals']
-        # Convert structured numpy arrays into a dictionary of tensors
-        H, S = ({
-            # Convert name-string > Tuple[int, int] & np.array > torch.tensor
-            tuple(map(int, n.split('-'))): torch.tensor(i[n], **dd)
-            # Loop over field names (strings like "ℓ₁-ℓ₂") & their numpy arrays
-            for n in i.dtype.fields.keys()}
-            for i in [ints['H'], ints['S']])
-        grid = (torch.arange(0, ints['count'][()], **dd) + 1) * ints['step'][()]
-
-        if source.attrs['has_r_spline']:  # Repulsive spline data
-            r = source['r_spline']
-            kwargs['r_spline'] = cls.RSpline(
-                tt(r, 'grid'), tt(r, 'cutoff'), tt(r, 'spline_coef'),
-                tt(r, 'exp_coef'), tt(r, 'tail_coef'))
-
-        if source.attrs['has_r_poly']:  # Repulsive polynomial
-            r = source['r_poly']
-            kwargs['r_poly'] = cls.RPoly(tt(r, 'cutoff'), tt(r, 'coef'))
-
-        if source.attrs['is_atomic']:  # Atomic data
-            a = source['atomic']
-            kwargs.update({'on_sites': tt(a, 'on_sites'),
-                           'hubbard_us': tt(a, 'hubbard_us'),
-                           'mass': tt(a, 'mass'),
-                           'occupations': tt(a, 'occupations')})
-
+        # Make a call to the proxy helper function
+        atom_pair, H, S, grid, kwargs = cls._from_hdf5_helper(
+            source, dtype, device)
         return cls(atom_pair, H, S, grid, **kwargs)
 
     def write(self, path: str, overwrite: Optional[bool] = False):
@@ -398,6 +361,11 @@ class Skf:
                 self.to_hdf5(db.create_group(name))
 
     def to_skf(self, path: str):
+        """Writes data to an skf formatted file.
+
+        Arguments:
+            path: path specifying the location of the skf file.
+        """
 
         def t2a(t):
             """Converts a torch tensor to numpy array."""
@@ -545,6 +513,363 @@ class Skf:
         cls_name = self.__class__.__name__
         name = '-'.join([chemical_symbols[int(i)] for i in self.atom_pair])
         return f'{cls_name}({name})'
+
+    @classmethod
+    def _from_hdf5_helper(
+            cls, source: Group, dtype: Optional[torch.dtype] = None,
+            device: Optional[torch.device] = None) -> tuple:
+        """This abstracts the contents of the `from_hdf5` function.
+
+        This function acts as any other `from_hdf5` would be expected to with
+        the exception that it returns the contents of the hdf5 group rather
+        than a class instance representing them.
+
+        This abstraction prevents having to duplicate the entire `from_hdf5`
+        function in the `VCRSkf` class just to add a single line to allow
+        for the compression radii to be extracted.
+        """
+
+        def tt(group, name):
+            """Convenience function to convert to data into tensors"""
+            return torch.tensor(group[name][()], **dd)
+
+        dd = {'dtype': dtype, 'device': device}
+
+        # Check that the version is compatible
+        if float(source.attrs['version']) > float(cls.version):
+            warnings.warn('HDF5-skf file Version exceeds local code version.')
+
+        kwargs = {}
+        atom_pair = torch.tensor(source.attrs['atoms'])
+
+        # Retrieve integral data
+        ints = source['integrals']
+        # Convert structured numpy arrays into a dictionary of tensors
+        H, S = ({
+            # Convert name-string > Tuple[int, int] & np.array > torch.tensor
+            tuple(map(int, n.split('-'))): torch.tensor(i[n], **dd)
+            # Loop over field names (strings like "ℓ₁-ℓ₂") & their numpy arrays
+            for n in i.dtype.fields.keys()}
+            for i in [ints['H'], ints['S']])
+        grid = (torch.arange(0, ints['count'][()], **dd) + 1) * ints['step'][()]
+
+        if source.attrs['has_r_spline']:  # Repulsive spline data
+            r = source['r_spline']
+            kwargs['r_spline'] = cls.RSpline(
+                tt(r, 'grid'), tt(r, 'cutoff'), tt(r, 'spline_coef'),
+                tt(r, 'exp_coef'), tt(r, 'tail_coef'))
+
+        if source.attrs['has_r_poly']:  # Repulsive polynomial
+            r = source['r_poly']
+            kwargs['r_poly'] = cls.RPoly(tt(r, 'cutoff'), tt(r, 'coef'))
+
+        if source.attrs['is_atomic']:  # Atomic data
+            a = source['atomic']
+            kwargs.update({'on_sites': tt(a, 'on_sites'),
+                           'hubbard_us': tt(a, 'hubbard_us'),
+                           'mass': tt(a, 'mass'),
+                           'occupations': tt(a, 'occupations')})
+
+        return atom_pair, H, S, grid, kwargs
+
+
+class VCRSkf(Skf):
+    """Variable compression radius Slater-Koster file.
+
+    This class handles the parsing of variable compression radius Slater-Koster
+    binary files. These are similar to standard `Skf` files but differ in that
+    their electronic integral tables iterate over the compression radii of the
+    two species, not just over distance.
+
+    Arguments:
+         atom_pair: Atomic numbers of the elements associated with the
+            interaction.
+         hamiltonian: Dictionary keyed by azimuthal-number-pairs (ℓ₁, ℓ₂) and
+            valued by m×r1×r2×d Hamiltonian integral tensors; where r1/r2 are
+            the compression radii of atoms one/two and m & d iterate over the
+            bond-order (σ, π, etc.) and distances respectively.
+         overlap: Dictionary storing the overlap integrals in a manner akin to
+            ``hamiltonian``.
+         grid: Distances at which the ``hamiltonian`` & ``overlap`` elements
+            were evaluated.
+        compression_radii: Mesh-grid tensor specifying the compression radii.
+         r_spline: A :class:`.RSpline` object detailing the repulsive
+            spline. [DEFAULT=None]
+         r_poly: A :class:`.RPoly` object detailing the repulsive
+            polynomial. [DEFAULT=None]
+         on_sites: On site terms, homo-atomic systems only. [DEFAULT=None]
+         hubbard_us: Hubbard U terms, homo-atomic systems only. [DEFAULT=None]
+         mass: Atomic mass, homo-atomic systems only. [DEFAULT=None]
+         occupations: Occupations of the orbitals, homo-atomic systems only.
+            [DEFAULT=None]
+
+
+    Notes:
+        Unlike their `Skf` parent class `VCRSkf` files cannot be stored as text
+        files, only as HDF5 binaries.
+
+    """
+    version = '1.0'
+
+    from_sfk = NotImplementedError('Not applicable')
+    to_sfk = NotImplementedError('Not applicable')
+
+    def __init__(self, atom_pair: Tensor, hamiltonian: SkDict, overlap: SkDict,
+                 grid: Tensor, compression_radii: Tensor, *args, **kwargs):
+        super().__init__(atom_pair, hamiltonian, overlap, grid, *args, **kwargs)
+        self.compression_radii = compression_radii
+
+    @classmethod
+    def read(cls, path: str, atom_pair: Optional[Sequence[int]] = None,
+             **kwargs) -> 'VCRSkf':
+        """Load variable compression radii Slater-Koster data from an hdf5 file.
+
+        Arguments:
+            path: Path to the hdf5 database file that is to be read.
+            atom_pair: Atomic numbers of the element pair whose interactions
+                are to be loaded. This argument is mandatory when there is
+                more than one element pair present in the database.
+                [DEFAULT=None]
+
+        Keyword Arguments:
+            device: Device on which to place tensors. [DEFAULT=None]
+            dtype: dtype to be used for floating point tensors. [DEFAULT=None]
+
+        Returns:
+            vcrskf: `VCRSkf` object containing the requested data.
+        """
+        with h5py.File(path, 'r') as db:
+            # If atom_pair is specified use this to identify the target
+            if atom_pair is not None:
+                name = '-'.join([chemical_symbols[int(i)] for i in atom_pair])
+            else:
+                # Otherwise scan for valid entries: if only 1 SK entry exists
+                # then assume it's the target; if multiple entries exist then
+                # it's impossible to know which the user wanted.
+                e = '[A-Z][a-z]*'
+                entries = [k for k in db if re.fullmatch(f'{e}-{e}', k)]
+                if len(entries) == 1:
+                    name = entries[0]
+                else:
+                    raise ValueError(
+                        'atom_pair must be specified when a database has more'
+                        f' than one entry: {basename(path)}')
+
+            return cls.from_hdf5(db[name], **kwargs)
+
+    @classmethod
+    def from_hdf5(cls, source: Group, dtype: Optional[torch.dtype] = None,
+                  device: Optional[torch.device] = None) -> 'Skf':
+        """Instantiate a `VCRSkf` instances from an HDF5 group.
+
+        Arguments:
+            source: HDF5 group containing variable compression radius slater-
+                koster data.
+            device: Device on which to place tensors. [DEFAULT=None]
+            dtype: dtype to be used for floating point tensors. [DEFAULT=None]
+
+        Returns:
+            vcrskf: The resulting `VCRSkf` object.
+        """
+        # Make a call to the proxy helper function to extract most of the data
+        atom_pair, H, S, grid, kwargs = cls._from_hdf5_helper(
+            source, dtype, device)
+        # Extract the compression radii manually
+        compression_radii = torch.tensor(
+            source['integrals']['compression_radii'][()],
+            dtype=dtype, device=device)
+
+        return cls(atom_pair, H, S, grid, compression_radii, **kwargs)
+
+    def write(self, path: str, overwrite: Optional[bool] = False):
+        """Save the Slater-Koster data to a database.
+
+        Arguments:
+            path: path to the hdf5 in which the data is to be saved.
+            overwrite: Existing HDF5-groups can only be overwritten when
+                ``overwrite`` is True. [DEFAULT=False]
+
+        """
+        with h5py.File(path, 'a') as db:  # Create/open the HDF5 file
+            name = '-'.join([chemical_symbols[int(i)]
+                             for i in self.atom_pair])
+            if name in db:  # If an entry already exists in this database
+                if not overwrite:  # Then raise an exception
+                    raise FileExistsError(
+                        f'Entry {name} already exists; use "overwrite" '
+                        'to permit overwriting.')
+                else:  # Unless told to overwrite it
+                    del db[name]
+            # Create the HDF5 entry & fill it with data via `to_hdf5`.
+            self.to_hdf5(db.create_group(name))
+
+    def to_hdf5(self, target: Group):
+        """Saves the `Skf` instance into a target HDF5 Group.
+
+        Arguments:
+            target: The hdf5 group to which the skf data should be saved.
+
+        Notes:
+            This function does not create its own group as it expects that
+            ``target`` is the group into which data should be writen.
+        """
+        # Call the super's to_hdf5 method & add the compression radii data.
+        super().to_hdf5(target)
+        target['integrals'].create_dataset('compression_radii',
+                                           data=self.compression_radii)
+
+    @classmethod
+    def from_dir(cls, source: str, target: str):
+        """Parse multiple skf files into an hdf5 `VCRSkf` instance.
+
+        When run against a `target` directory this method scans for map files
+        which indicate the presence of data that can be used to build variable
+        compression radii slater koster files instance (`VCRSkf`).
+
+        Arguments:
+            source: director holding the skf and map files.
+            target: path to the hdf5 database in which the results should
+                be stored.
+
+        Notes:
+            Directories may contain multiple maps & their associated sk-files.
+            Map files must be csv formatted & named "skf_map_{X}_{Y}.csv" where
+            "X" & "Y" are the elemental symbols of the two relevant species.
+            Each line, "i", of the map file specifies the compression radii,
+            for species "X" & "Y" respectively, used when making the sk-file
+            "{X}_{Y}_{i}.skf". Note that indexing for "i" starts at one not
+            zero and that data must be ordered so that it loops over values of
+            "X" then over values of "Y", i.e:
+
+                0.1,1.0
+                0.1,2.0
+                0.2,1.0
+                0.2,2.0
+
+            This map file example shows that there are two compression radii
+            used for "X" and two for "Y", giving a total of four combinations.
+            It is therefore expected that there are four sk-files.
+        """
+        e = '[A-Z][a-z]'
+
+        # Validate the path to the source directory
+        if not isdir(source):
+            raise NotADirectoryError(
+                    f'`source` must be a valid directory: ({source})')
+
+        # If the database exists; open it & identify what systems are present.
+        # This avoids trying to parse systems that have already been parsed.
+        current = []
+        if exists(target):
+            with h5py.File(target, 'a') as db:
+                current += [tuple(k.split('-')) for k in db
+                            if re.fullmatch(fr'{e}*-{e}*', k)]
+
+        # Locate any map files present the directory
+        all_files = glob.glob(join(source, '*'))
+        re_s1 = re.compile(fr'(?<=skf_map_){e}?_{e}?(?=.csv)').search
+        map_files = {tuple(ele.group(0).split('_')): i for i in all_files
+                     if (ele := re_s1(i))}
+
+        # Report systems found to the user [print header]
+        print(f'Map files found for {len(map_files)} system(s):\n'
+              '\tAtom 1\tAtom 2\tAction')
+
+        # Loop over each system
+        for pair, path in map_files.items():
+            print(f'\t{pair[0]:6}\t{pair[1]:6}\t', end='')
+            if pair in current:  # Skip it if it has been parsed before
+                print('SKIPPING (previously parsed)')
+                continue
+            else:  # If not then parse it
+                print('PARSING')
+
+            # Open the map file and extract the compression radii pair list
+            radii = np.genfromtxt(path, delimiter=',')
+            # Number of unique radii for species 1 & 2
+            n_r1, n_r2 = [len(set(i)) for i in radii.T]
+
+            # Locate the skf files and order them correctly
+            re_s2 = re.compile(rf'{pair[0]}.*{pair[1]}.*\d+.skf').search
+            re_s3 = re.compile(r'\d+(?=.skf)').search
+            sk_files = np.array([*filter(re_s2, all_files)])
+            sk_numbers = np.array([int(re_s3(f).group(0)) for f in sk_files])
+
+            sorter = sk_numbers.argsort()
+            sk_files = sk_files[sorter]
+            sk_numbers = sk_numbers[sorter]
+
+            # Ensure the expected number of files are found and are sequential
+            if (n := len(sk_files)) != (m := len(radii)):
+                raise IndexError(f'Read {m} values from {splitext(path)} '
+                                 f'but found only {n} skf files.')
+
+            if not np.allclose(np.diff(sk_numbers), 1):
+                raise IndexError('Non-sequential skf files found.')
+
+            # Work out which lines store the electronic integrals.
+            t = open(sk_files[0]).readlines()
+            o = int(t[0].startswith('@'))  # offset for comment if present
+            n_grid = int(t[o].split()[1])  # Number of lines to get
+            g_dist = float(t[o].split()[0])
+
+            # Electronic integrals will always start at line "2 + o" & "3 + o"
+            # for triatomic and homoatomic systems respectively.
+            s_hetro = slice(2 + o, 2 + o + n_grid)
+            s_homo = slice(3 + o, 3 + o + n_grid)
+
+            # When dealing with homoatomic systems only the files where the
+            # two atoms have the same compression radii will actually contain
+            # homoatomic data. Thus a list of slicers is created to take this
+            # into account when reading.
+            slicers = [s_homo if (r1 == r2 and pair[0] == pair[1])
+                       else s_hetro for r1, r2 in
+                       zip(radii[:, 0], radii[:, 1])]
+
+            # Read the electronic integrals from all files and place into a
+            # dictionary; method similar to that used in `Skf.from_skf`.
+            cat = ''.join
+            h_data, s_data = np.split(
+                np.fromstring(
+                    cat([cat(open(i).readlines()[s])
+                         for i, s in zip(sk_files, slicers)]),
+                    sep=' ', dtype=np.float64
+                              ).reshape(len(sk_files), n_grid, -1),
+                2, -1)
+
+            l_max = int(tetrahedral_root(h_data.shape[-1]))
+            l_pairs = np.stack(np.triu_indices(l_max)).T
+            sort = cls._sorter if l_max == 3 else cls._sorter_e
+            splitter = np.cumsum(l_pairs[:, 0] + 1)[:-1]
+
+            shape = (-1, n_r1, n_r2, n_grid)  # Reshapes integrals to grid
+            h_data, s_data = [{
+                tuple(l_pair.tolist()): torch.tensor(i.reshape(shape))
+                for l_pair, i in
+                zip(l_pairs, np.split(i.transpose((2, 0, 1))[sort], splitter, 0))
+                if not (i == 0.).all()}
+                for i in [h_data, s_data]]
+
+            # Parse the data into a VCRSkf instance
+            atom_pair = torch.tensor([atomic_numbers[i] for i in pair])
+            grid = torch.arange(1, n_grid + 1) * g_dist
+            cr_grid = torch.stack(torch.meshgrid(
+                [torch.tensor(sorted(list(set(i)))) for i in radii.T]))
+
+            if pair[0] == pair[1]:  # Load homoatomic data if appropriate
+                # Load the file into an Skf instance to extract the data from
+                skf = Skf.from_skf(sk_files[0])
+                vcrskf = cls(
+                    atom_pair, h_data, s_data, grid, cr_grid, mass=skf.mass,
+                    on_sites=skf.on_sites, hubbard_us=skf.hubbard_us,
+                    occupations=skf.occupations)
+            else:
+                vcrskf = cls(atom_pair, h_data, s_data, grid, cr_grid)
+
+            # Store data into the target database.
+            with h5py.File(target, 'a') as db:
+                group = db.create_group(f'{pair[0]}-{pair[1]}')
+                vcrskf.to_hdf5(group)
 
 
 #########################
