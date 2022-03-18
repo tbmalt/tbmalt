@@ -1,4 +1,5 @@
 import os
+from os.path import join
 import pytest
 import h5py
 import numpy as np
@@ -235,9 +236,6 @@ def test_geometry_from_ase_atoms_batch(device):
 ####################
 def geometry_hdf5_helper(path, atomic_numbers, positions):
     """Function to reduce code duplication when testing the HDF5 functionality."""
-    # Ensure any test hdf5 database is erased before running
-    if os.path.exists(path):
-        os.remove(path)
 
     # Pack the reference data, if multiple systems provided
     batch = isinstance(atomic_numbers, list)
@@ -281,21 +279,18 @@ def geometry_hdf5_helper(path, atomic_numbers, positions):
             check_4 = torch.allclose(geom_3.positions.to(device), geom_1.positions)
             assert check_4, 'Instance could not be loaded from hdf5 data (batch)'
 
-    # Remove the test database
-    os.remove(path)
 
-
-def test_geometry_hdf5_single(device):
+def test_geometry_hdf5_single(device, tmpdir):
     """Ensure a Geometry instance can be witten to & read from an HDF5 database."""
     # Generate input data and run the tests
-    geometry_hdf5_helper('.tbmalt_test_s.hdf5',
+    geometry_hdf5_helper(join(tmpdir, 'tbmalt_test_s.hdf5'),
                          atomic_numbers_data(device),
                          positions_data(device))
 
 
-def test_geometry_hdf5_batch(device):
+def test_geometry_hdf5_batch(device, tmpdir):
     """Ensure Geometry instances can be witten to & read from an HDF5 database."""
-    geometry_hdf5_helper('.tbmalt_test_b.hdf5',
+    geometry_hdf5_helper(join(tmpdir, 'tbmalt_test_b.hdf5'),
                          atomic_numbers_data(device, True),
                          positions_data(device, True))
 

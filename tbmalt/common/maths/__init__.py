@@ -230,7 +230,7 @@ class _SymEigB(torch.autograd.Function):
             raise ValueError('Unknown broadening method selected.')
 
         # Compute eigen-values & vectors using torch.symeig.
-        w, v = torch.symeig(a, eigenvectors=True)
+        w, v = torch.linalg.eigh(a)
 
         # Save tensors that will be needed in the backward pass
         ctx.save_for_backward(w, v)
@@ -333,7 +333,7 @@ def _eig_sort_out(w: Tensor, v: Tensor, ghost: bool = True
     Arguments:
         w: The eigen-values.
         v: The eigen-vectors.
-        ghost: Ghost-eigen-vlaues are assumed to be 0 if True, else assumed to
+        ghost: Ghost-eigen-values are assumed to be 0 if True, else assumed to
             be 1. If zero padded then this should be True, if zero padding is
             turned into identity padding then False should be used. This will
             also change the ghost eigenvalues from 1 to zero when appropriate.
@@ -519,10 +519,10 @@ def eighb(a: Tensor,
         """
 
     # Initial setup to make function calls easier to deal with
-    # If smearing use _SymEigB otherwise use the internal torch.syeig function
-    func = _SymEigB.apply if broadening_method else torch.symeig
+    # If smearing use _SymEigB otherwise use torch.linalg.eigh
+    func = _SymEigB.apply if broadening_method else torch.linalg.eigh
     # Set up for the arguments
-    args = (broadening_method, factor) if broadening_method else (True,)
+    args = (broadening_method, factor) if broadening_method else ()
 
     if aux:
         # Convert from zero-padding to identity padding
@@ -551,7 +551,7 @@ def eighb(a: Tensor,
         if scheme == 'chol':
 
             # Perform Cholesky factorization (A = LL^{T}) of B to attain L
-            l = torch.cholesky(b)
+            l = torch.linalg.cholesky(b)
 
             # Compute the inverse of L:
             if kwargs.get('direct_inv', False):
@@ -559,8 +559,8 @@ def eighb(a: Tensor,
                 l_inv = torch.inverse(l)
             else:
                 # Otherwise compute via an indirect method (default)
-                l_inv = torch.solve(torch.eye(a.shape[-1], dtype=a.dtype,
-                                              device=b.device), l)[0]
+                l_inv = torch.linalg.solve(l,torch.eye(a.shape[-1], dtype=a.dtype,
+                                              device=b.device))
             # Transpose of l_inv: improves speed in batch mode
             l_inv_t = torch.transpose(l_inv, -1, -2)
 
