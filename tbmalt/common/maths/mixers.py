@@ -203,19 +203,19 @@ class Simple(_Mixer):
 
         The attractive fixed point of the function:
 
-        # >>> from torch import tensor, sqrt
-        # >>> def func(x):
-        # >>>     return tensor([0.5 * sqrt(x[0] + x[1]),
-        # >>>                    1.5 * x[0] + 0.5 * x[1]])
-        #
-        # can be idenfied using the ``Simple`` mixer as follows:
-        #
-        # >>> from tbmalt.common.maths.mixers import Simple
-        # >>> x = tensor([2., 2.])  # Initial guess
-        # >>> mixer = Simple(False, tolerance=1E-4, mix_param=0.8)
-        # >>> for i in range(100):
-        # >>>     x = mixer(func(x), x)
-        # >>> print(x)
+        >>> from torch import tensor, sqrt
+        >>> def func(x):
+        >>>     return tensor([0.5 * sqrt(x[0] + x[1]),
+        >>>                    1.5 * x[0] + 0.5 * x[1]])
+
+        can be idenfied using the ``Simple`` mixer as follows:
+
+        >>> from tbmalt.common.maths.mixers import Simple
+        >>> x = tensor([2., 2.])  # Initial guess
+        >>> mixer = Simple(False, tolerance=1E-4, mix_param=0.8)
+        >>> for i in range(100):
+        >>>     x = mixer(func(x), x)
+        >>> print(x)
         tensor([1., 3.])
     """
 

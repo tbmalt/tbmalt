@@ -11,7 +11,7 @@ import torch
 import numpy as np
 from h5py import Group
 from ase import Atoms
-from tbmalt.common.batch import pack, merge
+from tbmalt.common.batch import pack, merge, deflate
 from tbmalt.data.units import length_units
 from tbmalt.data import chemical_symbols
 Tensor = torch.Tensor
@@ -78,9 +78,11 @@ class Geometry:
                  positions: Union[Tensor, List[Tensor]],
                  units: Optional[str] = 'bohr'):
 
-        # "pack" will only effect lists of tensors
-        self.atomic_numbers = pack(atomic_numbers)
-        self.positions: Tensor = pack(positions)
+        # "pack" will only effect lists of tensors; make sure to remove any
+        # unnecessary padding.
+        self.atomic_numbers = deflate(pack(atomic_numbers))
+        self.positions: Tensor = pack(
+            positions)[..., :self.atomic_numbers.shape[-1], :]
 
         # Mask for clearing padding values in the distance matrix.
         if (temp_mask := self.atomic_numbers != 0).all():
@@ -277,7 +279,7 @@ class Geometry:
         pos.attrs['unit'] = 'bohr'
 
     def to(self, device: torch.device) -> 'Geometry':
-        """Returns a copy of the `Geometry` instance on the specified device
+        """Returns a copy of the `Geometry` instance on the specified device.
 
         This method creates and returns a new copy of the `Geometry` instance
         on the specified device "``device``".
@@ -309,8 +311,12 @@ class Geometry:
             raise IndexError(
                 'Geometry slicing is only applicable to batches of systems.')
 
-        return self.__class__(self.atomic_numbers[selector],
-                              self.positions[selector])
+        # Select the desired atomic numbers and positions. Making sure to
+        # remove any unnecessary padding.
+        new_zs = deflate(self.atomic_numbers[selector])
+        new_pos = self.positions[selector][..., :new_zs.shape[-1], :]
+
+        return self.__class__(new_zs, new_pos)
 
     def __add__(self, other: 'Geometry') -> 'Geometry':
         """Combine two `Geometry` objects together."""
@@ -379,7 +385,7 @@ class Geometry:
         else:  # If multiple systems
             if self.atomic_numbers.shape[0] < 4:  # If n<4 systems; show all
                 formulas = [get_formula(an) for an in self.atomic_numbers]
-                formula = ' ,'.join(formulas)
+                formula = ', '.join(formulas)
             else:  # If n>4; show only the first and last two systems
                 formulas = [get_formula(an) for an in
                             self.atomic_numbers[[0, 1, -2, -1]]]

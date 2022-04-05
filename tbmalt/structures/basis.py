@@ -10,7 +10,7 @@ import numpy as np
 from h5py import Group
 import torch
 from torch import Tensor, Size, arange
-from tbmalt.common.batch import pack
+from tbmalt.common.batch import pack, merge, deflate
 from tbmalt.common import split_by_size
 from tbmalt.common.constants import MAX_ATOMIC_NUMBER
 
@@ -74,12 +74,12 @@ class Basis:
         # __DATA ATTRIBUTES__
         self.shell_resolved = shell_resolved
         self.shell_dict = shell_dict
-        self.atomic_numbers = pack(atomic_numbers)
+        self.atomic_numbers = deflate(pack(atomic_numbers))
 
         # __META ATTRIBUTES__
         self.__device = self.atomic_numbers.device  # <- Don't change directly
         # pylint: disable=C0103
-        batch = self.atomic_numbers.ndim == 2  # <─┬ Used only during init
+        batch = self.atomic_numbers.ndim == 2  # <──┬ Used only during init
         kwargs = {'device': self.__device}  # <─────┘
 
         # __HELPER ATTRIBUTES__
@@ -140,7 +140,7 @@ class Basis:
     def orbs_per_atom(self) -> Tensor:
         """Number of orbitals associated with each atom."""
         return self._orbitals_per_species[self.atomic_numbers.view(-1)
-                                   ].view_as(self.atomic_numbers)
+                                          ].view_as(self.atomic_numbers)
 
     @property
     def orbs_per_shell(self) -> Tensor:
@@ -178,6 +178,14 @@ class Basis:
         # This property allows for resolution agnostic programming.
         return self.on_shells if self.shell_resolved else self.on_atoms
 
+    def n_orbs_on_species(self, species: Union[int, Tensor]) -> Tensor:
+        """Returns the number of orbitals on a given species."""
+        return self._orbitals_per_species[species]
+
+    def n_shells_on_species(self, species: Union[int, Tensor]) -> Tensor:
+        """Returns the number of shells on a given species."""
+        return self._shells_per_species[species]
+
     def to(self, device: device) -> 'Basis':
         """Returns a copy of the `Basis` instance on the specified device.
 
@@ -197,6 +205,53 @@ class Basis:
         """
         return self.__class__(self.atomic_numbers.to(device=device),
                               self.shell_dict, self.shell_resolved)
+
+    def __getitem__(self, selector) -> 'Basis':
+        """Permits batched Basis instances to be sliced as needed."""
+        # Block this if the instance has only a single system
+        if self.atomic_numbers.ndim != 2:
+            raise IndexError(
+                'Basis slicing is only applicable to batches of systems.')
+
+        return self.__class__(deflate(self.atomic_numbers[selector]),
+                              self.shell_dict,
+                              self.shell_resolved)
+
+    def __eq__(self, other: 'Basis') -> bool:
+        """Check if two `Basis` objects are equivalent."""
+        # Note that batches with identical systems but a different order will
+        # return False, not True.
+
+        if self.__class__ != other.__class__:
+            raise TypeError(f'"{self.__class__}" ==  "{other.__class__}" '
+                            f'evaluation not implemented.')
+
+        def shape_and_value(a, b):
+            return a.shape == b.shape and torch.allclose(a, b)
+
+        return all([
+            shape_and_value(self.atomic_numbers, other.atomic_numbers),
+            shape_and_value(self.n_orbitals, other.n_orbitals),
+            self.shell_resolved == other.shell_resolved
+        ])
+
+    def __add__(self, other: 'Basis') -> 'Basis':
+        """Combine two `Basis` objects together."""
+        if self.__class__ != other.__class__:
+            raise TypeError(
+                'Addition can only take place between two Basis objects.')
+
+        # Ensure that they both have the same resolution
+        if self.shell_resolved != other.shell_resolved:
+            raise AttributeError(
+                'Cannot add Basis with differing `shell_resolved` values.')
+
+        atomic_numbers = merge([
+            torch.atleast_2d(self.atomic_numbers),
+            torch.atleast_2d(other.atomic_numbers)])
+
+        return self.__class__(atomic_numbers, self.shell_dict,
+                              self.shell_resolved)
 
     @classmethod
     def from_hdf5(cls, source: Group, device: Optional[torch.device] = None

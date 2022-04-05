@@ -23,6 +23,65 @@ from tbmalt.common.batch import pack
 #########################
 # General Functionality #
 #########################
+def test_basis_operations(device):
+    """Ensure general operators work as intended.
+
+    These are operations like slicing, addition and equality. However, some
+    other general methods are also tested here.
+    """
+    bd = {1: [0], 6: [0, 1]}
+
+
+    H2 = Basis(torch.tensor([1, 1], device=device), bd)
+    H2_shell_resolved = Basis(torch.tensor([1, 1], device=device), bd, True)
+    batched_H2 = Basis([torch.tensor([1, 1], device=device)], bd)
+
+    CH4 = Basis(torch.tensor([6, 1, 1, 1, 1], device=device), bd)
+
+    H2_CH4 = Basis([torch.tensor([1, 1], device=device),
+                    torch.tensor([6, 1, 1, 1, 1], device=device)], bd)
+
+    # Check that error is raise when combining systems with difering shell resolutions
+
+    # Equality
+    check_1a = H2 == H2 and CH4 == CH4  # Should evaluate to True
+    check_1b = H2 != CH4 and CH4 != H2_CH4 # Should evaluate to False
+    check_1c = H2 != H2_shell_resolved  # Special False case 1
+    check_1d = H2 != batched_H2  # Special False case 2
+    check_1 = all([check_1a, check_1b, check_1c, check_1d])
+
+    assert check_1, 'Basis equality evaluates incorrect'
+
+
+    # Addition
+    check_2 = (H2 + CH4) == H2_CH4 == (batched_H2 + CH4)
+    assert check_2, 'Basis addition did not perform as expected'
+    with pytest.raises(AttributeError):
+        H2 + H2_shell_resolved
+
+    # Slicing
+    # Padding should be automatically removed when sliced
+    check_3 = H2_CH4[0] == H2 and H2_CH4[1] == CH4 and H2_CH4[0:1] == batched_H2
+    assert check_3, 'Batch slicing operations did not perform as expected'
+
+    # n_orbs_on_species
+    # Single value acquisition
+    check_4a = H2.n_orbs_on_species(1) == 1 and CH4.n_orbs_on_species(6) == 4
+    # Multi-value acquisition
+    check_4b = torch.all(H2_CH4.n_orbs_on_species(torch.tensor([1, 6]))
+                == torch.tensor([1, 4], device=device))
+    check_4 = check_4a and check_4b
+    assert check_4, "Batch.n_orbs_on_species failed to yield the correct results"
+
+    # n_shells_on_species
+    # Single value acquisition
+    check_5a = H2.n_shells_on_species(1) == 1 and CH4.n_shells_on_species(6) == 2
+    # Multi-value acquisition
+    check_5b = torch.all(H2_CH4.n_shells_on_species(torch.tensor([1, 6]))
+                == torch.tensor([1, 2], device=device))
+    check_5 = check_5a and check_5b
+    assert check_5, "Batch.n_orbs_on_species failed to yield the correct results"
+
 def test_basis_basic_single(device):
     """General operational test of basic Basis functionality (single)."""
     # Generate test basis entity

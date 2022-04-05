@@ -319,7 +319,7 @@ def test_eighb_broadening_grad(device):
         if size_data is not None:
             m = clean_zero_padding(m, size_data)
         if target_method is None:
-            return torch.symeig(m, True)
+            return torch.linalg.eigh(m)
         else:
             return maths.eighb(m, broadening_method=target_method)
 

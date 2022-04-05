@@ -337,6 +337,10 @@ def fermi_search(
     if kT is not None and not isinstance(kT, Tensor):
         kT = torch.tensor(kT, dtype=dtype, device=dev)
 
+    # If a Basis instance was given as a mask then convert it to a tensor
+    if isinstance(e_mask, Basis):
+        e_mask = e_mask.on_atoms != -1
+
     # Scaling factor is the max № of electrons that can occupancy each state;
     # 2/1 for restricted/unrestricted molecular systems. For periodic systems
     # this is then multiplied by the k-point weights.
@@ -346,10 +350,6 @@ def fermi_search(
     # Shape of Ɛ tensor where k-points & spin-channels have been flattened out.
     # Note that only spin-channels with common fermi energies get flattened.
     shp = torch.Size([*n_elec.shape, -1])
-
-    # If a Basis instance was given as a mask then convert it to a tensor
-    if isinstance(e_mask, Basis):
-        e_mask = e_mask.on_atoms != -1
 
     # __Error Checking__
     eps = torch.finfo(dtype).eps
