@@ -118,6 +118,45 @@ def hellinger(p: Tensor, q: Tensor) -> Tensor:
     ) / np.sqrt(2)
 
 
+def estimate_minmax(
+    amat: Tensor,
+) -> Tuple[Tensor, Tensor]:
+    """
+    Estimate maximum and minimum eigenvalue of a matrix using the Gershgorin circle theorem.
+
+    Arguments:
+        amat : Tensor
+            Symmetric matrix.
+
+    Returns:
+        Tuple[Tensor, Tensor]
+            Minimum and maximum eigenvalue.
+
+    Examples:
+        >>> amat = torch.tensor([
+        ...     [[-1.1258, -0.1794,  0.1126],
+        ...      [-0.1794,  0.5988,  0.1490],
+        ...      [ 0.1126,  0.1490,  0.4681]],
+        ...     [[-0.1577,  0.6080, -0.3301],
+        ...      [ 0.6080,  1.5863,  0.9391],
+        ...      [-0.3301,  0.9391,  1.2590]],
+        ... ])
+        >>> estimate_minmax(amat)
+        (tensor([-1.4178, -1.0958]), tensor([0.9272, 3.1334]))
+        >>> evals = torch.linalg.eigh(amat)[0]
+        >>> evals.min(-1)[0], evals.max(-1)[0],
+        (tensor([-1.1543, -0.5760]), tensor([0.7007, 2.4032]))
+    """
+
+    center = amat.diagonal(dim1=-2, dim2=-1)
+    radius = torch.sum(torch.abs(amat), dim=-1) - torch.abs(center)
+
+    return (
+        torch.min(center - radius, dim=-1)[0],
+        torch.max(center + radius, dim=-1)[0],
+    )
+
+
 class _SymEigB(torch.autograd.Function):
     # State that this can solve for multiple systems and that the first
     # dimension should iterate over instance of the batch.
@@ -525,12 +564,15 @@ def eighb(a: Tensor,
     args = (broadening_method, factor) if broadening_method else ()
 
     if aux:
-        # Convert from zero-padding to identity padding
         is_zero = torch.eq(a, 0)
         mask = torch.all(is_zero, dim=-1) & torch.all(is_zero, dim=-2)
-        a = a + torch.diag_embed(mask.type(a.dtype))
 
     if b is None:  # For standard eigenvalue problem
+        if aux:
+            # Convert from zero-padding to padding with largest eigenvalue estimate
+            shift = estimate_minmax(a)[-1].unsqueeze(-1)
+            a = a + torch.diag_embed(shift * mask)
+
         w, v = func(a, *args)  # Call the required eigen-solver
 
     else:  # Otherwise it will be a general eigenvalue problem
@@ -567,6 +609,11 @@ def eighb(a: Tensor,
             # To obtain C, perform the reduction operation C = L^{-1}AL^{-T}
             c = l_inv @ a @ l_inv_t
 
+            if aux:
+                # Convert from zero-padding to padding with largest eigenvalue estimate
+                shift = estimate_minmax(c)[-1].unsqueeze(-1)
+                c = c + torch.diag_embed(shift * mask)
+
             # The eigenvalues of Az = λBz are the same as Cy = λy; hence:
             w, v_ = func(c, *args)
 
@@ -590,6 +637,11 @@ def eighb(a: Tensor,
             # A' (a_prime) can then be constructed as: A' = B^{-1/2} A B^{-1/2}
             a_prime = b_so @ a @ b_so
 
+            if aux:
+                # Convert from zero-padding to padding with largest eigenvalue estimate
+                shift = estimate_minmax(a_prime)[-1].unsqueeze(-1)
+                a_prime = a_prime + torch.diag_embed(shift * mask)
+
             # Decompose the now orthogonalised A' matrix
             w, v_prime = func(a_prime, *args)
 
@@ -600,9 +652,12 @@ def eighb(a: Tensor,
         else:  # If an unknown scheme was specified
             raise ValueError('Unknown scheme selected.')
 
-    # If sort_out is enabled, then move ghosts to the end.
+    # If sort_out is enabled, nullify the "ghost" eigen-values
     if sort_out:
-        w, v = _eig_sort_out(w, v, not aux)
+        if aux:
+            w = torch.where(~mask, w, w.new_tensor(0))
+        else:
+            w, v = _eig_sort_out(w, v, not aux)
 
     # Return the eigenvalues and eigenvectors
     return w, v
