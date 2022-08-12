@@ -321,8 +321,15 @@ def fermi_search(
 
         # Maximum occupation of each eigenstate, sorted and flattened.
         occ = (torch.ones_like(ev_flat) * scale_factor).gather(-1, srt)
-        # Locate HOMO index, via the transition between under/over filled
-        i_homo = occ.cumsum(-1).T.le(n_elec).T.diff().nonzero().T[-1].view(shp)
+        # Locate HOMO index, via the transition between under/over filled.
+        # A indirect method is used here as direct calls to ">" & "<" result in
+        # spurious behaviour when any noise is present in `n_elec`.
+        occ_cs = occ.cumsum(-1).T - n_elec
+        r = torch.finfo(n_elec.dtype).resolution * 5
+        i_homo = torch.argmax(
+            torch.as_tensor(occ_cs.ge(-r).T, dtype=torch.long),
+            dim=-1).view(shp)
+
         # Return the Fermi value
         return ev_flat.gather(-1, torch.cat((i_homo, i_homo + 1), -1)).mean(-1)
 
@@ -332,8 +339,8 @@ def fermi_search(
     dtype, dev = e_vals.dtype, e_vals.device
 
     # Convert n_elec & kT into tensors to make them easier to work with.
-    if not isinstance(n_elec, Tensor):
-        n_elec = torch.tensor(n_elec, dtype=dtype, device=dev)
+    if not isinstance(n_elec, Tensor) or not torch.is_floating_point(n_elec):
+        n_elec = torch.as_tensor(n_elec, dtype=dtype, device=dev)
     if kT is not None and not isinstance(kT, Tensor):
         kT = torch.tensor(kT, dtype=dtype, device=dev)
 

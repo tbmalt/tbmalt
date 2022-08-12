@@ -292,7 +292,7 @@ class Skf:
             # If integrals were culled; atomic data must be too.
             max_l = int(triangular_root(len(h_data)) - 1) + 1
             kwargs_in.update({
-                'mass': mass, 'occupations': occs[:max_l + 1],
+                'mass': mass, 'occupations': occs[:max_l],
                 'on_sites': on_site[:max_l], 'hubbard_us': hubb_u[:max_l]})
 
         # Parse repulsive spline (if present)
