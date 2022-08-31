@@ -601,8 +601,10 @@ def eighb(a: Tensor,
                 l_inv = torch.inverse(l)
             else:
                 # Otherwise compute via an indirect method (default)
-                l_inv = torch.linalg.solve(l,torch.eye(a.shape[-1], dtype=a.dtype,
-                                              device=b.device))
+                identity = torch.zeros_like(l)
+                identity.diagonal(dim1=-2, dim2=-1)[:] = 1
+                l_inv = torch.linalg.solve(l, identity)
+
             # Transpose of l_inv: improves speed in batch mode
             l_inv_t = torch.transpose(l_inv, -1, -2)
 
