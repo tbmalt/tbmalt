@@ -165,6 +165,11 @@ class Geometry:
         return self.__dtype
 
     @property
+    def is_periodic(self) -> bool:
+        """If there is any periodic boundary conditions."""
+        return False if self.cells is None else True
+
+    @property
     def distances(self) -> Tensor:
         """Distance matrix between atoms in the system."""
         dist = torch.cdist(self.positions, self.positions, p=2)

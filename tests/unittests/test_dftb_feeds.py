@@ -6,49 +6,16 @@ import tarfile
 from typing import List
 import numpy as np
 from tbmalt.io.skf import Skf
-from tbmalt.physics.dftb.feeds import ScipySkFeed
+from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed
 from tbmalt import Geometry, Basis
 from tbmalt.common.batch import pack
 from functools import reduce
 
+from tests.test_utils import skf_file
 
-@pytest.fixture
-def skf_file(tmpdir):
-    """Path to auorg-1-1 HDF5 database.
-
-    This fixture downloads the auorg-1-1 Slater-Koster parameter set, converts
-    it to HDF5, and returns the path to the resulting database.
-
-    Returns:
-         path: location of auorg-1-1 HDF5 database file.
-
-    Warnings:
-        This will fail i) without an internet connection, ii) if the auorg-1-1
-        parameter sets moves, or iii) it is used outside of a PyTest session.
-
-    """
-    # Link to the auorg-1-1 parameter set
-    link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
-
-    # Elements of interest
-    elements = ['H', 'C', 'Au', 'S']
-
-    # Download and extract the auorg parameter set to the temporary directory
-    urllib.request.urlretrieve(link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
-    with tarfile.open(path) as tar:
-        tar.extractall(tmpdir)
-
-    # Select the relevant skf files and place them into an HDF5 database
-    skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-                 for i in elements for j in elements]
-
-    for skf_file in skf_files:
-        Skf.read(skf_file).write(path := join(tmpdir, 'auorg.hdf5'))
-
-    return path
+torch.set_default_dtype(torch.float64)
 
 
-# @pytest.fixture
 def molecules(device) -> List[Geometry]:
     """Returns a selection of `Geometry` entities for testing.
 
@@ -147,6 +114,7 @@ def test_scipyskfeed_single(skf_file: str, device):
         assert check_3, 'ScipySkFeed.matrix returned on incorrect device'
 
 
+# Batch
 def test_scipyskfeed_batch(skf_file:str, device):
     """ScipySkFeed matrix batch operability tolerance test"""
     H_feed = ScipySkFeed.from_database(
@@ -175,3 +143,91 @@ def test_scipyskfeed_batch(skf_file:str, device):
 
 # Note that gradient tests are not performed on the ScipySkFeed as it is not
 # backpropagatable due to its use of Scipy splines for interpolation.
+
+###############################################
+# tbmalt.physics.dftb.feeds.SkfOccupationFeed #
+###############################################
+
+
+# General
+def test_skfoccupationfeed_general(device, skf_file):
+
+    # Check 0: ensure that the feed can be constructed from a HDF5 skf database
+    # without encountering an error.
+    o_feed = SkfOccupationFeed.from_database(skf_file, [1, 6], device=device)
+
+    # Check 1: ensure the feed is constructed on the correct device.
+    check_1 = o_feed.device == device == list(o_feed.occupancies.values())[0].device
+    assert check_1, 'SkfOccupationFeed has been placed on the incorrect device'
+
+    # Check 2: verify that the '.to' method moves the feed and its contents to
+    # the specified device as intended. Note that this test cannot be performed
+    # if there is no other device present on the system to which a move can be
+    # made.
+
+    if torch.cuda.device_count():
+        # Select a device to move to
+        new_device = {'cuda': torch.device('cpu'),
+                      'cpu': torch.device('cuda:0')}[device.type]
+        o_feed_copy = o_feed.to(new_device)
+
+        # In this instance the `.device` property can be trusted as it is
+        # calculated ad-hoc from the only pytorch attribute.
+        check_2 = o_feed_copy.device == new_device != device
+
+        assert check_2, '".to" method failed to set the correct device'
+
+
+# Single
+def test_skfoccupationfeed_single(device, skf_file):
+    o_feed = SkfOccupationFeed.from_database(skf_file, [1, 6, 8], device=device)
+    shell_dict = {1: [0], 6: [0, 1], 8: [0, 1]}
+
+    # Check 1: verify that results are returned on the correct device.
+    check_1 = device == o_feed(
+        Basis(torch.tensor([1, 1], device=device), shell_dict)).device
+
+    assert check_1, 'Results were placed on the wrong device'
+
+    # Check 2: ensure results are within tolerance
+    check_2a = torch.allclose(
+        o_feed(Basis(torch.tensor([1, 1], device=device), shell_dict)),
+        torch.tensor([1., 1], device=device))
+
+    check_2b = torch.allclose(
+        o_feed(Basis(torch.tensor([6, 1, 1, 1, 1], device=device), shell_dict)),
+        torch.tensor([2., 2/3, 2/3, 2/3, 1, 1, 1, 1], device=device))
+
+    check_2c = torch.allclose(
+        o_feed(Basis(torch.tensor([1, 1, 8], device=device), shell_dict)),
+        torch.tensor([1., 1, 2, 4/3, 4/3, 4/3], device=device))
+
+    check_2 = check_2a and check_2b and check_2c
+
+    assert check_2, 'Predicted occupation values errors exceed allowed tolerance'
+
+
+# Batch
+def test_skfoccupationfeed_batch(device, skf_file):
+    o_feed = SkfOccupationFeed.from_database(skf_file, [1, 6, 8], device=device)
+    shell_dict = {1: [0], 6: [0, 1], 8: [0, 1]}
+
+    basis = Basis(torch.tensor([
+        [1, 1, 0, 0, 0],
+        [6, 1, 1, 1, 1],
+        [1, 1, 8, 0, 0],
+    ], device=device), shell_dict)
+
+    reference = torch.tensor([
+        [1, 1,   0,   0,   0,   0,   0, 0],
+        [2, 2/3, 2/3, 2/3, 1,   1,   1, 1],
+        [1, 1,   2,   4/3, 4/3, 4/3, 0, 0]
+    ], device=device)
+
+    predicted = o_feed(basis)
+
+    check_1 = predicted.device == device
+    assert check_1, 'Results were placed on the wrong device'
+
+    check_2 = torch.allclose(predicted, reference)
+    assert check_2, 'Predicted occupation value errors exceed allowed tolerance'
