@@ -13,6 +13,17 @@ from tbmalt.common.batch import psort
 
 _Scheme = Callable[[Tensor, Tensor, float_like], Tensor]
 
+def entropy_term(func, eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
+            e_mask: Optional[Union[Tensor, Basis]] = None, **kwargs) -> Tensor:
+    if func == fermi_smearing:
+        return fermi_entropy(eigenvalues, fermi_energy, kT, e_mask, **kwargs)
+    elif func == gaussian_smearing:
+        return gaussian_entropy(eigenvalues, fermi_energy, kT, e_mask, **kwargs)
+    else:
+        NotImplementedError(
+            'Can\'t identify associate entropy function for the broadening '
+            f'method {func}')
+
 
 def fermi_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
                   e_mask: Optional[Union[Tensor, Basis]] = None) -> Tensor:
@@ -148,8 +159,39 @@ def _smearing_preprocessing(
     return fermi_energy, kT
 
 
-def fermi_smearing(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like
-                   ) -> Tensor:
+def _smearing_postprocessing(
+        occupancy, e_mask: Optional[Union[Tensor, Basis]] = None) -> Tensor:
+    """Zero out ghost states due to padding
+
+    Args:
+        occupancy: Occupancies of the orbitals
+        e_mask: Provides info required to distinguish "real" ``eigenvalues``
+            from "fake" ones. This is Mandatory when using smearing on batched
+            systems. This may be a `Tensor` that is `True` for real states or
+            a `Basis` object. [DEFAULT=None]
+
+    Returns:
+        occupancies: Occupancies with any ghost states zeroed out.
+    """
+    # If a mask is provided
+    if e_mask is not None:
+
+        # If a Basis instance was given as a mask then convert it to a tensor
+        if isinstance(e_mask, Basis):
+            e_mask = e_mask.on_atoms != -1
+        elif isinstance(e_mask, Tensor):
+            e_mask = e_mask != -1
+
+        # Zero out the occupant of all "ghost" states
+        occupancy[~e_mask] = 0.0
+
+    # Return the now possibly masked occupancy tensor
+    return occupancy
+
+
+def fermi_smearing(
+        eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
+        e_mask: Optional[Union[Tensor, Basis]] = None) -> Tensor:
     r"""Fractional orbital occupancies due to Fermi-Dirac smearing.
 
     Using Fermi-Dirac smearing, orbital occupancies are calculated via:
@@ -165,10 +207,13 @@ def fermi_smearing(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like
         eigenvalues: Eigen-energies, i.e. orbital-energies.
         fermi_energy: The Fermi energy.
         kT: Electronic temperature.
+        e_mask: Provides info required to distinguish "real" ``eigenvalues``
+            from "fake" ones. This is Mandatory when using smearing on batched
+            systems. This may be a `Tensor` that is `True` for real states or
+            a `Basis` object. [DEFAULT=None]
 
     Returns:
-        occupancies: Occupancies of the orbitals, or total electron count if
-            total=True.
+        occupancies: Occupancies of the orbitals.
 
     Notes:
         ``eigenvalues`` may be a single value, an array of values or a tensor.
@@ -185,12 +230,19 @@ def fermi_smearing(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like
     # Developers Notes: it might be worth trying to resolve the gradient
     # stability issue associated with this function.
     fermi_energy, kT = _smearing_preprocessing(eigenvalues, fermi_energy, kT)
-    # Calculate and return the occupancies values via the Fermi-Dirac method
-    return 1.0 / (1.0 + torch.exp((eigenvalues - fermi_energy) / kT))
+
+    # Calculate the occupancies values via the Fermi-Dirac method
+    occupancies = 1.0 / (1.0 + torch.exp((eigenvalues - fermi_energy) / kT))
+
+    # Mask out ghost states as and when required
+    occupancies = _smearing_postprocessing(occupancies, e_mask)
+
+    return occupancies
 
 
-def gaussian_smearing(eigenvalues: Tensor, fermi_energy: Tensor,
-                      kT: float_like) -> Tensor:
+def gaussian_smearing(
+        eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
+        e_mask: Optional[Union[Tensor, Basis]] = None) -> Tensor:
     r"""Fractional orbital occupancies due to Gaussian smearing.
 
     Using Gaussian smearing, orbital occupancies are calculated via:
@@ -206,6 +258,10 @@ def gaussian_smearing(eigenvalues: Tensor, fermi_energy: Tensor,
         eigenvalues: Eigen-energies, i.e. orbital-energies.
         fermi_energy: The Fermi energy.
         kT: Electronic temperature.
+        e_mask: Provides info required to distinguish "real" ``eigenvalues``
+            from "fake" ones. This is Mandatory when using smearing on batched
+            systems. This may be a `Tensor` that is `True` for real states or
+            a `Basis` object. [DEFAULT=None]
 
     Returns:
         occupancies: Occupancies of the orbitals.
@@ -224,8 +280,72 @@ def gaussian_smearing(eigenvalues: Tensor, fermi_energy: Tensor,
 
     """
     fermi_energy, kT = _smearing_preprocessing(eigenvalues, fermi_energy, kT)
+
     # Calculate and return the occupancies values via the Gaussian method
-    return torch.erfc((eigenvalues - fermi_energy) / kT) / 2
+    occupancies = torch.erfc((eigenvalues - fermi_energy) / kT) / 2
+
+    # Mask out ghost states as and when required
+    occupancies = _smearing_postprocessing(occupancies, e_mask)
+
+    return occupancies
+
+
+def _middle_gap_approximation(
+        eigenvalues: Tensor, n_electrons: Tensor, scale_factor: Tensor,
+        e_mask: Optional[Tensor] = None, return_occupations: bool = False):
+    """Returns the midpoint between the HOMO and LUMO."""
+
+    # Shape of Ɛ tensor where k-points & spin-channels have been flattened out.
+    # Note that only spin-channels with common fermi energies get flattened.
+    shape = torch.Size([*n_electrons.shape, -1])
+
+    # Flatten & sort the eigenvalues so there's 1 row per-system; the
+    # spin dimension is only flattened when the spin channels share a
+    # common fermi-energy.
+    eigenvalues_flat, srt = psort(
+        eigenvalues.view(shape),
+        None if e_mask is None else e_mask.view(shape))
+
+    # Maximum occupation of each eigenstate, sorted and flattened.
+    occupations = (torch.ones_like(eigenvalues_flat) * scale_factor
+                   ).gather(-1, srt)
+
+    # Locate HOMO index, via the transition between under/over filled.
+    # A indirect method is used here as direct calls to ">" & "<" result in
+    # spurious behaviour when any noise is present in `n_electrons`.
+    occupations_cs = occupations.cumsum(-1).T - n_electrons
+    r = torch.finfo(n_electrons.dtype).resolution * 5
+    i_homo = torch.argmax(
+        torch.as_tensor(occupations_cs.ge(-r).T, dtype=torch.long),
+        dim=-1).view(shape)
+
+    # Identify the index of the LUMO. Care must be taken to catch the case
+    # where i_lumo is out of bounds due to the LUMO state not being present in
+    # the eigenvalues. This is encountered when all states are fully occupied.
+    if e_mask is not None:
+        n_states = e_mask.view(shape).sum(dim=-1).view(i_homo.shape)
+    else:
+        n_states = torch.tensor(eigenvalues_flat.shape[-1])
+
+    i_lumo = torch.minimum(i_homo + 1, n_states - 1)
+
+    mid_point = eigenvalues_flat.gather(
+        -1, torch.cat((i_homo, i_lumo), -1)).mean(-1)
+
+    # Return the mid-point
+    if not return_occupations:
+        return mid_point
+    # Unless also instructed to also return the occupations
+    else:
+        # Set the occupancies of all states above the HOMO equal to zero
+        for n, i in enumerate(i_homo.flatten()):
+            torch.atleast_2d(occupations)[n, i + 1:] = 0.0
+
+        # Re-order and un-flatten the occupancy array to match its original form
+        occupations = occupations.gather(
+            -1, torch.argsort(srt, -1)).view(eigenvalues.shape)
+
+        return mid_point, occupations
 
 
 @torch.no_grad()
@@ -310,85 +430,67 @@ def fermi_search(
                density functional theory based atomistic simulations. The
                Journal of Chemical Physics, 152(12), 124101.
     """
-    def middle_gap_approximation():
-        """Returns the midpoint between the HOMO and LUMO."""
-        # Flatten & sort the eigenvalues so there's 1 row per-system; the
-        # spin dimension is only flattened when the spin channels share a
-        # common fermi-energy.
-        ev_flat, srt = psort(
-            e_vals.view(shp),
-            None if e_mask is None else e_mask.view(shp))
-
-        # Maximum occupation of each eigenstate, sorted and flattened.
-        occ = (torch.ones_like(ev_flat) * scale_factor).gather(-1, srt)
-        # Locate HOMO index, via the transition between under/over filled.
-        # A indirect method is used here as direct calls to ">" & "<" result in
-        # spurious behaviour when any noise is present in `n_elec`.
-        occ_cs = occ.cumsum(-1).T - n_elec
-        r = torch.finfo(n_elec.dtype).resolution * 5
-        i_homo = torch.argmax(
-            torch.as_tensor(occ_cs.ge(-r).T, dtype=torch.long),
-            dim=-1).view(shp)
-
-        # Return the Fermi value
-        return ev_flat.gather(-1, torch.cat((i_homo, i_homo + 1), -1)).mean(-1)
 
     # __Setup__
-    # Arguments, tolerance, eigenvalues, n_electrons aliased here for brevity.
-    e_vals, n_elec, tol = eigenvalues, n_electrons, tolerance
-    dtype, dev = e_vals.dtype, e_vals.device
+    dtype, dev = eigenvalues.dtype, eigenvalues.device
 
-    # Convert n_elec & kT into tensors to make them easier to work with.
-    if not isinstance(n_elec, Tensor) or not torch.is_floating_point(n_elec):
-        n_elec = torch.as_tensor(n_elec, dtype=dtype, device=dev)
+    # Convert n_electrons & kT into tensors to make them easier to work with.
+    if not isinstance(n_electrons, Tensor) \
+            or not torch.is_floating_point(n_electrons):
+        n_electrons = torch.as_tensor(n_electrons, dtype=dtype, device=dev)
     if kT is not None and not isinstance(kT, Tensor):
         kT = torch.tensor(kT, dtype=dtype, device=dev)
 
     # If a Basis instance was given as a mask then convert it to a tensor
     if isinstance(e_mask, Basis):
         e_mask = e_mask.on_atoms != -1
+    elif isinstance(e_mask, Tensor):
+        if e_mask.dtype is not torch.bool:
+            e_mask = e_mask != -1
 
     # Scaling factor is the max № of electrons that can occupancy each state;
     # 2/1 for restricted/unrestricted molecular systems. For periodic systems
     # this is then multiplied by the k-point weights.
-    pf = 5 - e_vals.ndim - [k_weights, e_mask].count(None)
+    pf = 5 - eigenvalues.ndim - [k_weights, e_mask].count(None)
     scale_factor = pf if k_weights is None else pf * k_weights
 
     # Shape of Ɛ tensor where k-points & spin-channels have been flattened out.
     # Note that only spin-channels with common fermi energies get flattened.
-    shp = torch.Size([*n_elec.shape, -1])
+    shp = torch.Size([*n_electrons.shape, -1])
 
     # __Error Checking__
     eps = torch.finfo(dtype).eps
-    if tol is None:  # auto-assign if no tolerance was given
-        tol = {torch.float64: 1E-10, torch.float32: 1E-5,
+    if tolerance is None:  # auto-assign if no tolerance was given
+        tolerance = {torch.float64: 1E-10, torch.float32: 1E-5,
                torch.float16: 1E-2}[dtype]
-    elif tol < eps:  # Ensure tolerance value is viable
-        raise ValueError(f'Tolerance {tol:7.1E} too tight for "{dtype}", '
+
+    elif tolerance < eps:  # Ensure tolerance value is viable
+        raise ValueError(f'Tolerance {tolerance:7.1E} too tight for "{dtype}", '
                          f'the minimum permitted value is: {eps:7.1E}.')
 
     if kT is not None and (kT < 0.0).any():  # Negative kT catch
         raise ValueError(f'kT must be positive or None ({kT})')
 
-    if torch.lt(n_elec.abs(), eps).any():  # A system has no electrons
+    if torch.lt(n_electrons.abs(), eps).any():  # A system has no electrons
         raise ValueError('Number of elections cannot be zero.')
 
     # A system has too many electrons
-    if torch.any((n_elec / pf).gt(e_vals.view(shp).shape[-1] if e_mask is None
+    if torch.any((n_electrons / pf).gt(eigenvalues.view(shp).shape[-1] if e_mask is None
                                else e_mask.view(shp).count_nonzero(-1))):
         raise ValueError('Number of electrons cannot exceed 2 * n states')
 
     # __Finite Temperature Disabled__
     # Set the fermi energy to the mid point between the HOMO and LUMO.
     if kT is None:
-        return middle_gap_approximation()
+        return _middle_gap_approximation(
+            eigenvalues, n_electrons, scale_factor, e_mask)
 
     # __Finite Temperature Enabled__
     # Perform a fermi level search via the bisection method
     else:
         # e_fermi holds results & c_mask tracks which systems have converged.
-        e_fermi = torch.zeros_like(n_elec, device=dev, dtype=dtype)
-        c_mask = torch.full_like(n_elec, False, dtype=torch.bool, device=dev)
+        e_fermi = torch.zeros_like(n_electrons, device=dev, dtype=dtype)
+        c_mask = torch.full_like(n_electrons, False, dtype=torch.bool, device=dev)
 
         def elec_count(f, m=...):
             """Makes a call to the smearing function & returns the sum.
@@ -397,40 +499,44 @@ def fermi_search(
             function to one place. kT's mask are treated differently as 0d &
             1d are both valid shapes of kT in both batch & single system mode.
             """
-            res = scheme(e_vals[m], f[m], kT[m if kT.ndim != 0 else ...])
+            res = scheme(eigenvalues[m], f[m], kT[m if kT.ndim != 0 else ...])
             if e_mask is not None:  # Cull "fake" states caused by padding
                 res[~e_mask[m]] = 0.0
 
             # Sum up over all axes apart from the batch dimension
-            return (res * scale_factor).T.sum_to_size(n_elec[m].shape)
+            return (res * scale_factor).T.sum_to_size(n_electrons[m].shape)
 
-        # If there's an even, integer number of e⁻; try setting e_fermi to
-        # the middle gap, i.e. fill according to the Aufbau principle.
-        if (mask := abs((n_elec / 2) - (n_elec / 2).round()) <= tol).any():
+        # If there's an even, integer number of e⁻; try setting e_fermi to the
+        # middle gap, i.e. fill according to the Aufbau principle. The modulus
+        # can't be used here as any noise in `n_electrons` will cause an error.
+        if (mask := (n_electrons/2 - torch.round(n_electrons/2)) <= tolerance).any():
             # Store fermi value, recalculate № of e⁻ & identity of convergence
-            e_fermi[mask] = middle_gap_approximation()[mask]
-            c_mask[mask] = abs(elec_count(e_fermi)[mask] - n_elec[mask]) < tol
+            e_fermi[mask] = _middle_gap_approximation(
+                eigenvalues, n_electrons, scale_factor, e_mask)[mask]
+
+            c_mask[mask] = abs(
+                elec_count(e_fermi)[mask] - n_electrons[mask]) < tolerance
 
         # If all systems converged then just return the results now
         if c_mask.all():
-            return e_fermi.view_as(n_elec)
+            return e_fermi.view_as(n_electrons)
 
         # __Setup Bounds for Bisection Search__
         # Identify upper (e_up) & lower (e_lo) search bounds; fermi level should
         # be between the highest & lowest eigenvalues, so start there.
-        e_lo = e_vals.view(shp).min(-1).values
-        e_up = e_vals.view(shp).max(-1).values
+        e_lo = eigenvalues.view(shp).min(-1).values
+        e_up = eigenvalues.view(shp).max(-1).values
         ne_lo, ne_up = elec_count(e_lo), elec_count(e_up)
 
         # Bounds may fail on large kT or full band structures; if too many e⁻
         # are present at the e_lo then decrease it & recalculate. If too few e⁻
         # present at the e_up, then it's too low so increase it & recalculate
         # the number of elections there.
-        while (mask := ne_lo > n_elec).any():
+        while (mask := ne_lo > n_electrons).any():
             e_lo[mask] += 2.0 * (e_lo[mask] - e_up[mask])
             ne_lo[mask] = elec_count(e_lo, mask)
 
-        while (mask := ne_up < n_elec).any():
+        while (mask := ne_up < n_electrons).any():
             e_up[mask] += 2.0 * (e_up[mask] - e_lo[mask])
             ne_up[mask] = elec_count(e_up, mask)
 
@@ -445,9 +551,9 @@ def fermi_search(
         while (mask := ~c_mask).any():
             n_steps += 1
 
-            # Move e_lo to mid-point if `e_lo & e_up haven't crossed` ≡ `mid-point is
-            # below the fermi level`; otherwise move e_up up to the mid-point.
-            if (m_up := ((ne_up > ne_lo) == (n_elec > ne_fermi)) & mask).any():
+            # Move e_lo to mid-point if `e_lo & e_up haven't crossed` ≡ `mid-point
+            # is below the fermi level`; otherwise move e_up up to the mid-point.
+            if (m_up := ((ne_up > ne_lo) == (n_electrons > ne_fermi)) & mask).any():
                 e_lo[m_up], ne_lo[m_up] = e_fermi[m_up], ne_fermi[m_up]
             if (m_down := mask & ~m_up).any():
                 e_up[m_down], ne_up[m_down] = e_fermi[m_down], ne_fermi[m_down]
@@ -455,7 +561,7 @@ def fermi_search(
             # Recompute mid-point & its electron count then update the c_mask
             e_fermi[mask] = 0.5 * (e_up + e_lo)[mask]
             ne_fermi[mask] = elec_count(e_fermi, mask)
-            c_mask[mask] = abs(ne_fermi - n_elec)[mask] <= tol
+            c_mask[mask] = abs(ne_fermi - n_electrons)[mask] <= tolerance
 
             # If maximum allowed number of iterations reached: raise and error.
             if n_steps > max_iter:
@@ -464,3 +570,65 @@ def fermi_search(
 
         # Return the fermi energy
         return e_fermi
+
+
+def aufbau_filling(
+        eigenvalues: Tensor, n_electrons: float_like,
+        e_mask: Optional[Union[Tensor, Basis]] = None,
+        k_weights: Optional[Tensor] = None) -> Tensor:
+    """Fractional orbital occupancies due to the Aufbau principle.
+
+    Returns the fractional occupancy of each orbital according the the Aufbau
+    principle in which states are filled from lowest to highest energy until
+    the specified electron count is reached. Any given state will only be
+    occupied if all states of lower energy are also occupied.
+
+    Arguments:
+        eigenvalues: Eigen-energies, i.e. orbital-energies. This may have up to
+            4 dimensions, 3 of which are optional, so long as the following
+            order is satisfied [batch, spin, k-points, eigenvalues].
+        n_electrons: Total number of (valence) electrons.
+        e_mask: Provides info required to distinguish "real" ``eigenvalues``
+            from "fake" ones. This is Mandatory when using smearing on batched
+            systems. This may be a `Tensor` that is `True` for real states or
+            a `Basis` object. [DEFAULT=None]
+        k_weights: If periodic systems are supplied then k-point wights can be
+            given via this argument.
+
+    Returns:
+        occupancies: Fractional occupancies of the orbitals according to Aufbau
+            filling.
+    """
+
+    # No comments are provided for the code here as all the code present is
+    # functionally identical to that in `fermi_search`; albeit a much cut down
+    # version.
+
+    if not isinstance(n_electrons, Tensor) \
+            or not torch.is_floating_point(n_electrons):
+        n_electrons = torch.as_tensor(
+            n_electrons, dtype=eigenvalues.dtype, device=eigenvalues.device)
+
+    if isinstance(e_mask, Basis):
+        e_mask = e_mask.on_atoms != -1
+
+    pf = 5 - eigenvalues.ndim - [k_weights, e_mask].count(None)
+    scale_factor = pf if k_weights is None else pf * k_weights
+
+    shp = torch.Size([*n_electrons.shape, -1])
+
+    if torch.lt(n_electrons.abs(), torch.finfo(eigenvalues.dtype).eps).any():
+        raise ValueError('Number of elections cannot be zero.')
+
+    if torch.any((n_electrons / pf).gt(
+            eigenvalues.view(shp).shape[-1] if e_mask is None
+            else e_mask.view(shp).count_nonzero(-1))):
+
+        raise ValueError('Number of electrons cannot exceed 2 * n states')
+
+    # Divide by the pre-factor to get back to fractional values. This is a bit
+    # wasteful and thus the occupancy scaling situation should be refactored
+    # at some point in the future.
+    return _middle_gap_approximation(
+        eigenvalues, n_electrons, scale_factor,
+        e_mask, return_occupations=True)[1] / pf

@@ -250,7 +250,9 @@ class Basis:
             torch.atleast_2d(self.atomic_numbers),
             torch.atleast_2d(other.atomic_numbers)])
 
-        return self.__class__(atomic_numbers, self.shell_dict,
+        shell_dict = {**self.shell_dict, **other.shell_dict}
+
+        return self.__class__(atomic_numbers, shell_dict,
                               self.shell_resolved)
 
     @classmethod

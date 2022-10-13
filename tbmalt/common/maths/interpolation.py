@@ -71,8 +71,12 @@ class PolyInterpU:
         """
         n_grid_point = len(self.xx)  # -> number of grid points
         r_max = (n_grid_point - 1) * self.grid_step + self.tail
-        ind = torch.floor(rr / self.grid_step).long().to(self._device)
-        result = torch.zeros(*rr.shape, device=self._device)
+        ind = torch.searchsorted(self.xx, rr).to(self._device)
+        result = (
+            torch.zeros(rr.shape, device=self._device)
+            if self.yy.dim() == 1
+            else torch.zeros(rr.shape[0], *self.yy.shape[1:], device=self._device)
+        )
 
         # => polynomial fit
         if (ind <= n_grid_point).any():
@@ -84,10 +88,11 @@ class PolyInterpU:
             ind_last[ind_last < self.n_interp + 1] = self.n_interp + 1
 
             # gather xx and yy for both single and batch
-            xa = (ind_last.unsqueeze(1) - self.n_interp +
+            xa = self.xx[0] + (ind_last.unsqueeze(1) - self.n_interp - 1 +
                   torch.arange(self.n_interp, device=self._device)) * self.grid_step
             yb = torch.stack([self.yy[ii - self.n_interp - 1: ii - 1]
                               for ii in ind_last]).to(self._device)
+
             result[_mask] = poly_interp(xa, yb, rr[_mask])
 
         # Beyond the grid => extrapolation with polynomial of 5th order

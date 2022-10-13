@@ -16,6 +16,7 @@ import torch
 from h5py import Group
 from numpy import ndarray as Array
 from tbmalt import Geometry, Basis
+from tbmalt.ml import Feed
 from torch import Tensor
 
 
@@ -36,7 +37,7 @@ def indices(dims, dtype=None, device=None):
     return res.to(device=device)
 
 
-class IntegralFeed(ABC):
+class IntegralFeed(ABC, Feed):
     """ABC for Hamiltonian and overlap matrix constructors.
 
     Subclasses of this abstract base class are responsible for constructing

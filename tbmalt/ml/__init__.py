@@ -4,3 +4,8 @@
 The primary machine learning components of TBMaLT are located within this
 module.
 """
+
+
+class Feed:
+    def __call(self, *args, **kwargs):
+        pass

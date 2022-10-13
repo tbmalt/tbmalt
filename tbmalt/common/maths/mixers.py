@@ -436,6 +436,7 @@ class Anderson(_Mixer):
         """
         if self._step_number == 0:  # Call setup hook if this is the 1st cycle
             self._setup_hook(x_new)
+            self._x_hist[0] = x_old.reshape(self._shape_in)
 
         self._step_number += 1  # Increment step_number
 
@@ -473,7 +474,7 @@ class Anderson(_Mixer):
 
             # Solve for the coefficients. As torch.solve cannot solve for 1D
             # tensors a blank dimension must be added
-            thetas = torch.squeeze(torch.solve(torch.unsqueeze(b, -1), a)[0])
+            thetas = torch.squeeze(torch.linalg.solve(a, torch.unsqueeze(b, -1)))
 
             # Construct the 2'nd terms of eq 4.1 & 4.2 (Eyert). These are
             # the "averaged" histories of x and F respectively:
@@ -507,7 +508,6 @@ class Anderson(_Mixer):
         # If there is insufficient history for Anderson; use simple mixing
         else:
             x_mix = self._x_hist[0] + (self._f[0] * self.init_mix_param)
-            return x_mix.reshape(self._shape_out)
 
         # Shift f & x_hist over; a roll follow by a reassignment is
         # necessary to avoid an inplace error. (gradients remain intact)
@@ -522,7 +522,7 @@ class Anderson(_Mixer):
         # Reshape the mixed system back into the expected shape and return it
         return x_mix.reshape(self._shape_out)
 
-    def cull(self, cull_list: bool):
+    def cull(self, cull_list: bool, size: Union[Tensor, float] = None):
         """Purge select systems form the mixer.
 
         This is useful when a subset of systems have converged during mixing.
@@ -530,20 +530,29 @@ class Anderson(_Mixer):
         Arguments:
             cull_list: Tensor with booleans indicating which systems should be
                 culled (True) and which should remain (False).
+            size: Maximum size of selected systems.
+
+        Warning:
+            The current size only works for 2D batch system.
 
         """
         assert self._is_batch, 'Cull only valid for batch mixing'
         # Invert the cull_list, gather & reassign self._delta self._x_hist &
         # self._f so only those marked False remain.
         cull = ~cull_list
-        self._delta = self._delta[cull]
-        self._f = self._f[:, cull]
-        self._x_hist = self._x_hist[:, cull]
+        _size = self._delta.shape[-1] if size is None else size
+        self._delta = self._delta[cull, :_size]
+        self._f = self._f[:, cull, :_size]
+        self._x_hist = self._x_hist[:, cull, :_size]
 
         # Adjust the the shapes accordingly
         n = list(cull_list).count(True)
+
         self._shape_in[0] -= n
         self._shape_out[0] -= n
+        if size is not None:
+            self._shape_in[1] = size
+            self._shape_out[1] = size
 
     def reset(self):
         """Reset mixer to its initial state."""

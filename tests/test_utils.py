@@ -8,9 +8,15 @@ This ensures that the default dtype and autograd anomaly detection settings
 are all inherited.
 """
 
+from os.path import join
 import numpy as np
 import torch
 import functools
+import pytest
+import urllib
+import tarfile
+
+from tbmalt.io.skf import Skf
 
 
 def fix_seed(func):
@@ -95,3 +101,39 @@ def clean_zero_padding(m, sizes):
     cleaned = m - temp
 
     return cleaned
+
+
+@pytest.fixture
+def skf_file(tmpdir):
+    """Path to auorg-1-1 HDF5 database.
+
+    This fixture downloads the auorg-1-1 Slater-Koster parameter set, converts
+    it to HDF5, and returns the path to the resulting database.
+
+    Returns:
+         path: location of auorg-1-1 HDF5 database file.
+
+    Warnings:
+        This will fail i) without an internet connection, ii) if the auorg-1-1
+        parameter sets moves, or iii) it is used outside of a PyTest session.
+
+    """
+    # Link to the auorg-1-1 parameter set
+    link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+
+    # Elements of interest
+    elements = ['H', 'C', 'O', 'Au', 'S']
+
+    # Download and extract the auorg parameter set to the temporary directory
+    urllib.request.urlretrieve(link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
+    with tarfile.open(path) as tar:
+        tar.extractall(tmpdir)
+
+    # Select the relevant skf files and place them into an HDF5 database
+    skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
+                 for i in elements for j in elements]
+
+    for skf_file in skf_files:
+        Skf.read(skf_file).write(path := join(tmpdir, 'auorg.hdf5'))
+
+    return path
