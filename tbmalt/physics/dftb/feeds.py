@@ -17,19 +17,11 @@ from tbmalt.io.skf import Skf
 from tbmalt.physics.dftb.slaterkoster import sub_block_rot
 from tbmalt.data.elements import chemical_symbols
 from tbmalt.ml import Feed
-from tbmalt.common.batch import pack
+from tbmalt.common.batch import pack, prepeat_interleave
 from tbmalt.common.maths.interpolation import PolyInterpU
 
 Tensor = torch.Tensor
 Array = np.ndarray
-
-
-def _p_repeat_interleave(tensor, repeats, padding=0):
-    if tensor.ndim <= 1:
-        return tensor.repeat_interleave(repeats)
-    else:
-        return pack([i.repeat_interleave(j) for i, j in
-                     zip(tensor, repeats)], value=-padding)
 
 
 def _enforce_numpy(v):
@@ -872,8 +864,8 @@ class SkfOccupationFeed(Feed):
         # Construct a pair of arrays, 'zs' & `ls`, that can be used to look up
         # the species and shell number for each orbital.
         z, l = basis.atomic_numbers, basis.shell_ls
-        zs = _p_repeat_interleave(z, basis.n_orbs_on_species(z), -1)
-        ls = _p_repeat_interleave(l, basis.orbs_per_shell, -1)
+        zs = prepeat_interleave(z, basis.n_orbs_on_species(z), -1)
+        ls = prepeat_interleave(l, basis.orbs_per_shell, -1)
 
         # Tensor into which the results will be placed
         occupancies = torch.zeros_like(zs, dtype=self.dtype)
@@ -930,6 +922,11 @@ class HubbardFeed(Feed):
     Notes:
         Note that this method discriminates between orbitals based only on
         the azimuthal number of the orbital & the species to which it belongs.
+
+    Todo:
+        At a test that throws an error if a shell resolved basis is provided but
+        `hubbard_u` is found to only be atom resolved; and vise versa. The skf
+        database should also instruct the loader whether it is shell-resolved.
     """
     def __init__(self, hubbard_u: Dict[int, Tensor]):
         # This class will be abstracted and extended to allow for specification
@@ -962,7 +959,7 @@ class HubbardFeed(Feed):
         return self.__class__({k: v.to(device=device)
                                for k, v in self.hubbard_u.items()})
 
-    def __call__(self, basis: Basis, shell_resolve) -> Tensor:
+    def __call__(self, basis: Basis) -> Tensor:
         """Shell resolved occupancies.
 
         This returns the shell resolved Hubbard U for the atom.
@@ -971,21 +968,22 @@ class HubbardFeed(Feed):
             basis: basis objects for the target systems.
 
         Returns:
-            hubbard_us: shell resolved Hubbard U .
+            hubbard_us: Hubbard U values, either shell or atom resolved
+                depending on status of `basis.shell_resolved`.
         """
 
         # Construct a pair of arrays, 'zs' & `ls`, that can be used to look up
         # the species and shell number for each orbital.
         z, l = basis.atomic_numbers, basis.shell_ls
 
-        if shell_resolve:
-            zs = _p_repeat_interleave(z, basis.n_orbs_on_species(z), -1)
-            ls = _p_repeat_interleave(l, basis.orbs_per_shell, -1)
+        if basis.shell_resolved:
+            zs = prepeat_interleave(z, basis.n_shells_on_species(z), -1)
+            ls = l
 
             # Tensor into which the results will be placed
             hubbard_us = torch.zeros_like(zs, dtype=self.dtype)
 
-            # Loop over all avalible occupancy information
+            # Loop over all available occupancy information
             for num, us in self.hubbard_u.items():
                 # Loop over each shell for species 'z'
                 for l, u in enumerate(us):

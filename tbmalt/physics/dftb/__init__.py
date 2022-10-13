@@ -8,14 +8,15 @@ from typing import Optional, Dict, Any, Literal, Tuple
 
 from tbmalt.ml.module import Calculator, requires_args, call_with_required_args
 from tbmalt.ml.integralfeeds import IntegralFeed
-from tbmalt import Basis
+from tbmalt import Basis, Geometry
 from tbmalt.physics.dftb.feeds import Feed, SkfOccupationFeed
 from tbmalt.physics.filling import (
     fermi_search, fermi_smearing, gaussian_smearing, entropy_term, aufbau_filling)
 from tbmalt.common.maths import eighb
-from tbmalt.physics.dftb.shortgamma import ShortGamma
-from tbmalt.common.batch import pack
+from tbmalt.physics.dftb.shortgamma import build_gamma_matrix
+from tbmalt.common.batch import pack, prepeat_interleave
 from tbmalt.common.maths.mixers import Simple, Anderson
+from tbmalt import ConvergenceError
 
 from torch import Tensor
 
@@ -37,8 +38,8 @@ from torch import Tensor
 # until it is cleared up.
 def _mulliken(
         rho: Tensor, S: Tensor, basis: Optional[Basis] = None,
-        resolution: Optional[Literal['atom', 'shell']] = None,
-        mask: Tuple[Tensor, Tensor, Tensor] = None) -> Tensor:
+        resolution: Optional[Literal['atom', 'shell', 'orbital']] = None
+) -> Tensor:
     r"""Mulliken population analysis.
 
     By default, orbital resolved populations are returned, however, passing the
@@ -57,14 +58,11 @@ def _mulliken(
 
                 - "atom": atom resolved
                 - "shell": shell resolved
+                - "orbital": orbital resolved
 
             If unspecified, this will default to the resolution defined by the
             `basis.shell_resolved` attribute. This is only valid when ``basis``
             is also specified. [DEFAULT=None]
-        mask: mask of `Basis` indices in batch calculations. The first is mask
-            of batch, the second is maximum size of orbitals, the third will be
-            maximum size of orbitals if `resolution` is `shell`, else maximum
-             size of atoms.
 
     Returns:
         q: mulliken populations.
@@ -84,8 +82,7 @@ def _mulliken(
     if basis is not None:  # Resolve to per-shell/atom if instructed to
         if resolution is None:
             # TODO: Change basis to have a res_matrix_shape property.
-            size = basis.shell_matrix_shape if basis.shell_resolved else basis.atomic_matrix_shape
-            ind = basis.on_res
+            size, ind = basis.res_matrix_shape, basis.on_res
         elif resolution == 'atom':
             size, ind = basis.atomic_matrix_shape, basis.on_atoms
         elif resolution == 'shell':
@@ -93,16 +90,10 @@ def _mulliken(
         else:
             raise NotImplementedError("Unknown resolution")
 
-        if mask is not None:
-            size = torch.Size((len(q), mask[1]))
-            q = torch.zeros(size, device=rho.device, dtype=rho.dtype
-                            ).scatter_add_(-1, ind[mask[0]][..., :mask[2]].clamp(min=0), q)
-        else:
-            q = torch.zeros(size[:-1], device=rho.device, dtype=rho.dtype
-                            ).scatter_add_(-1, ind.clamp(min=0), q)
+        q = torch.zeros(size[:-1], device=rho.device, dtype=rho.dtype
+                        ).scatter_add_(-1, ind.clamp(min=0), q)
 
     return q
-
 
 class Dftb1(Calculator):
 
@@ -152,13 +143,6 @@ class Dftb1(Calculator):
         # Optional keyword arguments can be passed through to the `eighb`
         # solver via the `_solver_settings` dictionary argument.
         self._solver_settings = kwargs.get('eigen_solver_settings', {})
-
-        self.mask_batch = ...
-        self.mask_obrs = ...
-        self._mask_batch = ...
-        self._mask_obrs = ...
-        self.max_atoms = None
-        self.max_orbs = None
 
     @property
     def overlap(self):
@@ -215,6 +199,24 @@ class Dftb1(Calculator):
         return self.q_final - self.q_zero
 
     @property
+    def q_zero_shells(self):
+        """Initial shell-wise populations"""
+        return torch.zeros(
+            self.basis.shell_matrix_shape[:-1],
+            device=self.device, dtype=self.dtype).scatter_add_(
+            -1, self.basis.on_shells.clamp(min=0), self.q_zero)
+
+    @property
+    def q_final_shells(self):
+        """Final shell-wise populations"""
+        return _mulliken(self.rho, self.overlap, self.basis, 'shell')
+
+    @property
+    def q_delta_shells(self):
+        """Delta shell-wise populations"""
+        return self.q_final_shells - self.q_zero_shells
+
+    @property
     def q_zero_atomic(self):
         """Initial atomic populations"""
         return torch.zeros(
@@ -233,9 +235,16 @@ class Dftb1(Calculator):
         return self.q_final_atomic - self.q_zero_atomic
 
     @property
+    def q_zero_res(self):
+        if self.basis.shell_resolved:
+            return self.q_zero_shells
+        else:
+            return self.q_zero_atomic
+
+    @property
     def n_electrons(self):
         """Number of electrons"""
-        return self.q_zero.sum(-1)  #[self.mask_batch]
+        return self.q_zero.sum(-1)
 
     @property
     def occupancy(self):
@@ -249,10 +258,8 @@ class Dftb1(Calculator):
         # method.
         if self.filling_temp is not None:
             return self.filling_scheme(
-                self.eig_values[self.mask_batch, :self.max_orbs], self.fermi_energy,
-                self.filling_temp,
-                e_mask=self.basis.on_atoms[self.mask_batch, :self.max_orbs]
-                if self.is_batch else None) * scale_factor
+                self.eig_values, self.fermi_energy, self.filling_temp,
+                e_mask=self.basis if self.is_batch else None) * scale_factor
         # Otherwise just fill according to the Aufbau principle
         else:
             return aufbau_filling(
@@ -263,12 +270,10 @@ class Dftb1(Calculator):
     def fermi_energy(self):
         """Fermi energy"""
         return fermi_search(
-            self.eig_values[self.mask_batch, :self.max_orbs],
-            self.n_electrons[self.mask_batch], self.filling_temp,
+            self.eig_values, self.n_electrons, self.filling_temp,
             self.filling_scheme,
             # Pass the e_mask argument, but only if required.
-            e_mask=self.basis.on_atoms[self.mask_batch, :self.max_orbs]
-            if self.is_batch else None)
+            e_mask=self.basis if self.is_batch else None)
 
     @property
     def band_energy(self):
@@ -306,13 +311,12 @@ class Dftb1(Calculator):
 
     def reset(self):
         """Reset all attributes and cached properties."""
-        self.overlap = None
-        self.hamiltonian = None
+        self._overlap = None
+        self._hamiltonian = None
         self.rho = None
         self.eig_values = None
         self.eig_vectors = None
-        self.max_orbs = None
-        self.max_atoms = None
+
 
     def forward(self, cache: Optional[Dict[str, Any]] = None):
         """Execute the non-SCC DFTB calculation.
@@ -333,11 +337,6 @@ class Dftb1(Calculator):
                 energy.
 
         """
-        # Non-SCC do not really use the following variables, just to reduce
-        # duplicated code for batch SCC-DFTB calculations
-        self.max_atoms = torch.max(self.geometry.n_atoms[self.mask_batch])
-        self.max_orbs = torch.max(self.basis.n_orbitals[self.mask_batch])
-
         # Construct the Hamiltonian & overlap matrices then perform the eigen
         # decomposition to get the eigen values and vectors.
         self.eig_values, self.eig_vectors = eighb(
@@ -357,191 +356,267 @@ class Dftb2(Dftb1):
     """Self-consistent-charge density-functional tight-binding method (SCC-DFTB)."""
 
     def __init__(
-            self, h_feed: IntegralFeed, s_feed: IntegralFeed,
-            o_feed: Feed, u_feed: Feed, r_feed: Optional[Feed] = None,
-            filling_temp: Optional[float] = None,
-            filling_scheme: str = 'fermi', **kwargs):
+            self, h_feed: IntegralFeed, s_feed: IntegralFeed, o_feed: Feed,
+            u_feed: Feed, r_feed: Optional[Feed] = None,
+            max_scc_iter: int = 100, **kwargs):
 
         super().__init__(
-            h_feed=h_feed, s_feed=s_feed, o_feed=o_feed, r_feed=r_feed,
-            filling_temp=filling_temp, filling_scheme=filling_scheme, **kwargs)
+            h_feed, s_feed, o_feed, r_feed=r_feed, **kwargs)
 
-        self.max_scc_step = kwargs.get('max_scc_step', 60)
-
-        # Setting parameters for mixers
-        _mixer = kwargs.get('mixer', 'Anderson')
-        _mixer_list = {'Anderson': Anderson, 'Simple': Simple}
-        self._mixer_settings = kwargs.get('mixer_settings',
-                                          {'init_mix_param': 0.2,
-                                           'mix_param': 0.2,
-                                           'generations': 6})
-        self._mixer = _mixer_list[_mixer](is_batch=None, **self._mixer_settings)
-
-        # Hubbard U initialization
+        # DFTB2 specific calculator feeds
         self.u_feed = u_feed
-        _gamma_type = kwargs.get('gamma', 'exponential')
-        self.gamma = ShortGamma(self.u_feed, gamma_type=_gamma_type)
+
+        self._core_hamiltonian: Optional[Tensor] = None
+        self._gamma: Optional[Tensor] = None
+        self.converged: Optional[Tensor] = None
+
+
+        # Calculator Settings
+        self.max_scc_iter = max_scc_iter
+        self.suppress_SCF_error = kwargs.get('supress_SCF_error', False)
+        self._gamma_form = kwargs.get('gamma', 'exponential')
+
+        _mixer = {'anderson': Anderson, 'simple': Simple
+                  }[kwargs.get('mixer', 'anderson')]
+
+        self._mixer = _mixer(False, **kwargs.get('mixer_settings', {}))
+
+
+    @property
+    def hamiltonian(self):
+        return self._hamiltonian
+
+    @hamiltonian.setter
+    def hamiltonian(self, value):
+        self._hamiltonian = value
+
+    @property
+    def core_hamiltonian(self):
+        if self._core_hamiltonian is None:
+            if requires_args(self.h_feed.matrix):
+                self._core_hamiltonian = call_with_required_args(self.h_feed.matrix, self)
+            else:
+                self._core_hamiltonian = self.h_feed.matrix(self.geometry, self.basis)
+
+        return self._core_hamiltonian
+
+    @core_hamiltonian.setter
+    def core_hamiltonian(self, value):
+        self._core_hamiltonian = value
+
+    @property
+    def gamma(self):
+        # Need to add means to select the matrix constructor method
+        if self._gamma is None:
+            self._gamma = build_gamma_matrix(
+                self.geometry, self.basis, self.u_feed(self.basis),
+                self._gamma_form)
+        return self._gamma
+
+    @gamma.setter
+    def gamma(self, value):
+        self._gamma = value
 
     def forward(self, cache: Optional[Dict[str, Any]] = None, **kwargs):
-        """Execute the SCC DFTB calculation.
 
-        This method triggers the execution of the self-consistent-charge
-        density functional tight binding theory calculation. Once complete
-        this will return the total system energy.
 
-        Args:
-            cache: Currently, the `Dftb2` calculator does not make use of the
-                `cache` argument.
+        # Step 1: Initialisation
 
-        Returns:
-            total_energy: total energy of the target system(s). If repulsive
-                interactions are not considered, i.e. the repulsion feed is
-                omitted, then this will be the band structure energy. If finite
-                temperature is active then this will technically be the Mermin
-                energy.
-
-        """
-        # Reset parameters which may inherit from last calculator
-        _gamma = self.short_gamma()
-        self._mixer._step_number = 0
+        # Reset the mixer and inform it whether it will be operating on a batch.
+        # This must be explicitly defined each time as it cannot be inferred
+        # from context.
+        self._mixer.reset()
         self._mixer._is_batch = self.is_batch
 
-        # to reset all parameters associated to converged
-        self.mask_batch = ...
-        self.mask_obrs = ...
+        # Set the initial starting guess for the charges.
+        q_current = self.q_zero_res
+        if cache is not None:
+            q_current = cache.get('q_initial', q_current)
 
-        # to store not converged information of this SCC loop
-        self._mask_batch = ...
-        self._mask_obrs = ...
-        charge = self.q_zero_atomic.clone()
+        # Array in which the final converged charges of each system are stored.
+        # Results are assigned to `q_converged` as systems coverage during the
+        # initial non-gradient-tracked SCC cycle. The values are then used as
+        # the "initial guesses" for the final single shot SCC cycle which takes
+        # place within the graph to reconnect the gradients.
+        q_converged = torch.zeros_like(q_current)
 
-        self.max_atoms = torch.max(self.geometry.n_atoms[self.mask_batch])
-        self.max_orbs = torch.max(self.basis.n_orbitals[self.mask_batch])
+        # Calls are made to the various cached properties to ensure that they
+        # are constructed within the purview of the graph.
+        self.overlap, self.core_hamiltonian, self.gamma
 
-        # Loop for DFTB2
-        for step in range(self.max_scc_step):
+        # Step 2: Preliminary SCC cycle
+        # A preliminary SCC cycle is performed outside of the gradient and acts
+        # only to get the converged charges to be used in the second cycle.
+        with torch.no_grad():
 
-            _shift_mat, H, S = self._second_order_ham(charge, _gamma)
-            self._loop_scc(step, H, S, charge)
+            # Non-batch systems are treated separately for the sake of clarity
+            # as special treatment is required for the batch case.
+            if not self.is_batch:
+                # Begin the SCC cycle
+                for step in range(1, self.max_scc_iter + 1):
 
-            if self._mixer.converged.all() or step + 1 == self.max_scc_step:
-                break
+                    # Perform a single SCC step and apply the mixing algorithm.
+                    q_current = self._mixer(self._scc_cycle(q_current), q_current)
 
-        # Reset parameters so that each property will give full information
-        self.mask_batch = ...
-        self.max_atoms = torch.max(self.geometry.n_atoms[self.mask_batch])
-        self.max_orbs = torch.max(self.basis.n_orbitals[self.mask_batch])
+                    # If the system has converged then assign the `q_converged`
+                    # values and break out of the SCC cycle.
+                    if self._mixer.converged:
+                        q_converged[:] = q_current[:]
+                        self.converged = torch.tensor(True)
+                        break
 
-    def _loop_scc(self, step, H, S, charge):
-        """Perform each single SCC-DFTB loop."""
-        if step == 0 or not self.is_batch:
-            eig_values, eig_vectors = eighb(H, S, **self._solver_settings)
-            self.eig_values = eig_values
-            self.eig_vectors = eig_vectors
-        else:
-            eig_values, eig_vectors = eighb(H, S, **self._solver_settings)
-            self.eig_values[self.mask_batch, :self.max_orbs] = eig_values
-            self.eig_vectors[self.mask_batch, :self.max_orbs, :self.max_orbs] = eig_vectors
+                # If the maximum permitted number of iterations is exceeded then
+                # then raise an exception; unless explicitly instructed not to.
+                else:
+                    self.converged = torch.tensor(False)
+                    if not self.suppress_SCF_error:
+                        raise ConvergenceError(
+                            "SCC cycle failed to converge; "
+                            "iteration limit reached")
 
-        s_occs = torch.einsum(  # Scaled occupancy values
-            '...i,...ji->...ji', torch.sqrt(self.occupancy), eig_vectors)
+            else:
+                # For the batch case, systems will be culled as and when they
+                # converge. This process involves modifying attributes such as
+                # `geometry`, `basis`, `overlap`, etc. Doing so allows all the
+                # existing code within the methods and properties to be used.
+                # However, this requires that copies of the original objects
+                # are saved and restored at the end of the batch SCC cycle.
+                # Note that a copy of the second order hamiltonian matrix is not
+                # required as it is regenerated in full in the second SCC cycle.
+                c_geometry, c_basis = self.geometry, self.basis
+                c_overlap, c_gamma = self.overlap, self.gamma
+                c_hamiltonian_copy = self.core_hamiltonian
 
-        rho = s_occs @ s_occs.transpose(-1, -2).conj()
+                # Todo:
+                #  Implement a method that can identify which properties do and
+                #  do not need to be fully destroyed by __restore.
 
-        # Calculate batch or single Mulliken charge
-        mask_q = None if step == 0 or not self.is_batch else (
-            self.mask_batch, self.max_atoms, self.max_orbs)
-        q_new = _mulliken(rho, S, self.basis, resolution='atom', mask=mask_q)
+                # `system_indices` provides the indices of each system and is
+                # culled along with the other arrays so that one can identify
+                # which systems remain.
+                system_indices = torch.arange(self.geometry._n_batch)
 
-        if step == 0:
-            charge_mix = self._mixer(q_new, x_old=self.q_zero_atomic)
-            self.rho = rho
-        else:
-            charge_mix = self._mixer(q_new)
-            self.rho[self.mask_batch, :self.max_orbs, :self.max_orbs] = rho
+                # Used to help the user track which systems have converged.
+                self.converged = torch.full(system_indices.shape, False)
 
-        charge[self.mask_batch, :self.max_atoms] = charge_mix
-        converge = self._mixer.converged
+                for step in range(1, self.max_scc_iter + 1):
+                    q_current = self._mixer(self._scc_cycle(q_current), q_current)
+                    if (c_mask := self._mixer.converged).any():
 
-        # to update parameters associated with converge and cull converged
-        # systems for next SCC-DFTB loop
-        self.cull(step, converge)
+                        idxs = system_indices[c_mask]
+                        q_converged[idxs, :q_current.shape[-1]] = q_current[c_mask, :]
+                        self.converged[idxs] = True
 
-    def cull(self, step, converge):
-        """Purge select systems form the Dftb2 or Dftb3 calculators."""
-        if step == 0:
-            self._mask_batch = ~converge
-            if self.is_batch:
-                self.mask_batch = self._mask_batch.clone()
-        else:
-            self._mask_batch = ~converge
-            if self.is_batch:
-                self.mask_batch[self.mask_batch.clone()] = self._mask_batch
+                        # If all systems have converged then the end of the SCC
+                        # cycle has been reached.
+                        if torch.all(c_mask):
+                            break
+                        # Otherwise there are still systems left to converge. Thus
+                        # the converged systems will now be culled to avoid over-
+                        # converging them.
+                        else:
+                            # The order in which things are done here matters
+                            # Cull calculator attributes
+                            self.__cull(c_mask)
+                            # Cull local variables
+                            n_res = self.basis.res_matrix_shape[-1]
+                            system_indices = system_indices[~c_mask]
+                            q_current = q_current[~c_mask, :n_res]
+                            # Cull mixer
+                            self._mixer.cull(c_mask, new_size=[n_res])
+                            print(self.geometry)
 
-        if self.is_batch and not converge.all():
-            self._mixer.cull(converge, torch.max(self.geometry.n_atoms[self.mask_batch]))
+                else:
+                    self.converged = torch.tensor(False)
+                    if not self.suppress_SCF_error:
+                        # Here a restore is performed before the error being
+                        # raised to help with debugging.
+                        self._geometry, self._basis = c_geometry, c_basis
+                        self.overlap, self.gamma = c_overlap, c_gamma
+                        self.core_hamiltonian = c_hamiltonian_copy
 
-            self.max_atoms = torch.max(self.geometry.n_atoms[self.mask_batch])
-            self.max_orbs = torch.max(self.basis.n_orbitals[self.mask_batch])
+                        raise ConvergenceError(
+                            "SCC cycle failed to converge; "
+                            "iteration limit reached", self.converged)
 
-    def _inv_distance(self):
-        """Return inverse distance."""
-        dist = self.geometry.distances
-        inv_distance = torch.zeros(*dist.shape)
-        inv_distance[dist.ne(0.0)] = 1.0 / dist[dist.ne(0.0)]
-        return inv_distance
+                # Restore the calculator back to its state prior to culling.
+                # Properties like `rho` and `eig_values` are not reset as it is
+                # assumed that they will be overridden in the next stage.
+                self._geometry, self._basis = c_geometry, c_basis
+                self.overlap, self.gamma = c_overlap, c_gamma
+                self.core_hamiltonian = c_hamiltonian_copy
 
-    def _second_order_ham(self, charge, shortgamma):
-        """Build second order Gamma and Fock."""
-        shift = self._update_shift(charge, shortgamma)
+        # Step 3: Final SCC cycle
+        # A single shot SCC cycle is now performed using the converged charges
+        # as the initial starting guess. As this is done within view of the
+        # auto-grad engine it will allow for gradients to be computed. This two
+        # step approach allows for gradients to be computed without having to
+        # track them through the full SCC cycle.
+        self._scc_cycle(q_converged)
 
-        if self.is_batch:
-            shift_mat = torch.stack(
-                [torch.unsqueeze(ishift, 1) + ishift for ishift in shift])
-        else:
-            shift_mat = shift.unsqueeze(1) + shift
+        # Calculate and return the total system energy, taking into account
+        # the entropy term as and when necessary.
+        return self.mermin_energy
 
-        # Return masked H & S
-        S = self.overlap[self.mask_batch, :self.max_orbs, :self.max_orbs]
-        H = self.hamiltonian[self.mask_batch, :self.max_orbs, :self.max_orbs]\
-            + 0.5 * S * shift_mat
+    def __cull(self, m):
+        self._basis = self.basis[~m]
+        self._geometry = self.geometry[~m]
+        n_orbs = torch.max(self.basis.n_orbitals)
+        n_res = self.basis.res_matrix_shape[-1]
+        self._overlap = self._overlap[~m, :n_orbs, :n_orbs]
+        self._core_hamiltonian = self._core_hamiltonian[~m, :n_orbs, :n_orbs]
+        self._gamma = self._gamma[~m, :n_res, :n_res]
 
-        return shift_mat, H, S
+    def _scc_cycle(self, q_in):
+        """
 
-    def _update_shift(self, charge, shortgamma):
-        """Update shift."""
-        if self.is_batch:
-            atomic_orbitals = self.basis.orbs_per_atom[self.mask_batch]
-            shift = torch.einsum(
-                "...j, ...jk-> ...k", (charge - self.q_zero_atomic)[self.mask_batch],
-                shortgamma[self.mask_batch]
-            )
-            return pack([torch.repeat_interleave(sh, ao)
-                         for sh, ao in zip(shift, atomic_orbitals)])
-        else:
-            shift = (charge - self.q_zero_atomic) @ shortgamma
-            return torch.repeat_interleave(shift, self.basis.orbs_per_atom)
+        Args:
+            q_in:
 
-    def short_gamma(self, format: str = 'atomic') -> Tensor:
-        """Return second order short gamma term.
+        Returns:
 
-        Arguments:
-            format: `atomic` or `orbital`, suggesting that short gamma are
-                atomic resolution or orbital resolved.
+        Notes:
+            This assignes!
 
         """
-        assert format in ('atomic', 'orbital'), \
-            f'{format} is not valid, please set atomic or orbital'
 
-        if not self.is_periodic:
-            inv_dist = self._inv_distance()
-        else:
-            raise NotImplementedError('PBC is not implemented®')
+        _ = ...
+        # Construct the shift matrix
+        shifts = torch.einsum(
+            '...i,...ij->...j', q_in - self.q_zero_res, self.gamma)
+        shifts = prepeat_interleave(shifts, self.basis.orbs_per_res)
+        shifts = (shifts[..., None] + shifts[..., None, :])
 
-        if format == 'atomic':
-            return inv_dist - self.gamma(self.geometry, self.basis)
-        else:
-            raise NotImplementedError('orbital resolved gamma is not implemented')
+        # Compute the second order Hamiltonian matrix
+        self._hamiltonian = self.core_hamiltonian + .5 * self.overlap * shifts
+
+        # Obtain the eigen-values/vectors via an eigen decomposition
+        self.eig_values, self.eig_vectors = eighb(
+            self.hamiltonian, self.overlap, **self._solver_settings)
+
+        # Scaled occupancy values
+        s_occs = torch.einsum(
+            '...i,...ji->...ji', torch.sqrt(self.occupancy), self.eig_vectors)
+
+        # Density matrix
+        self.rho = s_occs @ s_occs.transpose(-1, -2).conj()
+
+        # Compute and return the new
+        return _mulliken(self.rho, self.overlap, self.basis)
+
+    def reset(self):
+        """Reset all attributes and cached properties."""
+        self._overlap = None
+        self._core_hamiltonian = None
+        self._hamiltonian = None
+        self._gamma = None
+        self.converged = None
+
+        self.rho = None
+        self.eig_values = None
+        self.eig_vectors = None
+
+
 
 
 if __name__ == '__main__':
@@ -587,3 +662,136 @@ if __name__ == '__main__':
     assert torch.allclose(dftb2.q_final_atomic[1, :3], h2o)
     assert torch.allclose(dftb2.q_final_atomic[0, :5], ch4)
     dftb2(geob, basisb)
+
+    #
+    # def forward_2(self, cache: Optional[Dict[str, Any]] = None, **kwargs):
+    #     # Need to call constructors initially to ensure that they are first
+    #     # built within the purview of the graph.
+    #
+    #     # Should use a context manager to deal with multi system support.
+    #
+    #
+    #     # MCS: Manual Cull each Step
+    #     # RFC: Restore From Copy at the end of the SCF cycle
+    #     # STC: Save To Copy when culled
+    #     # NA: No special action/intervention required
+    #
+    #     # - geometry: MCS/RFC
+    #     # - basis: MCS/RFC
+    #     # - S: MCS/RFC
+    #     # - G: MCS/RFC
+    #     # - H0: MCS/RFC
+    #     # - q0: NA
+    #     # - n_electrons: NA
+    #     # - shifts/shift_mat: NA
+    #     # - H1: STC/RFC
+    #     # - e_values: STC/RFC
+    #     # - e_vectors: STC/RFC
+    #     if self.is_batch:
+    #         # `system_indices` is used to keep track of which systems are yet
+    #         # to converge.
+    #         system_indices = torch.arange(self.geometry._n_batch)
+    #
+    #         overlap_copy = self.overlap
+    #         gamma_copy = self.gamma
+    #         core_hamiltonian_copy = self.core_hamiltonian
+    #         geometry_copy = self.geometry
+    #         basis_copy = self.basis
+    #         hamiltonian_copy = torch.zeros_like(core_hamiltonian_copy)
+    #         eig_vectors_copy = torch.zeros(
+    #             self.basis.orbital_matrix_shape, dtype=self.overlap.dtype,
+    #             device=self.overlap.device)
+    #         eig_values_copy = torch.zeros_like(eig_vectors_copy[:, :, 0])
+    #
+    #
+    #
+    #
+    #
+    #     # Inform the mixer whether it will be operating on a single system or a
+    #     # batch of systems. This must be explicitly defined each time as it is
+    #     # not something that can be inferred from context.
+    #     self._mixer._is_batch = self.is_batch
+    #     self._mixer.reset()  # Reset the mixer ready for use
+    #
+    #     # During the self consistent charge cycle (SSC) systems are removed as
+    #     # and when they converge. As such, local copies of properties, such as
+    #     # the Hamiltonian and overlap matrices, are used here rather than the
+    #     # originals. This, means that systems can be "removed" from them without
+    #     # altering the true, user accessible, versions.
+    #
+    #     # Charges need to be atom and or shell resolved as required
+    #
+    #     q_current = self.q_zero_res
+    #
+    #     # Explain what this is doing........####
+    #     q_converged = torch.zeros_like(q_current)
+    #
+    #     for step in range(1, self.max_scc_iter + 1):
+    #         q_current = self._mixer(self._scc_cycle(q_current), q_current)
+    #         if self._mixer.converged:
+    #             break
+    #     else:
+    #         pass
+    #
+    #     for step in range(1, self.max_scc_iter + 1):
+    #         # Perform a single SCC step and apply the mixing algorithm.
+    #         q_current = self._mixer(self._scc_cycle(q_current), q_current)
+    #
+    #         if self._mixer.converged.any():  # Check for converged systems
+    #             # For single system calculations the SCC cycle terminates here
+    #             if not self.is_batch:
+    #                 q_converged[:] = q_current[:]
+    #                 break
+    #             # However, batch runs only stop when all systems have converged
+    #             else:
+    #                 c_mask = self._mixer.converged
+    #                 n_orbs = torch.max(self.basis.n_orbitals)
+    #                 idxs = system_indices[c_mask]
+    #
+    #                 q_converged[idxs, n_orbs] = q_current[c_mask, ...]
+    #
+    #                 # If all systems have converged then the end of the SCC
+    #                 # cycle has been reached.
+    #                 if torch.all(c_mask):
+    #                     break
+    #                 # Otherwise there are still systems left to converge. Thus
+    #                 # the converged systems will now be culled to avoid over-
+    #                 # converging them.
+    #                 else:
+    #                     system_indices = system_indices[~c_mask]
+    #                     self.__cull(c_mask)
+    #
+    #
+    #
+    #     # else:
+    #     #     raise NotImplementedError()
+    #     #     # convergence_mask = torch.tensor([True])
+    #     #     # raise ConvergenceError(
+    #     #     #     "SCC cycle failed to converge; iteration limit reached",
+    #     #     #     convergence_mask)
+    #
+    #     self._scc_cycle(self, q_converged)
+    #
+    #     if self.is_batch:
+    #         # Restore from copy
+    #         self.__restore(geometry_copy, basis_copy, overlap_copy, gamma_copy,
+    #                        core_hamiltonian_copy, hamiltonian_copy)
+
+# """Execute the SCC DFTB calculation.
+#
+# This method triggers the execution of the self-consistent-charge
+# density functional tight binding theory calculation. Once complete
+# this will return the total system energy.
+#
+# Args:
+#     cache: Currently, the `Dftb2` calculator does not make use of the
+#         `cache` argument.
+#
+# Returns:
+#     total_energy: total energy of the target system(s). If repulsive
+#         interactions are not considered, i.e. the repulsion feed is
+#         omitted, then this will be the band structure energy. If finite
+#         temperature is active then this will technically be the Mermin
+#         energy.
+#
+# """
