@@ -409,9 +409,9 @@ class Geometry:
 
         # Select the desired atomic numbers, positions and cells. Making sure
         # to remove any unnecessary padding.
-        new_zs = deflate(self.atomic_numbers[selector, ...])
-        new_pos = self.positions[selector, ...][..., :new_zs.shape[-1], :]
-        new_cells = self.cells[selector, ...] \
+        new_zs = deflate(self.atomic_numbers[selector])
+        new_pos = self.positions[selector][..., :new_zs.shape[-1], :]
+        new_cells = self.cells[selector] \
             if self.cells is not None else self.cells
 
         return self.__class__(new_zs, new_pos, new_cells)

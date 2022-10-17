@@ -14,9 +14,8 @@ be abandoned in favor of the other. Thus, all mixing instances require the
 user to explicitly state whether they are operating on a single system or on a
 batch of systems.
 """
-from typing import Union, Optional, List
+from typing import Union, Optional
 from numbers import Real
-from numpy import prod
 from abc import ABC, abstractmethod
 from functools import wraps
 import warnings
@@ -115,7 +114,7 @@ class _Mixer(ABC):
         return self._step_number
 
     @property
-    def converged(self) -> Tensor:
+    def converged(self) -> Union[Tensor, bool]:
         """Tensor of bools indicating convergence status of the system(s).
 
         A system is considered to have converged if the maximum absolute
@@ -128,7 +127,7 @@ class _Mixer(ABC):
         assert self._delta is not None, 'Nothing has been mixed'
 
         if not self._is_batch:  # If not in batch mode
-            return torch.tensor(self._delta.abs().max() < self.tolerance)
+            return self._delta.abs().max() < self.tolerance
         else:  # If operating in batch mode
             if self._delta.dim() == 1:
                 # Catch needed when operating on a batch of scalars.
@@ -217,7 +216,7 @@ class Simple(_Mixer):
         >>> for i in range(100):
         >>>     x = mixer(func(x), x)
         >>> print(x)
-        >>> # tensor([1., 3.])
+        tensor([1., 3.])
     """
 
     def __init__(self, is_batch: bool, mix_param: Real = 0.05,
@@ -264,26 +263,11 @@ class Simple(_Mixer):
             from all but the first step if desired.
 
         """
-
         # Increment the step number variable
         self._step_number += 1
 
         # Use the previous x_old value if none was specified
         x_old = self._x_old if x_old is None else x_old
-
-        # Safety check
-        if self._is_batch:
-            if self._is_batch and (x_new.shape[0] != x_old.shape[0]):
-                raise RuntimeError(
-                    'Batch dimension of x_new and x_old do not match; ensure '
-                    'calls are made to mixer.cull as needed.')
-            if x_new.shape[1:] != x_old.shape[1:]:
-                raise RuntimeError(
-                    f'Non-batch dimension mismatch encountered - x_new '
-                    f'{x_new.shape}, x_old {x_old.shape}; this may result '
-                    'from a failure provide a "new_size" arg to mixer.cull.'
-                )
-
 
         # Check all tensor dimensions match
         assert x_old.shape == x_new.shape,\
@@ -313,8 +297,7 @@ class Simple(_Mixer):
         self._step_number = 0
         self._delta = self._x_old = None
 
-    def cull(self, cull_list: Tensor,
-             new_size: Optional[Union[torch.Size, List[int]]] = None):
+    def cull(self, cull_list: Tensor):
         """Purge select systems form the mixer.
 
         This is useful when a subset of systems have converged during mixing.
@@ -322,29 +305,14 @@ class Simple(_Mixer):
         Arguments:
             cull_list: Tensor with booleans indicating which systems should be
                 culled (True) and which should remain (False).
-            new_size: New anticipated size of future inputs excluding the batch
-                dimension. This is used to allow superfluous padding values to
-                be removed form subsequent inputs.
 
         """
         assert self._is_batch, 'Cull only valid for batch mixing'
-
-        # If a new size has been provided then cut the properties down to size
-        # so to remove superfluous padding values.
-        if new_size is not None:
-            slicers = [slice(0, i) for i in new_size]
-        else:
-            slicers = (...,)
-
         # Invert cull_list, gather & reassign x_old and _delta so only those
         # marked False remain.
         cull = ~cull_list
-        self._x_old = self._x_old[[cull, *slicers]]
-        self._delta = self._delta[[cull, *slicers]]
-
-
-
-
+        self._x_old = self._x_old[cull]
+        self._delta = self._delta[cull]
 
 
 class Anderson(_Mixer):
@@ -466,10 +434,6 @@ class Anderson(_Mixer):
             number of previous steps to be use in the mixing process.
 
         """
-        # At some point a check should be put in place to give a more useful
-        # error when the user padding values from new inputs without providing
-        # a new_size argument during calls to the cull method.
-
         if self._step_number == 0:  # Call setup hook if this is the 1st cycle
             self._setup_hook(x_new)
             self._x_hist[0] = x_old.reshape(self._shape_in)
@@ -558,9 +522,7 @@ class Anderson(_Mixer):
         # Reshape the mixed system back into the expected shape and return it
         return x_mix.reshape(self._shape_out)
 
-    def cull(
-            self, cull_list: bool,
-            new_size: Optional[Union[torch.Size, List[int]]] = None):
+    def cull(self, cull_list: bool, size: Union[Tensor, float] = None):
         """Purge select systems form the mixer.
 
         This is useful when a subset of systems have converged during mixing.
@@ -568,31 +530,29 @@ class Anderson(_Mixer):
         Arguments:
             cull_list: Tensor with booleans indicating which systems should be
                 culled (True) and which should remain (False).
-            new_size: New anticipated size of future inputs excluding the batch
-                dimension. This is used to allow superfluous padding values to
-                be removed form subsequent inputs.
+            size: Maximum size of selected systems.
 
         Warning:
             The current size only works for 2D batch system.
 
         """
         assert self._is_batch, 'Cull only valid for batch mixing'
-
         # Invert the cull_list, gather & reassign self._delta self._x_hist &
         # self._f so only those marked False remain.
-
-        # Length of flattened arrays after factoring in the new size if given
-        l = prod(new_size) if new_size is not None else ...
-
         cull = ~cull_list
-        self._delta = self._delta[cull, :l]
-        self._f = self._f[:, cull, :l]
-        self._x_hist = self._x_hist[:, cull, :l]
+        _size = self._delta.shape[-1] if size is None else size
+        self._delta = self._delta[cull, :_size]
+        self._f = self._f[:, cull, :_size]
+        self._x_hist = self._x_hist[:, cull, :_size]
 
         # Adjust the the shapes accordingly
-        self._shape_in[0] -= list(cull_list).count(True)
-        self._shape_in[-1] = l
-        self._shape_out = [self._shape_in[0], *new_size]
+        n = list(cull_list).count(True)
+
+        self._shape_in[0] -= n
+        self._shape_out[0] -= n
+        if size is not None:
+            self._shape_in[1] = size
+            self._shape_out[1] = size
 
     def reset(self):
         """Reset mixer to its initial state."""

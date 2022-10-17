@@ -126,18 +126,6 @@ class Basis:
         self.orbital_matrix_shape: Size = n + Size([m3, m3])
 
     @property
-    def res_matrix_shape(self):
-        """``shell_matrix_shape`` if shell resolved else ``shell_resolved``"""
-        return (self.shell_matrix_shape if self.shell_resolved
-                else self.atomic_matrix_shape)
-
-    @property
-    def n_res(self):
-        """``n_shells`` if shell resolved else ``n_atoms``"""
-        return (self.n_shells if self.shell_resolved
-                else self.n_atoms)
-
-    @property
     def device(self) -> torch.device:
         """The device on which the `Basis` object resides."""
         return self.__device
@@ -198,12 +186,6 @@ class Basis:
         """Returns the number of shells on a given species."""
         return self._shells_per_species[species]
 
-    @property
-    def shells_per_atom(self) -> Tensor:
-        """Returns the number of shells associated with each atom."""
-        return self._shells_per_species[self.atomic_numbers.view(-1)
-                                        ].view_as(self.atomic_numbers)
-
     def to(self, device: device) -> 'Basis':
         """Returns a copy of the `Basis` instance on the specified device.
 
@@ -231,7 +213,7 @@ class Basis:
             raise IndexError(
                 'Basis slicing is only applicable to batches of systems.')
 
-        return self.__class__(deflate(self.atomic_numbers[selector, ...]),
+        return self.__class__(deflate(self.atomic_numbers[selector]),
                               self.shell_dict,
                               self.shell_resolved)
 

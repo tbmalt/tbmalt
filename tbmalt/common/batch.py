@@ -334,16 +334,3 @@ def unpack(tensor: Tensor, value: Any = 0, axis: int = 0) -> Tuple[Tensor]:
         tensors: Tuple of constituent tensors.
     """
     return tuple(deflate(i, value) for i in tensor.movedim(axis, 0))
-
-
-def prepeat_interleave(tensor, repeats, padding=0):
-    """Batch operable implementation of `torch.repeat_interleave`
-
-    Notes:
-        This is a work in progress and leaves much to be desired.
-    """
-    if tensor.ndim <= 1:
-        return tensor.repeat_interleave(repeats)
-    else:
-        return pack([i.repeat_interleave(j) for i, j in
-                     zip(tensor, repeats)], value=-padding)
