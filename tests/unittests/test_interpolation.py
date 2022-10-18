@@ -2,9 +2,10 @@
 import torch
 import numpy as np
 from torch.autograd import gradcheck
+from scipy.interpolate import CubicSpline as SciCubSpl
 import pytest
 from tests.test_utils import *
-from tbmalt.common.maths.interpolation import PolyInterpU
+from tbmalt.common.maths.interpolation import PolyInterpU, CubicSpline
 torch.set_default_dtype(torch.float64)
 
 data = np.loadtxt('tests/unittests/data/polyinterp/HH.dat')
@@ -97,6 +98,64 @@ def test_polyinterpu_grad(device):
                      device=device)
     y = torch.rand(10, device=device)
     fit = PolyInterpU(x, y)
+    xi = torch.tensor([0.6], requires_grad=True, device=device)
+    grad_is_safe = gradcheck(fit, xi, raise_exception=False)
+
+    assert grad_is_safe, 'Gradient stability test'
+
+
+###################################
+# TBMaLT.common.maths.CubicSpline #
+###################################
+def test_spline_cubic(device):
+    """Test distances interpolation in SK tables."""
+    # Test interpolation with one dimension yy value
+    xa0 = torch.linspace(0.2, 10, 50, device=device)
+    yb0 = torch.from_numpy(data[:, 9]).to(device)
+
+    fit0 = CubicSpline(xa0, yb0)
+    pred0 = fit0(torch.tensor([2.0, 2.5, 3.5, 4.9, 5.5, 6.2], device=device))
+
+    cs0 = SciCubSpl(xa0.cpu(), yb0.cpu())
+    ref0 = torch.from_numpy(cs0(np.array([2.0, 2.5, 3.5, 4.9, 5.5, 6.2])))
+
+    assert torch.allclose(ref0, pred0.cpu()), 'tolerance check'
+
+    # Check device: Device persistence check
+    check_dev = pred0.device == xa0.device
+    assert check_dev, 'Device of prediction is not consistent with input'
+
+    # Test interpolation with two dimension yy value
+    xa = torch.linspace(0.2, 10, 50, device=device)
+    yb = torch.from_numpy(data[:, [9, 19]]).to(device)
+
+    fit = CubicSpline(xa, yb)
+    pred = fit(torch.tensor([2.0, 2.5, 3.5, 4.9, 5.5, 6.2], device=device))
+
+    cs = SciCubSpl(xa.cpu(), yb.cpu())
+    ref = torch.from_numpy(cs(torch.tensor([2.0, 2.5, 3.5, 4.9, 5.5, 6.2])))
+
+    assert torch.allclose(ref, pred.cpu()), 'tolerance check'
+
+    # Check device: Device persistence check
+    check_dev = pred.device == xa.device
+    assert check_dev, 'Device of prediction is not consistent with input'
+
+
+@pytest.mark.grad
+def test_cubic_spline_grad(device):
+    """Gradient evaluation of cubic spline interpolation."""
+    xa0 = torch.linspace(0.2, 10, 50, device=device)
+    yb0 = torch.from_numpy(data[:, 9]).to(device)
+    fit = CubicSpline(xa0, yb0)
+    xi = torch.tensor([0.6], requires_grad=True, device=device)
+    grad_is_safe = gradcheck(fit, xi, raise_exception=False)
+
+    assert grad_is_safe, 'Gradient stability test'
+
+    xa = torch.linspace(0.2, 10, 50, device=device)
+    yb = torch.from_numpy(data[:, [9, 19]]).to(device)
+    fit = CubicSpline(xa, yb)
     xi = torch.tensor([0.6], requires_grad=True, device=device)
     grad_is_safe = gradcheck(fit, xi, raise_exception=False)
 
