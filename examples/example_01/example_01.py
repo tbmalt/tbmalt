@@ -4,7 +4,8 @@ import torch
 from tbmalt import Geometry, Basis
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2, Dftb1
-from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed, HubbardFeed
+from tbmalt.physics.dftb.feeds import ScipySkFeed, SkFeed, SkfOccupationFeed, HubbardFeed
+from tbmalt.common.maths.interpolation import CubicSpline
 
 from ase.build import molecule
 
@@ -22,14 +23,15 @@ torch.set_default_dtype(torch.float64)
 
 # Provide a list of moecules upon which TBMaLT is to be run
 # molecule_names = ['H2', 'CH4', 'C2H4', 'H2O']
-molecule_names = ['C2H4']
-
-# molecule_names = ['CH4', 'CH4']
+molecule_names = ['CH4', 'H2O']
+targets = {'q_final_atomic': torch.tensor(
+    [[4.251914, 0.937022, 0.937022, 0.937022, 0.937022],
+     [6.526248, 0.736876, 0.736876, 0, 0]])}
 
 # Provide information about the orbitals on each atom; this is keyed by atomic
 # numbers and valued by azimuthal quantum numbers like so:
 #   {Z₁: [ℓᵢ, ℓⱼ, ..., ℓₙ], Z₂: [ℓᵢ, ℓⱼ, ..., ℓₙ], ...}
-shell_dict = {1: [0], 6: [0, 1], 8: [0, 1]}
+shell_dict = {1: [0], 6: [0, 1], 7: [0, 1], 8: [0, 1]}
 
 # 1.2: Model settings
 # -------------------
@@ -37,7 +39,7 @@ shell_dict = {1: [0], 6: [0, 1], 8: [0, 1]}
 parameter_db_path = 'example_dftb_parameters.h5'
 
 # Should fitting be performed here?
-fit_model = False
+fit_model = True
 
 # Number of fitting cycles
 number_of_epochs = 10
@@ -76,10 +78,12 @@ species = torch.unique(geometry.atomic_numbers)
 species = species[species != 0].tolist()
 
 # Load the Hamiltonian feed model
-h_feed = ScipySkFeed.from_database(parameter_db_path, species, 'hamiltonian')
+h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
+                              interpolation=CubicSpline, requires_grad=True)
 
 # Load the overlap feed model
-s_feed = ScipySkFeed.from_database(parameter_db_path, species, 'overlap')
+s_feed = SkFeed.from_database(parameter_db_path, species, 'overlap',
+                              interpolation=CubicSpline, requires_grad=True)
 
 # Load the occupation feed object
 o_feed = SkfOccupationFeed.from_database(parameter_db_path, species)
@@ -91,11 +95,8 @@ u_feed = HubbardFeed.from_database(parameter_db_path, species)
 # ---------------------------------------------
 # As this is a minimal working example, no optional settings are provided to the
 # calculator object.
-# dftb_calculator = Dftb1(h_feed, s_feed, o_feed)
 dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed)
 dftb_calculator(geometry, basis)
-# a = Geometry.from_ase_atoms(molecule('CH4'))
-# b = Basis(a.atomic_numbers, basis.shell_dict)
 
 # dftb_calculator._geometry = geometry
 # dftb_calculator._basis = basis
@@ -103,80 +104,92 @@ dftb_calculator(geometry, basis)
 # #
 # dftb_calculator_o(geometry, basis)
 
+# Construct machine learning object
+lr = 0.002
+criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
+optimizer = getattr(torch.optim, 'Adam')(h_feed.variables + s_feed.variables, lr=lr)
+
+
+def load_target_data(molecules: Geometry, path: str
+                     ) -> Any:
+    """Load fitting target data.
+
+    Arguments:
+        molecules: Molecules for which fitting targets should be returned.
+        path: path to a database in which the fitting data can be found.
+
+    Returns:
+        targets: returns an <OBJECT> storing the data to which the model is to
+            be fitted.
+    """
+    # Data could be loaded from a json file or an hdf5 file; use your own
+    # discretion here. A dictionary might be the best object in which to store
+    # the target data.
+    raise NotImplementedError()
+
+
+def init_model():
+    raise NotImplementedError()
+
+
+if fit_model:
+    # targets = load_target_data(molecule_names, target_path)
+    pass
+
+
+# ================= #
+# STEP 3: Execution #
+# ================= #
+def calculate_losses(calculator: Calculator, targets: Any) -> Tensor:
+    """An example function computing the loss of the model.
+
+    Args:
+        calculator: calculator object via which target properties can be
+            calculated.
+        targets: target data to which the model should be fitted.
+
+    Returns:
+        loss: the computed loss.
+
+    """
+    return criterion(calculator.__getattribute__('q_final_atomic'),
+                     targets['q_final_atomic'])
+
+
+def update_model(calculator: Calculator):
+    """Update the model feed objects.
+
+    Arguments:
+        calculator: calculator object containing the feeds that are to be
+            updated.
+    """
+    raise NotImplementedError()
+
+
+if fit_model:
+    for epoch in range(1, number_of_epochs + 1):
+        # Perform the forwards operation
+        dftb_calculator(geometry, basis)
+
+        # Calculate the loss
+        loss = calculate_losses(dftb_calculator, targets)
+
+        optimizer.zero_grad()
+
+        # Invoke the autograd engine
+        loss.backward()
+
+        # Update the model
+        # update_model(dftb_calculator, loss)
+        optimizer.step()
+
+        # Reset the calculator
+        # dftb_calculator.reset()
+else:
+    # Run the DFTB calculation
+    dftb_calculator(geometry, basis)
 
 _ = ...
-#
-#
-# def load_target_data(molecules: Geometry, path: str
-#                      ) -> Any:
-#     """Load fitting target data.
-#
-#     Arguments:
-#         molecules: Molecules for which fitting targets should be returned.
-#         path: path to a database in which the fitting data can be found.
-#
-#     Returns:
-#         targets: returns an <OBJECT> storing the data to which the model is to
-#             be fitted.
-#     """
-#     # Data could be loaded from a json file or an hdf5 file; use your own
-#     # discretion here. A dictionary might be the best object in which to store
-#     # the target data.
-#     raise NotImplementedError()
-#
-#
-# if fit_model:
-#     targets = load_target_data(molecule_names, target_path)
-#
-# # ================= #
-# # STEP 3: Execution #
-# # ================= #
-# def calculate_losses(calculator: Calculator, targets: Any) -> Tensor:
-#     """An example function computing the loss of the model.
-#
-#     Args:
-#         calculator: calculator object via which target properties can be
-#             calculated.
-#         targets: target data to which the model should be fitted.
-#
-#     Returns:
-#         loss: the computed loss.
-#
-#     """
-#     raise NotImplementedError()
-#
-#
-# def update_model(calculator: Calculator):
-#     """Update the model feed objects.
-#
-#     Arguments:
-#         calculator: calculator object containing the feeds that are to be
-#             updated.
-#     """
-#     raise NotImplementedError()
-#
-#
-# if fit_model:
-#     for epoch in range(1, number_of_epochs + 1):
-#         # Perform the forwards operation
-#         dftb_calculator(geometry, basis)
-#
-#         # Calculate the loss
-#         loss = calculate_losses(dftb_calculator, targets)
-#
-#         # Invoke the autograd engine
-#         loss.backward()
-#
-#         # Update the model
-#         update_model(dftb_calculator, loss)
-#
-#         # Reset the calculator
-#         dftb_calculator.reset()
-# else:
-#     # Run the DFTB calculation
-#     dftb_calculator(geometry, basis)
-#
-# _ = ...
 
 # Tasks @FanGuozheng:
 #   i  ) Create a database that stores some properties to which the feed models

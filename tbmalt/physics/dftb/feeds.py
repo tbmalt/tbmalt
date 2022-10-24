@@ -19,6 +19,7 @@ from tbmalt.data.elements import chemical_symbols
 from tbmalt.ml import Feed
 from tbmalt.common.batch import pack, prepeat_interleave
 from tbmalt.common.maths.interpolation import PolyInterpU
+from tbmalt.common.maths.interpolation import CubicSpline as CSpline
 
 Tensor = torch.Tensor
 Array = np.ndarray
@@ -700,10 +701,11 @@ class SkFeed(IntegralFeed):
     def from_database(
             cls, path: str, species: List[int],
             target: Literal['hamiltonian', 'overlap'],
-            interpolation: Literal[CubicSpline, PolyInterpU] = PolyInterpU,
+            interpolation: Literal[CSpline, PolyInterpU] = PolyInterpU,
+            requires_grad: bool = False,
             block: bool = False,
             dtype: Optional[torch.dtype] = None,
-            device: Optional[torch.device] = None) -> 'ScipySkFeed':
+            device: Optional[torch.device] = None) -> 'SkFeed':
         r"""Instantiate instance from an HDF5 database of Slater-Koster files.
 
         Instantiate a `ScipySkFeed` instance for the specified elements using
@@ -768,6 +770,10 @@ class SkFeed(IntegralFeed):
                 off_sites[pair + key] = interpolation(
                     *clip(skf.grid, value), **params)
 
+                # Add variables for spline training
+                if interpolation is CSpline and requires_grad:
+                    off_sites[pair + key].abcd.requires_grad_(True)
+
             # The X-Y.skf file may not contain all information. Thus some info
             # must be loaded from its Y-X counterpart.
             if pair[0] != pair[1]:
@@ -776,6 +782,10 @@ class SkFeed(IntegralFeed):
                     if key[0] < key[1]:
                         off_sites[pair + (*reversed(key),)] = interpolation(
                             *clip(skf_2.grid, value), **params)
+
+                # Add variables for spline training
+                if interpolation is CSpline and requires_grad:
+                    off_sites[pair + key].abcd.requires_grad_(True)
 
             else:  # Construct the onsite interactions
                 # Repeated so theres 1 value per orbital not just per shell.
