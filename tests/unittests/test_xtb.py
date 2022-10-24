@@ -253,6 +253,7 @@ def test_feed_single(device: torch.device, name: str) -> None:
 
 def dftb_checker(
     calc_dftb: Calculator,
+    name: List[str],
     sample: List[Sample],
     dtype: torch.dtype,
     device: torch.device,
@@ -263,7 +264,7 @@ def dftb_checker(
         predicted = getattr(calc_dftb, i)
         ref = pack([s[i] for s in sample]).type(dtype).to(device)
         is_close = torch.allclose(predicted, ref, atol=atol, rtol=rtol)
-        assert is_close, f"Attribute {i} is in error for system {geometry}"
+        assert is_close, f"Attribute {i} is in error for system {name}"
         if isinstance(predicted, torch.Tensor):
             device_check = predicted.device == calc_dftb.device
             assert device_check, f"Attribute {i} was returned on the wrong device"
@@ -309,7 +310,7 @@ def test_dftb1_single(device: torch.device, name: str, skf_file) -> None:
     calc_dftb1 = Dftb1(h_feed, s_feed, o_feed, **kwargs)
     _ = calc_dftb1(geometry, basis)
 
-    dftb_checker(calc_dftb1, [sample], dtype, device)
+    dftb_checker(calc_dftb1, [name], [sample], dtype, device)
 
 
 @pytest.mark.parametrize("name1", sample_list)
@@ -335,7 +336,7 @@ def test_dftb1_batch(device: torch.device, name1: str, name2: str, skf_file) -> 
     calc_dftb1 = Dftb1(h_feed, s_feed, o_feed, **kwargs)
     _ = calc_dftb1(geometry, basis)
 
-    dftb_checker(calc_dftb1, [s1, s2], dtype, device)
+    dftb_checker(calc_dftb1, [name1, name2], [s1, s2], dtype, device)
 
 
 @pytest.mark.parametrize("name", sample_list)
@@ -362,7 +363,7 @@ def test_dftb2_single(device: torch.device, name: str, skf_file) -> None:
     calc_dftb2 = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
     _ = calc_dftb2(geometry, basis)
 
-    dftb_checker(calc_dftb2, [sample], dtype, device)
+    dftb_checker(calc_dftb2, [name], [sample], dtype, device)
 
 
 @pytest.mark.parametrize("name1", sample_list)
@@ -390,4 +391,4 @@ def test_dftb2_batch(device: torch.device, name1: str, name2: str, skf_file) -> 
     calc_dftb2 = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
     _ = calc_dftb2(geometry, basis)
 
-    dftb_checker(calc_dftb2, [s1, s2], dtype, device)
+    dftb_checker(calc_dftb2, [name1, name2], [s1, s2], dtype, device)
