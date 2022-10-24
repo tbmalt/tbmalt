@@ -229,6 +229,13 @@ class Dftb1(Calculator):
         return _mulliken(self.rho, self.overlap, self.basis, 'atom')
 
     @property
+    def dipole(self) -> Tensor:
+        """Return dipole moments."""
+        return torch.sum(
+            self.q_delta_atomic.unsqueeze(-1) * self.geometry.positions, -2
+        )
+
+    @property
     def q_delta_atomic(self):
         """Delta atomic populations"""
         return self.q_final_atomic - self.q_zero_atomic
