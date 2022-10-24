@@ -1,10 +1,10 @@
 from os.path import exists
-from typing import List, Dict, Any
+from typing import Any
 import torch
 from tbmalt import Geometry, Basis
 from tbmalt.ml.module import Calculator
-from tbmalt.physics.dftb import Dftb2, Dftb1
-from tbmalt.physics.dftb.feeds import ScipySkFeed, SkFeed, SkfOccupationFeed, HubbardFeed
+from tbmalt.physics.dftb import Dftb2
+from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.maths.interpolation import CubicSpline
 
 from ase.build import molecule
@@ -22,7 +22,6 @@ torch.set_default_dtype(torch.float64)
 # --------------------
 
 # Provide a list of moecules upon which TBMaLT is to be run
-# molecule_names = ['H2', 'CH4', 'C2H4', 'H2O']
 molecule_names = ['CH4', 'H2O']
 targets = {'q_final_atomic': torch.tensor(
     [[4.251914, 0.937022, 0.937022, 0.937022, 0.937022],
@@ -98,16 +97,12 @@ u_feed = HubbardFeed.from_database(parameter_db_path, species)
 dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed)
 dftb_calculator(geometry, basis)
 
-# dftb_calculator._geometry = geometry
-# dftb_calculator._basis = basis
-# dftb_calculator.forward_2()
-# #
-# dftb_calculator_o(geometry, basis)
-
 # Construct machine learning object
 lr = 0.002
 criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
-optimizer = getattr(torch.optim, 'Adam')(h_feed.variables + s_feed.variables, lr=lr)
+h_var = [val.abcd for key, val in h_feed.off_sites.items()]
+s_var = [val.abcd for key, val in s_feed.off_sites.items()]
+optimizer = getattr(torch.optim, 'Adam')(h_var + s_var, lr=lr)
 
 
 def load_target_data(molecules: Geometry, path: str
@@ -188,24 +183,3 @@ if fit_model:
 else:
     # Run the DFTB calculation
     dftb_calculator(geometry, basis)
-
-_ = ...
-
-# Tasks @FanGuozheng:
-#   i  ) Create a database that stores some properties to which the feed models
-#     can be fitted then add code to the `load_target_data` function to load it.
-#   ii ) Fill out the `calculate_losses` function so that it can return a final
-#     loss for the model.
-#   iii) Add the code required to update the feeds, this will require:
-#       1) adding code to the in `update_model`.
-#       2) swapping out the `ScipySkFeed` objects for `SkFeed` objects.
-#       3) adding a `requires_grad` argument to the `SkFeed` object's
-#          `from_database` method. Otherwise feeds loaded from HDF5 databases
-#          will never be trainable.
-#   iv ) Replace the Dftb1 calculator with the Dftb2 calculator once @mcsloy has
-#     refactored the Dftb2 code and resolved the issues associated with it. This
-#     step can be ignored for now.
-
-# Tasks @mcsloy:
-#   i  ) Refactor Dftb2 code to simplify it, resolve current issues, and ensure
-#     the SCC cycle is performed outside of the gradient.
