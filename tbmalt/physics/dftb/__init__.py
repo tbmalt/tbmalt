@@ -581,8 +581,6 @@ class Dftb2(Dftb1):
                             q_current = q_current[~c_mask, :n_res]
                             # Cull mixer
                             self.mixer.cull(c_mask, new_size=[n_res])
-                            print(self.geometry)
-
                 else:
                     self.converged = torch.tensor(False)
                     if not self.suppress_SCF_error:
