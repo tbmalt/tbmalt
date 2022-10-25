@@ -19,6 +19,7 @@ from tbmalt.data.elements import chemical_symbols
 from tbmalt.ml import Feed
 from tbmalt.common.batch import pack, prepeat_interleave
 from tbmalt.common.maths.interpolation import PolyInterpU
+from tbmalt.common.maths.interpolation import CubicSpline as CSpline
 
 Tensor = torch.Tensor
 Array = np.ndarray
@@ -454,8 +455,6 @@ class SkFeed(IntegralFeed):
                 # Retrieve/interpolate the integral spline, remove any NaNs
                 # due to extrapolation then convert to a torch tensor.
                 inte = self.off_sites[(z_1, z_2, i, j)](dist)
-                inte[inte != inte] = 0.0
-                inte = torch.tensor(inte, dtype=self.dtype, device=self.device)
 
                 # Apply the Slater-Koster transformation
                 inte = sub_block_rot(torch.tensor([l_1, l_2]), u_vec, inte)
@@ -520,7 +519,7 @@ class SkFeed(IntegralFeed):
 
         # Construct the tensor into which results are to be placed
         n_rows, n_cols = basis.n_orbs_on_species(torch.stack((z_1, z_2)))
-        blks = torch.empty(len(atomic_idx_1), n_rows, n_cols, dtype=self.dtype,
+        blks = torch.zeros(len(atomic_idx_1), n_rows, n_cols, dtype=self.dtype,
                            device=self.device)
 
         # Identify which are on-site blocks and which are off-site
@@ -538,172 +537,15 @@ class SkFeed(IntegralFeed):
 
         return blks
 
-    def _gather_off_site(self, l_pair, g_vecs,
-                         atom_pairs: Tensor,
-                         shell_pairs: Tensor,
-                         distances: Tensor,
-                         shell_dict: dict = None,
-                         isperiodic: bool = False,
-                         pbc: Tensor = True,
-                         **kwargs) -> Tensor:
-        """Retrieves integrals from a target feed in a batch-wise manner.
-        This convenience function mediates the integral retrieval operation by
-        splitting requests into batches of like types permitting fast batch-
-        wise retrieval.
-        Arguments:
-            atom_pairs: Atomic numbers of each atom pair.
-            shell_pairs: Shell numbers associated with each interaction. Note that
-                all shells must correspond to identical azimuthal numbers.
-            distances: Distances between the atom pairs.
-            isperiodic:
-
-        Keyword Arguments:
-            kwargs: Surplus `kwargs` are passed into calls made to the ``sk_feed``
-                object's `off_site` method.
-            atom_indices: Tensor: Indices of the atoms for which the integrals are
-                being evaluated. For a single system this should be a tensor of
-                size 2xN where the first & second row specify the indices of the
-                first and second atoms respectively. For a batch of systems an
-                extra row is appended to the start specifying which system the
-                atom pair is associated with.
-        Returns:
-            integrals: The relevant integral values evaluated at the specified
-                distances.
-        Notes:
-            Any kwargs specified will be passed through to the `integral_feed`
-            during function calls. Integrals can only be evaluated for a single
-            azimuthal pair at a time.
-        Warnings:
-            All shells specified in ``shell_pairs`` must have a common azimuthal
-            number / angular momentum. This is because shells with azimuthal
-            quantum numbers will return a different number of integrals, which
-            will cause size mismatch issues.
-        """
-        n_shell = kwargs.get('n_shell', False)
-        g_var = kwargs.get('g_var', None)
-
-        # Deal with periodic condtions
-        if isperiodic:
-            n_cell = distances.shape[0] if pbc else 1  # only central cell if NO PBC
-            atom_pairs = atom_pairs.repeat(n_cell, 1)
-            shell_pairs = shell_pairs.repeat(n_cell, 1)
-            distances = distances.flatten()
-            if g_var is not None:
-                g_var = g_var.repeat(distances.shape[0], 1)
-
-        integrals = None
-
-        # Identify all unique [atom|atom|shell|shell] sets.
-        as_pairs = torch.cat((atom_pairs, shell_pairs), -1)
-        as_pairs_u = as_pairs.unique(dim=0)
-
-        # If "atom_indices" was passed, make sure only the relevant atom indices
-        # get passed during each call.
-        atom_indices = kwargs.get("atom_indices", None)
-        if atom_indices is not None:
-            del kwargs["atom_indices"]
-
-            if isperiodic:
-                atom_indices = atom_indices.repeat(1, n_cell)
-
-        # Loop over each of the unique atom_pairs
-        for as_pair in as_pairs_u:
-            # Construct an index mask for gather & scatter operations
-            mask = torch.where((as_pairs == as_pair).all(1))[0]
-
-            # Select the required atom indices (if applicable)
-            ai_select = atom_indices.T[mask] if atom_indices is not None else None
-
-            # Retrieve the integrals & assign them to the "integrals" tensor. The
-            # SkFeed class requires all arguments to be passed in as keywords.
-            if n_shell:
-                shell_pair = [shell_dict[as_pair[0].tolist()][as_pair[2]],
-                              shell_dict[as_pair[1].tolist()][as_pair[3]]]
-            else:
-                shell_pair = as_pair[..., -2:]
-            var = None if g_var is None else g_var[mask]
-
-            shell_pair = shell_pair.tolist() if isinstance(shell_pair, Tensor) else shell_pair
-
-            off_sites = self.off_sites[(*as_pair[..., :-2].tolist(), *shell_pair)](distances[mask])
-
-            # The result tensor's shape cannot be *safely* identified prior to the
-            # first sk_feed call, thus it must be instantiated in the first loop.
-            if integrals is None:
-                integrals = torch.zeros(
-                    (len(as_pairs), off_sites.shape[-1]),
-                    dtype=distances.dtype,
-                    device=distances.device,
-                )
-
-            # If shells with differing angular momenta are provided then a shape
-            # mismatch error will be raised. However, the message given is not
-            # exactly useful thus the exception's message needs to be modified.
-            try:
-                integrals[mask] = off_sites
-            except RuntimeError as e:
-                if str(e).startswith("shape mismatch"):
-                    raise type(e)(
-                        f"{e!s}. This could be due to shells with mismatching "
-                        "angular momenta being provided."
-                    )
-
-        sk_data = sub_block_rot(l_pair, g_vecs, integrals)
-
-        # Return the resulting integrals
-        return sk_data
-
-    def _gather_on_site(self,atomic_numbers: Tensor, basis: Basis, **kwargs) -> Tensor:
-        """Retrieves on site terms from a target feed in a batch-wise manner.
-
-        This is a convenience function for retrieving on-site terms from an SKFeed
-        object.
-
-        Arguments:
-            geometry: `Geometry` instance associated with the target system(s).
-            basis: `Shell` instance associated with the target system(s).
-            sk_feed: The Slater-Koster feed entity responsible for providing the
-                requisite Slater Koster integrals and on-site terms.
-
-        Keyword Arguments:
-            kwargs: `kwargs` are passed into calls made to the ``sk_feed``
-                object's `off_site` method.
-
-        Returns:
-            on_site_values: On-site values associated with the specified systems.
-
-        Notes:
-            Unlike `_gather_of_site`, this function does not require the keyword
-            argument ``atom_indices`` as it can be constructed internally.
-        """
-        a_shape = basis.atomic_matrix_shape[:-1]
-        o_shape = basis.orbital_matrix_shape[:-1]
-
-        # Get the onsite values for all non-padding elements & pass on the indices
-        # of the atoms just in case they are needed by the SkFeed
-        mask = atomic_numbers.nonzero(as_tuple=True)
-
-        if "atom_indices" not in kwargs:
-            kwargs["atom_indices"] = torch.arange(atomic_numbers.shape[-1]).expand(a_shape)
-        print('self.on_sites', self.on_sites, 'atomic_numbers[mask]', atomic_numbers[mask])
-        # os_flat = torch.cat(self.on_sites[atomic_numbers[mask]]) #(atomic_numbers=atomic_numbers[mask], **kwargs))
-        os_flat = torch.cat([self.on_sites[(ian.tolist())] for ian in atomic_numbers])
-        # Pack results if necessary (code has no effect on single systems)
-        c = torch.unique_consecutive(
-            (basis.on_atoms != -1).nonzero().T[0], return_counts=True
-        )[1]
-
-        return pack(torch.split(os_flat, tuple(c))).view(o_shape)
-
-
     @classmethod
     def from_database(
             cls, path: str, species: List[int],
             target: Literal['hamiltonian', 'overlap'],
-            interpolation: Literal[CubicSpline, PolyInterpU] = PolyInterpU,
+            interpolation: Literal[CSpline, PolyInterpU] = PolyInterpU,
+            requires_grad: bool = False,
             block: bool = False,
             dtype: Optional[torch.dtype] = None,
-            device: Optional[torch.device] = None) -> 'ScipySkFeed':
+            device: Optional[torch.device] = None) -> 'SkFeed':
         r"""Instantiate instance from an HDF5 database of Slater-Koster files.
 
         Instantiate a `ScipySkFeed` instance for the specified elements using
@@ -768,6 +610,10 @@ class SkFeed(IntegralFeed):
                 off_sites[pair + key] = interpolation(
                     *clip(skf.grid, value), **params)
 
+                # Add variables for spline training
+                if interpolation is CSpline and requires_grad:
+                    off_sites[pair + key].abcd.requires_grad_(True)
+
             # The X-Y.skf file may not contain all information. Thus some info
             # must be loaded from its Y-X counterpart.
             if pair[0] != pair[1]:
@@ -776,6 +622,10 @@ class SkFeed(IntegralFeed):
                     if key[0] < key[1]:
                         off_sites[pair + (*reversed(key),)] = interpolation(
                             *clip(skf_2.grid, value), **params)
+
+                # Add variables for spline training
+                if interpolation is CSpline and requires_grad:
+                    off_sites[pair + key].abcd.requires_grad_(True)
 
             else:  # Construct the onsite interactions
                 # Repeated so theres 1 value per orbital not just per shell.

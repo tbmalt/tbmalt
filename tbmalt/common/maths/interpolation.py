@@ -2,6 +2,7 @@
 """Interpolation for general purpose."""
 from numbers import Real
 import torch
+from tbmalt.common.batch import pack
 Tensor = torch.Tensor
 
 
@@ -243,8 +244,10 @@ class CubicSpline(torch.nn.Module):
         self.xp = xx
         self.yp = yy.T if yy.dim() == 2 and yy.shape[0] == xx.shape[0] else yy
 
-        self.aa, self.bb, self.cc, self.dd = kwargs.get("abcd")\
-            if "abcd" in kwargs.keys() else CubicSpline.get_abcd(self.xp, self.yp)
+        aa, bb, cc, dd = kwargs.get("abcd") if "abcd" in kwargs.keys()\
+            else CubicSpline.get_abcd(self.xp, self.yp)
+
+        self.abcd = pack([aa, bb, cc, dd])
 
     def forward(self, xnew: Tensor):
         """Evaluate the polynomial linear or cubic spline.
@@ -268,11 +271,12 @@ class CubicSpline(torch.nn.Module):
     def cubic(self, xnew: Tensor, ind: Tensor):
         """Calculate cubic spline interpolation."""
         dx = xnew - self.xp[ind]
+        aa, bb, cc, dd = self.abcd
         interp = (
-            self.aa[..., ind]
-            + self.bb[..., ind] * dx
-            + self.cc[..., ind] * dx ** 2
-            + self.dd[..., ind] * dx ** 3
+            aa[..., ind]
+            + bb[..., ind] * dx
+            + cc[..., ind] * dx ** 2
+            + dd[..., ind] * dx ** 3
         )
 
         return interp.transpose(-1, 0) if interp.dim() > 1 else interp

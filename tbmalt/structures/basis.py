@@ -104,7 +104,7 @@ class Basis:
             [sum([l * 2 + 1 for l in v]) for v in shell_dict.values()])
 
         self.shell_ns, self.shell_ls = torch.tensor(
-            [(i, l) for n in self.atomic_numbers.view(-1) if n != 0
+            [(i, l) for n in self.atomic_numbers.reshape(-1) if n != 0
              for i, l in enumerate(shell_dict[int(n)])], **kwargs).T
 
         if batch:
@@ -157,7 +157,7 @@ class Basis:
     @property
     def orbs_per_atom(self) -> Tensor:
         """Number of orbitals associated with each atom."""
-        return self._orbitals_per_species[self.atomic_numbers.view(-1)
+        return self._orbitals_per_species[self.atomic_numbers.reshape(-1)
                                           ].view_as(self.atomic_numbers)
 
     @property
