@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Custom TBMaLT exceptions."""
+from typing import Optional
 import torch
 from torch import Tensor
 
@@ -35,10 +36,13 @@ class ConvergenceError(TbmaltError):
         failed to converge can be identified form the failure mask attribute.
     """
 
-    def __init__(self, msg: str, failure_mask: Tensor):
+    def __init__(self, msg: str, failure_mask: Optional[Tensor] = None):
         self.failure_mask = failure_mask
         super().__init__(msg)
 
     def __str__(self):
-        msk = torch.atleast_1d(self.failure_mask)
-        return self.msg + f' ({msk.count_nonzero()}/{(len(msk))} failed)'
+        if self.failure_mask is not None:
+            msk = torch.atleast_1d(self.failure_mask)
+            return self.msg + f' ({msk.count_nonzero()}/{(len(msk))} failed)'
+        else:
+            return self.msg

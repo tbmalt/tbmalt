@@ -2,6 +2,7 @@
 """Interpolation for general purpose."""
 from numbers import Real
 import torch
+from tbmalt.common.batch import pack
 Tensor = torch.Tensor
 
 
@@ -212,3 +213,108 @@ def poly_interp(xp: Tensor, yp: Tensor, rr: Tensor) -> Tensor:
             icl[_mask] = icl[_mask] - 1
 
     return yy
+
+
+class CubicSpline(torch.nn.Module):
+    """Polynomial natural cubic spline.
+
+    Arguments:
+        xx: Grid points for interpolation, 1D Tensor.
+        yy: Values to be interpolated at each grid point.
+
+    Keyword Args:
+        abcd: 0th, 1st, 2nd and 3rd order parameters in cubic spline.
+
+    References:
+        .. [wiki] https://en.wikipedia.org/wiki/Spline_(mathematics)
+    Examples:
+        >>> import tbmalt.common.maths.interpolation as interp
+        >>> import torch
+        >>> x = torch.linspace(1, 10, 10)
+        >>> y = torch.sin(x)
+        >>> fit = interp.Spline(x, y)
+        >>> fit(torch.tensor([3.5]))
+        >>> tensor([-0.3526])
+        >>> torch.sin(torch.tensor([3.5]))
+        >>> tensor([-0.3508])
+    """
+
+    def __init__(self, xx: Tensor, yy: Tensor, **kwargs):
+        super(CubicSpline, self).__init__()
+        self.xp = xx
+        self.yp = yy.T if yy.dim() == 2 and yy.shape[0] == xx.shape[0] else yy
+
+        aa, bb, cc, dd = kwargs.get("abcd") if "abcd" in kwargs.keys()\
+            else CubicSpline.get_abcd(self.xp, self.yp)
+
+        self.abcd = pack([aa, bb, cc, dd])
+
+    def forward(self, xnew: Tensor):
+        """Evaluate the polynomial linear or cubic spline.
+
+        Arguments:
+            xnew: Points to be interpolated.
+
+        Returns:
+            ynew: Interpolation values with given points.
+
+        """
+        # boundary condition of xnew
+        assert xnew.ge(self.xp[0]).all() and xnew.le(self.xp[-1]).all(),\
+            f'input value should in range ({self.xp[0]}, {self.xp[-1]})'
+
+        # get the nearest grid point index of distance in grid points
+        ind = torch.searchsorted(self.xp.detach(), xnew) - 1
+
+        return self.cubic(xnew, ind)
+
+    def cubic(self, xnew: Tensor, ind: Tensor):
+        """Calculate cubic spline interpolation."""
+        dx = xnew - self.xp[ind]
+        aa, bb, cc, dd = self.abcd
+        interp = (
+            aa[..., ind]
+            + bb[..., ind] * dx
+            + cc[..., ind] * dx ** 2
+            + dd[..., ind] * dx ** 3
+        )
+
+        return interp.transpose(-1, 0) if interp.dim() > 1 else interp
+
+    @staticmethod
+    def get_abcd(xp, yp):
+        """Get aa, bb, cc, dd parameters for cubic spline interpolation.
+
+        Arguments:
+            xp: Grid points for interpolation, 1D Tensor.
+            yp: Values to be interpolated at each grid point.
+
+        """
+        # get the first dim of x
+        nx = xp.shape[0]
+        device = xp.device
+        assert nx > 3  # the length of x variable must > 3
+
+        # get the difference between grid points
+        dxp = xp[1:] - xp[:-1]
+        dyp = yp[..., 1:] - yp[..., :-1]
+
+        # get b, c, d from reference website: step 3~9, first calculate c
+        A = torch.zeros(nx, nx, device=device)
+        A.diagonal()[1:-1] = 2 * (dxp[:-1] + dxp[1:])  # diag
+        A[torch.arange(nx - 1), torch.arange(nx - 1) + 1] = dxp  # off-diag
+        A[torch.arange(nx - 1) + 1, torch.arange(nx - 1)] = dxp
+        A[0, 0], A[-1, -1] = 1.0, 1.0
+        A[0, 1], A[1, 0] = 0.0, 0.0  # natural condition
+        A[-1, -2], A[-2, -1] = 0.0, 0.0
+
+        B = torch.zeros(*yp.shape, device=device)
+        B[..., 1:-1] = 3 * (dyp[..., 1:] / dxp[1:] - dyp[..., :-1] / dxp[:-1])
+        B = B.permute(1, 0) if B.dim() == 2 else B
+
+        cc = torch.linalg.lstsq(A, B)[0]
+        cc = cc.permute(1, 0) if cc.dim() == 2 else cc
+        bb = dyp / dxp - dxp * (cc[..., 1:] + 2 * cc[..., :-1]) / 3
+        dd = (cc[..., 1:] - cc[..., :-1]) / (3 * dxp)
+
+        return yp, bb, cc, dd
