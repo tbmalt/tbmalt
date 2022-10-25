@@ -16,158 +16,220 @@ from tests.test_utils import skf_file
 torch.set_default_dtype(torch.float64)
 
 
-@pytest.fixture
-def skf_file(tmpdir):
-    """Path to auorg-1-1 HDF5 database.
+def systems(device) -> List[Geometry]:
+    """Returns a selection of `Geometry` entities for testing.
 
-    This fixture downloads the auorg-1-1 Slater-Koster parameter set, converts
-    it to HDF5, and returns the path to the resulting database.
+    Currently returned systems are CH4, H2O, C2H6 and C2H2Au2S3. The last of
+    which is designed to ensure most possible interaction types are checked.
+
+    Arguments:
+        device: device onto which the `Geometry` objects should be placed.
+            [DEFAULT=None]
 
     Returns:
-         path: location of auorg-1-1 HDF5 database file.
-
-    Warnings:
-        This will fail i) without an internet connection, ii) if the auorg-1-1
-        parameter sets moves, or iii) it is used outside of a PyTest session.
-
+        geometries: A list of `Geometry` objects.
     """
-    # Link to the auorg-1-1 parameter set
-    link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+    CH4 = Geometry(torch.tensor([6, 1, 1, 1, 1], device=device),
+                   torch.tensor([
+                       [3.0, 3.0, 3.0],
+                       [3.6, 3.6, 3.6],
+                       [2.4, 3.6, 3.6],
+                       [3.6, 2.4, 3.6],
+                       [3.6, 3.6, 2.4]],
+                       device=device),
+                   torch.tensor(
+                       [[4.0, 4.0, 0.0],
+                        [0.0, 5.0, 0.0],
+                        [0.0, 0.0, 6.0]],
+                       device=device),
+                   units='angstrom')
 
-    # Elements of interest
-    elements = ['H', 'C', 'Au', 'S']
+    H2O = Geometry(torch.tensor([1, 8, 1], device=device),
+                   torch.tensor([
+                       [0.965, 0.075, 0.088],
+                       [1.954, 0.047, 0.056],
+                       [2.244, 0.660, 0.778]],
+                       device=device),
+                   torch.tensor(
+                       [[4.0, 0.0, 0.0],
+                        [0.0, 5.0, 0.0],
+                        [0.0, 0.0, 6.0]],
+                       device=device),
+                   units='angstrom')
 
-    # Download and extract the auorg parameter set to the temporary directory
-    urllib.request.urlretrieve(link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
-    with tarfile.open(path) as tar:
-        tar.extractall(tmpdir)
+    C2H6 = Geometry(torch.tensor([6, 6, 1, 1, 1, 1, 1, 1], device=device),
+                    torch.tensor([
+                       [0.949, 0.084, 0.020],
+                       [2.469, 0.084, 0.020],
+                       [0.573, 1.098, 0.268],
+                       [0.573, -0.638, 0.775],
+                       [0.573, -0.209, -0.982],
+                       [2.845, 0.376, 1.023],
+                       [2.845, 0.805, -0.735],
+                       [2.845, -0.931, -0.227]],
+                       device=device),
+                    torch.tensor(
+                       [[5.0, 0.0, 0.0],
+                        [0.0, 5.0, 0.0],
+                        [0.0, 4.0, 4.0]],
+                       device=device),
+                    units='angstrom')
 
-    # Select the relevant skf files and place them into an HDF5 database
-    skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-                 for i in elements for j in elements]
+    C2H2Au2S3 = Geometry(torch.tensor([1, 6, 16, 79, 16, 79, 16, 6, 1], device=device),
+                         torch.tensor([
+                             [+0.00, +0.00, +0.00],
+                             [-0.03, +0.83, +0.86],
+                             [-0.65, +1.30, +1.60],
+                             [+0.14, +1.80, +2.15],
+                             [-0.55, +0.42, +2.36],
+                             [+0.03, +2.41, +3.46],
+                             [+1.12, +1.66, +3.23],
+                             [+1.10, +0.97, +0.86],
+                             [+0.19, +0.93, +4.08]],
+                             device=device),
+                         torch.tensor(
+                             [[5.0, 0.0, 0.0],
+                              [0.0, 5.0, 0.0],
+                              [0.0, 0.0, 5.0]],
+                             device=device),
+                         units='angstrom')
 
-    for skf_file in skf_files:
-        Skf.read(skf_file).write(path := join(tmpdir, 'auorg.hdf5'))
+    return [CH4, H2O, C2H6, C2H2Au2S3]
 
-    return path
 
-# periodic test
+def hamiltonians(device):
+    matrices = []
+    path = join(dirname(__file__), 'data/skfeed')
+    for system in ['CH4', 'H2O', 'C2H6', 'C2H2Au2S3']:
+        matrices.append(torch.tensor(np.loadtxt(
+            join(path, f'{system}_pbc_H.csv'), delimiter=','),
+            device=device))
+    return matrices
+
+
+def overlaps(device):
+    matrices = []
+    path = join(dirname(__file__), 'data/skfeed')
+    for system in ['CH4', 'H2O', 'C2H6', 'C2H2Au2S3']:
+        matrices.append(torch.tensor(np.loadtxt(
+            join(path, f'{system}_pbc_S.csv'), delimiter=','),
+            device=device))
+    return matrices
+
 
 #########################################
 # tbmalt.physics.dftb.feeds.ScipySkFeed #
 #########################################
 
-
-def test_scipyskfeed_periodic_ch4_single(device, skf_file):
+# Single
+def test_scipyskfeed_pbc_single(skf_file: str, device):
     """ScipySkFeed matrix single system operability tolerance test"""
-    shell_dict = {1: [0], 6: [0, 1]}
+    b_def = {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
     H_feed = ScipySkFeed.from_database(
-        skf_file, [1, 6], 'hamiltonian', device=device)
+        skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
     S_feed = ScipySkFeed.from_database(
-        skf_file, [1, 6], 'overlap', device=device)
-    atomic_numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
-    positions = torch.tensor([[3., 3., 3.], [3.6, 3.6, 3.6], [2.4, 3.6, 3.6],
-                              [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
-    cells = torch.tensor([[4., 4., 0.], [0., 5., 0.], [0., 0., 6.]],
-                         device=device)
-    geo = Geometry(atomic_numbers, positions, cells, units='a')
-    cutoff = torch.tensor([9.98])
-    periodic = Periodic(geo, geo.cells, cutoff=cutoff)
-    H = H_feed.matrix(geo, Basis(geo.atomic_numbers, shell_dict), periodic)
-    S = S_feed.matrix(geo, Basis(geo.atomic_numbers, shell_dict), periodic)
-    check_1 = torch.allclose(H, H_CH4_ref, atol=1E-4)
-    check_2 = torch.allclose(S, S_CH4_ref, atol=1E-4)
-    assert check_1, 'ScipySkFeed H matrix outside of tolerance.'
-    assert check_2, 'ScipySkFeed S matrix outside of tolerance.'
+        skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
+    cutoff = torch.tensor([18.38])  # Au-Au pair has a large cutoff
+
+    for sys, H_ref, S_ref in zip(
+            systems(device), hamiltonians(device), overlaps(device)):
+        periodic = Periodic(sys, sys.cells, cutoff)
+        H = H_feed.matrix(sys, Basis(sys.atomic_numbers, b_def), periodic)
+        S = S_feed.matrix(sys, Basis(sys.atomic_numbers, b_def), periodic)
+
+        check_1 = torch.allclose(H, H_ref, atol=1E-3)
+        check_2 = torch.allclose(S, S_ref, atol=1E-3)
+        check_3 = H.device == device
+        assert check_1, f'ScipySkFeed H matrix outside of tolerance ({sys})'
+        assert check_2, f'ScipySkFeed S matrix outside of tolerance ({sys})'
+        assert check_3, 'ScipySkFeed.matrix returned on incorrect device'
 
 
-def test_skffeed_periodic_ch4_single(device, skf_file):
+# Batch
+def test_scipyskfeed_pbc_batch(skf_file: str, device):
+    """ScipySkFeed matrix batch operability tolerance test"""
+    H_feed = ScipySkFeed.from_database(
+        skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
+    S_feed = ScipySkFeed.from_database(
+        skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
+    cutoff = torch.tensor([18.38])
+
+    sys = reduce(lambda i, j: i+j, systems(device))
+    basis = Basis(sys.atomic_numbers,
+                  {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]})
+    periodic = Periodic(sys, sys.cells, cutoff)
+
+    H = H_feed.matrix(sys, basis, periodic)
+    S = S_feed.matrix(sys, basis, periodic)
+
+    check_1 = torch.allclose(H, pack(hamiltonians(device)), atol=1E-3)
+    check_2 = torch.allclose(S, pack(overlaps(device)), atol=1E-3)
+    check_3 = H.device == device
+
+    # Check that batches of size one do not cause problems
+    check_4 = (H_feed.matrix(sys[0:1], basis[0:1], Periodic(
+        sys[0:1], sys[0:1].cells, cutoff)).ndim == 3)
+
+    assert check_1, 'ScipySkFeed H matrix outside of tolerance (batch)'
+    assert check_2, 'ScipySkFeed S matrix outside of tolerance (batch)'
+    assert check_3, 'ScipySkFeed.matrix returned on incorrect device'
+    assert check_4, 'Failure to operate on batches of size "one"'
+
+
+#########################################
+# tbmalt.physics.dftb.feeds.SkFeed #
+#########################################
+
+# Single
+def test_skffeed_pbc_single(skf_file: str, device):
     """SkFeed matrix single system operability tolerance test"""
-    shell_dict = {1: [0], 6: [0, 1]}
+    b_def = {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
     H_feed = SkFeed.from_database(
-        skf_file, [1, 6], 'hamiltonian', device=device)
+        skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
     S_feed = SkFeed.from_database(
-        skf_file, [1, 6], 'overlap', device=device)
-    atomic_numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
-    positions = torch.tensor([[3., 3., 3.], [3.6, 3.6, 3.6], [2.4, 3.6, 3.6],
-                              [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
-    cells = torch.tensor([[4., 4., 0.], [0., 5., 0.], [0., 0., 6.]],
-                         device=device)
-    geo = Geometry(atomic_numbers, positions, cells, units='a')
-    cutoff = torch.tensor([9.98])
-    periodic = Periodic(geo, geo.cells, cutoff=cutoff)
-    H = H_feed.matrix(geo, Basis(geo.atomic_numbers, shell_dict), periodic)
-    S = S_feed.matrix(geo, Basis(geo.atomic_numbers, shell_dict), periodic)
-    check_1 = torch.allclose(H, H_CH4_ref, atol=1E-9)
-    check_2 = torch.allclose(S, S_CH4_ref, atol=1E-9)
-    assert check_1, 'SkFeed H matrix outside of tolerance.'
-    assert check_2, 'SkFeed S matrix outside of tolerance.'
+        skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
+    cutoff = torch.tensor([18.38])
+
+    for sys, H_ref, S_ref in zip(
+            systems(device), hamiltonians(device), overlaps(device)):
+        periodic = Periodic(sys, sys.cells, cutoff)
+        H = H_feed.matrix(sys, Basis(sys.atomic_numbers, b_def), periodic)
+        S = S_feed.matrix(sys, Basis(sys.atomic_numbers, b_def), periodic)
+
+        check_1 = torch.allclose(H, H_ref, atol=1E-9)
+        check_2 = torch.allclose(S, S_ref, atol=1E-9)
+        check_3 = H.device == device
+        assert check_1, f'SkFeed H matrix outside of tolerance ({sys})'
+        assert check_2, f'SkFeed S matrix outside of tolerance ({sys})'
+        assert check_3, 'SkFeed.matrix returned on incorrect device'
 
 
-H_CH4_ref = torch.tensor(
-       [[-5.051168718302566640e-01,  1.465366998749940068e-19,
-          0.000000000000000000e+00, -4.633270221481022855e-19,
-         -3.543467491831184812e-01, -3.552731186921234130e-01,
-         -3.552731186921234130e-01, -3.543467491831184257e-01],
-        [-1.465366998749940068e-19, -1.942936797945294114e-01,
-          0.000000000000000000e+00, -2.446615944544236953e-04,
-         -1.711060541438707006e-01, -1.705300217006210928e-01,
-          1.705300217006213981e-01, -1.711060541438705895e-01],
-        [ 0.000000000000000000e+00,  0.000000000000000000e+00,
-         -1.944182900442237016e-01,  0.000000000000000000e+00,
-         -1.710388914972194863e-01, -1.713041647154286973e-01,
-         -1.713041647154286973e-01,  1.710388914972195973e-01],
-        [ 4.633270221481022855e-19, -2.446615944544236953e-04,
-          0.000000000000000000e+00, -1.934379186795915917e-01,
-         -1.701979019501085877e-01,  1.686404485847345924e-01,
-         -1.686404485847342871e-01, -1.701979019501085044e-01],
-        [-3.543467491831184812e-01, -1.711060541438707006e-01,
-         -1.710388914972194863e-01, -1.701979019501085877e-01,
-         -2.388853960937410981e-01, -1.865983248258180904e-01,
-         -1.819001134203488135e-01, -1.813412148975178939e-01],
-        [-3.552731186921234130e-01, -1.705300217006210928e-01,
-         -1.713041647154286973e-01,  1.686404485847345924e-01,
-         -1.865983248258180904e-01, -2.388853960937410981e-01,
-         -9.343856924695721766e-02, -8.763494734368823535e-02],
-        [-3.552731186921234130e-01,  1.705300217006213981e-01,
-         -1.713041647154286973e-01, -1.686404485847342871e-01,
-         -1.819001134203488135e-01, -9.343856924695721766e-02,
-         -2.388853960937410981e-01, -8.520135062508535362e-02],
-        [-3.543467491831184257e-01, -1.711060541438705895e-01,
-          1.710388914972195973e-01, -1.701979019501085044e-01,
-         -1.813412148975178939e-01, -8.763494734368823535e-02,
-         -8.520135062508535362e-02, -2.388853960937410981e-01]])
+# Batch
+def test_skffeed_pbc_batch(skf_file: str, device):
+    """SkFeed matrix batch operability tolerance test"""
+    H_feed = SkFeed.from_database(
+        skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
+    S_feed = SkFeed.from_database(
+        skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
+    cutoff = torch.tensor([18.38])
 
-S_CH4_ref = torch.tensor(
-       [[ 1.000031443559250999e+00, -1.406074692442139044e-19,
-          0.000000000000000000e+00,  1.711006553453686926e-19,
-          4.600293233645404989e-01,  4.606513101978418900e-01,
-          4.606513101978417790e-01,  4.600293233645402768e-01],
-        [ 1.406074692442139044e-19,  9.999069391184520761e-01,
-          0.000000000000000000e+00,  1.536226648837873097e-04,
-          2.695749912031358275e-01,  2.692069272263438173e-01,
-         -2.692069272263442059e-01,  2.695749912031356055e-01],
-        [ 0.000000000000000000e+00,  0.000000000000000000e+00,
-          1.000038338137340999e+00,  0.000000000000000000e+00,
-          2.696612624178841844e-01,  2.698221245781374789e-01,
-          2.698221245781374789e-01, -2.696612624178841844e-01],
-        [-1.711006553453686926e-19,  1.536226648837873097e-04,
-          0.000000000000000000e+00,  9.994355633863640787e-01,
-          2.690818161696568178e-01, -2.680693457888900233e-01,
-          2.680693457888895237e-01,  2.690818161696567068e-01],
-        [ 4.600293233645404989e-01,  2.695749912031358275e-01,
-          2.696612624178841844e-01,  2.690818161696568178e-01,
-          1.000085370448456024e+00,  3.440968651637770770e-01,
-          3.403802412755939089e-01,  3.397225432074815199e-01],
-        [ 4.606513101978418900e-01,  2.692069272263438173e-01,
-          2.698221245781374789e-01, -2.680693457888900233e-01,
-          3.440968651637770770e-01,  1.000085370448456024e+00,
-          1.422093873117618867e-01,  1.361860077928115920e-01],
-        [ 4.606513101978417790e-01, -2.692069272263442059e-01,
-          2.698221245781374789e-01,  2.680693457888895237e-01,
-          3.403802412755939089e-01,  1.422093873117618867e-01,
-          1.000085370448456024e+00,  1.345064648732615109e-01],
-        [ 4.600293233645402768e-01,  2.695749912031356055e-01,
-         -2.696612624178841844e-01,  2.690818161696567068e-01,
-          3.397225432074815199e-01,  1.361860077928115920e-01,
-          1.345064648732615109e-01,  1.000085370448456024e+00]])
+    sys = reduce(lambda i, j: i+j, systems(device))
+    basis = Basis(sys.atomic_numbers,
+                  {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]})
+    periodic = Periodic(sys, sys.cells, cutoff)
+
+    H = H_feed.matrix(sys, basis, periodic)
+    S = S_feed.matrix(sys, basis, periodic)
+
+    check_1 = torch.allclose(H, pack(hamiltonians(device)), atol=1E-9)
+    check_2 = torch.allclose(S, pack(overlaps(device)), atol=1E-9)
+    check_3 = H.device == device
+
+    # Check that batches of size one do not cause problems
+    check_4 = (H_feed.matrix(sys[0:1], basis[0:1], Periodic(
+        sys[0:1], sys[0:1].cells, cutoff)).ndim == 3)
+
+    assert check_1, 'SkFeed H matrix outside of tolerance (batch)'
+    assert check_2, 'SkFeed S matrix outside of tolerance (batch)'
+    assert check_3, 'SkFeed.matrix returned on incorrect device'
+    assert check_4, 'Failure to operate on batches of size "one"'

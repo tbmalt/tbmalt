@@ -52,6 +52,12 @@ class PolyInterpU:
         # Device type of the tensor in this class
         self._device = xx.device
 
+        # Get grid points with external tail for index operation
+        self.n_tail = int(self.tail / self.grid_step)
+        self.xx_ext = torch.linspace(
+            self.xx[0], self.xx[-1] + self.tail,
+            len(self.xx) + self.n_tail, device=self._device)
+
         # Check xx is uniform & that len(xx) > n_interp
         dxs = xx[1:] - xx[:-1]
         check_1 = torch.allclose(dxs, torch.full_like(dxs, self.grid_step))
@@ -71,8 +77,8 @@ class PolyInterpU:
 
         """
         n_grid_point = len(self.xx)  # -> number of grid points
-        r_max = (n_grid_point - 1) * self.grid_step + self.tail
-        ind = torch.searchsorted(self.xx, rr).to(self._device)
+
+        ind = torch.searchsorted(self.xx_ext, rr).to(self._device)
         result = (
             torch.zeros(rr.shape, device=self._device)
             if self.yy.dim() == 1
@@ -100,7 +106,9 @@ class PolyInterpU:
         max_ind = n_grid_point - 1 + int(self.tail / self.grid_step)
         is_tail = ind.masked_fill(ind.ge(n_grid_point) * ind.le(max_ind), -1).eq(-1)
         if is_tail.any():
+            r_max = self.xx[-2] + self.tail
             dr = rr[is_tail] - r_max
+            dr = dr.unsqueeze(-1) if self.yy.dim() == 2 else dr
             ilast = n_grid_point
 
             # get grid points and grid point values

@@ -459,8 +459,8 @@ class Dftb2(Dftb1):
         """Gamma matrix"""
         if self._gamma is None:
             self._gamma = build_gamma_matrix(
-                self.geometry, self.basis, self.u_feed(self.basis),
-                self._gamma_scheme)
+                self.geometry, self.basis, self.periodic, self.coulomb,
+                self.u_feed(self.basis), self._gamma_scheme)
         return self._gamma
 
     @gamma.setter
