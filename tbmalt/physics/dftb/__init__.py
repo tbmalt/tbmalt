@@ -13,8 +13,10 @@ from tbmalt.physics.filling import (
     fermi_search, fermi_smearing, gaussian_smearing, entropy_term, aufbau_filling)
 from tbmalt.common.maths import eighb
 from tbmalt.physics.dftb.gamma import build_gamma_matrix
+from tbmalt.physics.dftb.properties import dos
 from tbmalt.common.batch import prepeat_interleave
 from tbmalt.common.maths.mixers import Simple, Anderson, _Mixer
+from tbmalt.data.units import energy_units
 from tbmalt import ConvergenceError
 
 from torch import Tensor
@@ -314,6 +316,47 @@ class Dftb1(Calculator):
     def mermin_energy(self):
         """Mermin free energy; i.e. E_total-TS"""
         return self.band_free_energy + self.repulsive_energy
+
+    @property
+    def eigenvalue(self):
+        """Eigenvalue in unit eV"""
+        return self.eig_values / energy_units['ev']
+
+    @property
+    def homo_lumo(self):
+        """Highest occupied and lowest unoccupied energy level in unit eV"""
+        # Number of occupied states
+        _nocc = (~(self.occupancy - 0 < 1E-10)).long().sum(-1)
+
+        # Mask of HOMO and LUMO
+        _mask = torch.zeros_like(
+            self.occupancy, device=self.device, dtype=self.dtype).scatter_(
+            -1, _nocc.unsqueeze(-1), 1).scatter_(
+                -1, _nocc.unsqueeze(-1) - 1, 1).bool()
+        homo_lumo = self.eigenvalue[_mask] if self.occupancy.ndim == 1 else\
+            self.eigenvalue[_mask].view(self.occupancy.size(0), -1)
+
+        return homo_lumo
+
+    @property
+    def dos_energy(self, ext=1, grid=1000):
+        """Energy distribution of (p)DOS in unit eV"""
+        e_min = torch.min(self.eigenvalue.detach(), dim=-1).values - ext
+        e_max = torch.max(self.eigenvalue.detach(), dim=-1).values + ext
+        dos_energy = torch.linspace(
+            e_min, e_max, grid, device=self.device, dtype=self.dtype) if\
+            self.occupancy.ndim == 1 else torch.stack([torch.linspace(
+                imin, imax, grid, device=self.device, dtype=self.dtype
+                ) for imin, imax in zip(e_min, e_max)])
+
+        return dos_energy
+
+    @property
+    def dos(self):
+        """Electronic density of states"""
+        # Mask to remove padding values.
+        _mask = torch.where(self.eigenvalue == 0, False, True)
+        return dos(self.eigenvalue, self.dos_energy, sigma=0.1, mask=_mask)
 
     def reset(self):
         """Reset all attributes and cached properties."""
