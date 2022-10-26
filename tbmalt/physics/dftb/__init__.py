@@ -426,7 +426,8 @@ class Dftb2(Dftb1):
         # If no pre-initialised was provided then construct one.
         if isinstance(mixer, str):
             mixer = {
-                'anderson': Anderson, 'simple': Simple}[mixer.lower()](False)
+                'anderson': Anderson, 'simple': Simple}[
+                mixer.lower()](False, **kwargs.get('mix_params', {}))
 
         self.mixer = mixer
 
@@ -565,6 +566,7 @@ class Dftb2(Dftb1):
 
                 for step in range(1, self.max_scc_iter + 1):
                     q_current = self.mixer(self._scc_cycle(q_current), q_current)
+
                     if (c_mask := self.mixer.converged).any():
 
                         idxs = system_indices[c_mask]
@@ -717,7 +719,7 @@ if __name__ == '__main__':
     from ase.build import molecule
 
     geom = Geometry.from_ase_atoms(molecule('CH4'))
-    basis = Basis(geom.atomic_numbers, shell_dict={1: [0], 6: [0, 1]}, shell_resolved=True)
+    basis = Basis(geom.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
 
     path = '../../../tests/unittests/data/io/skfdb.hdf5'
     h_feed = ScipySkFeed.from_database(path, [1, 6, 8], 'hamiltonian')
@@ -734,9 +736,11 @@ if __name__ == '__main__':
     h2o = torch.tensor([6.58558984371061, 0.70720507814469, 0.70720507814469])
 
     geos = Geometry.from_ase_atoms(molecule('H2O'))
-    geob = Geometry.from_ase_atoms([molecule('CH4'), molecule('H2O')])
-    basiss = Basis(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1], 8: [0, 1]}, shell_resolved=True)
-    basisb = Basis(geob.atomic_numbers, shell_dict={1: [0], 6: [0, 1], 8: [0, 1]}, shell_resolved=True)
+    geob = Geometry.from_ase_atoms([
+        molecule('H2O'), molecule('CH4'), molecule('CH3O'), molecule('OCHCHO'),
+        molecule('CH3CHO'), molecule('CH3CH2OCH3'), molecule('bicyclobutane')])
+    basiss = Basis(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1], 8: [0, 1]})
+    basisb = Basis(geob.atomic_numbers, shell_dict={1: [0], 6: [0, 1], 8: [0, 1]})
     h_feed = SkFeed.from_database(path, [1, 6, 8], 'hamiltonian')
     s_feed = SkFeed.from_database(path, [1, 6, 8], 'overlap')
 
@@ -746,10 +750,13 @@ if __name__ == '__main__':
     dftb2(geos, basiss)
     assert torch.allclose(dftb2.q_final_atomic, h2o)
 
-    dftb2 = Dftb2(h_feed, s_feed, o_feed, u_feed, filling_temp=0.0036749324)
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
+    dftb2 = Dftb2(h_feed, s_feed, o_feed, u_feed, filling_temp=0.0036749324, mix_params=mix_params)
+    dftb1 = Dftb1(h_feed, s_feed, o_feed, filling_temp=0.0036749324)
     dftb2(geos, basiss)
 
+    dftb1(geob, basisb)
+    print(dftb1.q_final_atomic)
     dftb2(geob, basisb)
-    assert torch.allclose(dftb2.q_final_atomic[1, :3], h2o)
-    assert torch.allclose(dftb2.q_final_atomic[0, :5], ch4)
-    dftb2(geob, basisb)
+    assert torch.allclose(dftb2.q_final_atomic[0, :3], h2o)
+    assert torch.allclose(dftb2.q_final_atomic[1, :5], ch4)

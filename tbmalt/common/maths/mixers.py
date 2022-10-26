@@ -505,7 +505,7 @@ class Anderson(_Mixer):
             # vectors by adding 1 + offset^2 to the diagonals of "a", see
             # equation 8.2 (Eyert)
             if self.diagonal_offset is not None:
-                a += (torch.eye(a.shape[-1], device=x_new.device)
+                a += a * (torch.eye(a.shape[-1], device=x_new.device)
                       * (self.diagonal_offset ** 2))
 
             # Solve for the coefficients. As torch.solve cannot solve for 1D
