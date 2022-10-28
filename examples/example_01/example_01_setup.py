@@ -1,7 +1,10 @@
 from os.path import join
 import urllib, tempfile, tarfile
-from tbmalt.io.skf import Skf
 
+import torch
+
+from tbmalt.io.skf import Skf
+torch.set_default_dtype(torch.float64)
 
 def skf_file(output_path: str):
     """Path to auorg-1-1 HDF5 database.

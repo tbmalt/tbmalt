@@ -221,6 +221,9 @@ class CubicSpline(torch.nn.Module):
     Arguments:
         xx: Grid points for interpolation, 1D Tensor.
         yy: Values to be interpolated at each grid point.
+        tail: Distance to smooth the tail.
+        delta_r: Delta distance for 1st, 2nd derivative.
+        n_interp: Number of total interpolation grid points for tail.
 
     Keyword Args:
         abcd: 0th, 1st, 2nd and 3rd order parameters in cubic spline.
@@ -239,10 +242,22 @@ class CubicSpline(torch.nn.Module):
         >>> tensor([-0.3508])
     """
 
-    def __init__(self, xx: Tensor, yy: Tensor, **kwargs):
+    def __init__(self, xx: Tensor, yy: Tensor, tail: Real = 1.0,
+                 delta_r: Real = 1E-5, n_interp: int = 8, **kwargs):
         super(CubicSpline, self).__init__()
+
+        assert yy.dim() <= 2, '"CubicSpline" only support 1D or 2D interpolation'
+
         self.xp = xx
         self.yp = yy.T if yy.dim() == 2 and yy.shape[0] == xx.shape[0] else yy
+
+        self.grid_step = xx[1] - xx[0]
+        self.delta_r = delta_r
+        self.tail = tail
+        self.n_interp = n_interp
+
+        # Device type of the tensor in this class
+        self._device = xx.device
 
         aa, bb, cc, dd = kwargs.get("abcd") if "abcd" in kwargs.keys()\
             else CubicSpline.get_abcd(self.xp, self.yp)
@@ -260,13 +275,50 @@ class CubicSpline(torch.nn.Module):
 
         """
         # boundary condition of xnew
-        assert xnew.ge(self.xp[0]).all() and xnew.le(self.xp[-1]).all(),\
-            f'input value should in range ({self.xp[0]}, {self.xp[-1]})'
+        assert xnew.ge(self.xp[0]).all(),\
+            f'input should not be less than {self.xp[0]}'
+        n_grid_point = len(self.xp)
+
+        result = (
+            torch.zeros(xnew.shape, device=self._device)
+            if self.yp.dim() == 1
+            else torch.zeros(xnew.shape[0], self.yp.shape[0], device=self._device)
+        )
 
         # get the nearest grid point index of distance in grid points
-        ind = torch.searchsorted(self.xp.detach(), xnew) - 1
+        ind = torch.searchsorted(self.xp.detach(), xnew)
 
-        return self.cubic(xnew, ind)
+        # interpolation of xx which not in the tail
+        if (ind <= n_grid_point).any():
+            _mask = ind <= n_grid_point
+            result[_mask] = self.cubic(xnew[_mask], ind[_mask] - 1)
+
+        r_max = (n_grid_point - 1) * self.grid_step + self.tail
+        max_ind = n_grid_point - 1 + int(self.tail / self.grid_step)
+        is_tail = ind.masked_fill(ind.ge(n_grid_point) * ind.le(max_ind), -1).eq(-1)
+
+        if is_tail.any():
+            dr = xnew[is_tail] - r_max
+            ilast = n_grid_point
+
+            # get grid points and grid point values
+            xa = (ilast - self.n_interp + torch.arange(
+                self.n_interp, device=self._device)) * self.grid_step
+            yb = self.yp[..., ilast - self.n_interp - 1: ilast - 1].T
+            xa = xa.repeat(dr.shape[0]).reshape(dr.shape[0], -1)
+            yb = yb.unsqueeze(0).repeat_interleave(dr.shape[0], dim=0)
+
+            # get derivative
+            y0 = poly_interp(xa, yb, xa[:, self.n_interp - 1] - self.delta_r)
+            y2 = poly_interp(xa, yb, xa[:, self.n_interp - 1] + self.delta_r)
+            y1 = self.yp[..., ilast - 2]
+            y1p = (y2 - y0) / (2.0 * self.delta_r)
+            y1pp = (y2 + y0 - 2.0 * y1) / (self.delta_r * self.delta_r)
+
+            result[is_tail] = poly_to_zero(
+                dr, -1.0 * self.tail, -1.0 / self.tail, y1, y1p, y1pp)
+
+        return result # self.cubic(xnew, ind - 1)
 
     def cubic(self, xnew: Tensor, ind: Tensor):
         """Calculate cubic spline interpolation."""
