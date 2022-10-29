@@ -1,11 +1,15 @@
 """
 Integral feeds for xTB.
 
-This module implements integral feeds derived from `tbmalt`s `IntegralFeed` 
+This module implements integral feeds derived from `tbmalt`s `IntegralFeed`
 class and the corresponding `matrix` method. The matrices are, however, not
-calculated as in `tbmalt` but are just taken from `dxtb`. The `dxtb` library is
-included as an external dependency in form of a (currently private) git
-submodule.
+calculated as in `tbmalt` but are just taken from `dxtb`. Hence, periodic
+boundary conditions are _not_ yet available for the xTB Hamiltonian.
+
+The `dxtb` library is included as an external dependency in form of a (currently
+private) git submodule. The submodule can be initialized with
+ - `git submodule init`
+ - `git submodule update`
 """
 
 from typing import Optional, Union
