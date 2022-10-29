@@ -6,8 +6,9 @@ from ase.build import molecule
 
 from tbmalt import Geometry, Basis
 from tbmalt.physics.dftb import Dftb1, Dftb2
-from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed, HubbardFeed
+from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.batch import pack
+from tbmalt.common.maths.interpolation import CubicSpline as CSpline
 
 from tests.test_utils import skf_file
 
@@ -23,8 +24,8 @@ torch.set_default_dtype(torch.float64)
 @pytest.fixture
 def shell_resolved_feeds(device, skf_file):
     species = [1, 6, 8, 79]
-    h_feed = ScipySkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
-    s_feed = ScipySkFeed.from_database(skf_file, species, 'overlap', device=device)
+    h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
+    s_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
 
     return h_feed, s_feed, o_feed
@@ -33,8 +34,20 @@ def shell_resolved_feeds(device, skf_file):
 @pytest.fixture
 def shell_resolved_feeds_scc(device, skf_file):
     species = [1, 6, 8]
-    h_feed = ScipySkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
-    s_feed = ScipySkFeed.from_database(skf_file, species, 'overlap', device=device)
+    h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
+    s_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
+    o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
+    u_feed = HubbardFeed.from_database(skf_file, species, device=device)
+
+    return h_feed, s_feed, o_feed, u_feed
+
+@pytest.fixture
+def shell_resolved_feeds_scc_spline(device, skf_file):
+    species = [1, 6, 8]
+    h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian',
+                                  interpolation=CSpline, device=device)
+    s_feed = SkFeed.from_database(skf_file, species, 'overlap',
+                                  interpolation=CSpline, device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file, species, device=device)
 
@@ -303,6 +316,46 @@ def CH3O(device):
         'band_free_energy': torch.tensor(-6.207927492700000E+00, device=device),
 
         'fermi_energy': torch.tensor(-1.503005759000000E-01, device=device)
+    }
+
+    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.0036749324}
+
+    return geometry, basis, results, kwargs
+
+
+def CH3O_scc(device):
+
+    geometry = Geometry.from_ase_atoms(molecule('CH3O'), device=device)
+
+    basis = Basis(geometry.atomic_numbers, {1: [0], 6: [0, 1], 8:[0, 1]})
+
+    results = {
+        'q_final_atomic': torch.tensor([
+            3.91394532144686, 6.31172685711984, 0.90943832879409,
+            0.93244474631961, 0.93244474631961], device=device),
+    }
+
+    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.0036749324}
+
+    return geometry, basis, results, kwargs
+
+
+def C_wire_scc(device):
+    """This test mainly tests polynomial to zero part."""
+    geometry = Geometry(
+        torch.tensor([6, 6, 6, 6, 6, 6, 6, 6], device=device),
+        torch.tensor([
+            [0.0, 0.0, 0.0], [0.0, 0.0, 0.8], [0.0, 0.0, 1.6], [0.0, 0.0, 2.4],
+            [0.0, 0.0, 3.2], [0.0, 0.0, 4.0], [0.0, 0.0, 4.8], [0.0, 0.0, 5.6]],
+            device=device), units='a')
+
+    basis = Basis(geometry.atomic_numbers, {6: [0, 1]})
+
+    results = {
+        'q_final_atomic': torch.tensor([
+            4.44894528173204, 3.88209725653184, 3.75703400352129, 3.91192345821486,
+            3.91192345821486, 3.75703400352129, 3.88209725653184, 4.44894528173204],
+            device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.0036749324}
@@ -732,7 +785,7 @@ def test_dftb1_batch(device, shell_resolved_feeds):
 def test_dftb2_single(device, shell_resolved_feeds_scc):
     h_feed, s_feed, o_feed, u_feed = shell_resolved_feeds_scc
 
-    systems = [H2_scc, H2O_scc, CH4_scc]
+    systems = [H2_scc, H2O_scc, CH4_scc, CH3O_scc, C_wire_scc]
 
     for system in systems:
         geometry, basis, results, kwargs = system(device)
@@ -745,7 +798,8 @@ def test_dftb2_single(device, shell_resolved_feeds_scc):
 def test_dftb2_batch(device, shell_resolved_feeds_scc):
     h_feed, s_feed, o_feed, u_feed = shell_resolved_feeds_scc
 
-    batches = [[H2_scc], [H2_scc, H2O_scc], [H2_scc, H2O_scc, CH4_scc]]
+    batches = [[H2_scc], [H2_scc, CH3O_scc, C_wire_scc],
+               [H2_scc, H2O_scc, CH4_scc, CH3O_scc, C_wire_scc]]
 
     for batch in batches:
         geometry, basis, results, kwargs = merge_systems(device, *batch)
@@ -755,3 +809,17 @@ def test_dftb2_batch(device, shell_resolved_feeds_scc):
 
         dftb2_helper(calculator, geometry, basis, results)
 
+
+def test_dftb2_batch_spl(device, shell_resolved_feeds_scc_spline):
+    h_feed, s_feed, o_feed, u_feed = shell_resolved_feeds_scc_spline
+
+    batches = [[H2_scc], [H2_scc, CH3O_scc, C_wire_scc],
+               [H2_scc, H2O_scc, CH4_scc, CH3O_scc, C_wire_scc]]
+
+    for batch in batches:
+        geometry, basis, results, kwargs = merge_systems(device, *batch)
+
+        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
+        assert calculator.device == device, 'Calculator is on the wrong device'
+
+        dftb2_helper(calculator, geometry, basis, results)
