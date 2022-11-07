@@ -1,6 +1,5 @@
 """Performs tests on functions in the tbmalt.common.maths.interpolator."""
 import torch
-import numpy as np
 from torch.autograd import gradcheck
 from scipy.interpolate import CubicSpline as SciCubSpl
 import pytest
@@ -140,6 +139,35 @@ def test_spline_cubic(device):
     # Check device: Device persistence check
     check_dev = pred.device == xa.device
     assert check_dev, 'Device of prediction is not consistent with input'
+
+
+def test_cubic_spline_tail(device):
+    """Test the smooth Hamiltonian to zero code in the tail."""
+    xa = torch.linspace(0.2, 10, 50, device=device)
+    yb = torch.from_numpy(data[:, 9]).to(device)
+    fit = CubicSpline(xa, yb)
+    pred = fit(torch.tensor([10.015547739468293], device=device))
+    ref = torch.tensor([1.2296664801642019E-005], device=device)
+
+    assert (abs(ref - pred) < 1E-11).all(), 'tolerance check'
+
+    # Check device: Device persistence check
+    check_dev = pred.device == xa.device
+    assert check_dev, 'Device of prediction is not consistent with input'
+
+    # Check tail
+    fit.tail = 0.6
+    pred2 = fit(torch.tensor([10.015547739468293], device=device))
+    ref2 = torch.tensor([9.760620707717307E-06], device=device)
+
+    assert (abs(ref2 - pred2) < 1E-12).all(), 'tolerance check'
+
+    # Check delta_r
+    fit.tail, fit.delta_r = 1.0, 1E-4
+    pred3 = fit(torch.tensor([10.015547739468293], device=device))
+    ref3 = torch.tensor([1.229666474639370E-05], device=device)
+
+    assert (abs(ref3 - pred3) < 1E-13).all(), 'tolerance check'
 
 
 @pytest.mark.grad
