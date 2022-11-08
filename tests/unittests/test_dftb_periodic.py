@@ -6,7 +6,7 @@ from ase.build import molecule
 from tbmalt import Geometry, Basis, Periodic
 from tbmalt.physics.dftb import Dftb1, Dftb2
 from tbmalt.physics.dftb.coulomb import Coulomb
-from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed, HubbardFeed
+from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.batch import pack
 
 from tests.test_utils import skf_file
@@ -20,10 +20,10 @@ torch.set_default_dtype(torch.float64)
 
 
 @pytest.fixture
-def shell_resolved_feeds_scc(device, skf_file):
+def feeds_scc(device, skf_file):
     species = [1, 6, 8]
-    h_feed = ScipySkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
-    s_feed = ScipySkFeed.from_database(skf_file, species, 'overlap', device=device)
+    h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
+    s_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file, species, device=device)
 
@@ -58,7 +58,7 @@ def H2_scc(device):
             device=device),
     }
 
-    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.0036749324}
+    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
 
     return geometry, basis, periodic, coulomb, results, kwargs
 
@@ -95,7 +95,7 @@ def CH4_scc(device):
             device=device),
     }
 
-    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.0036749324}
+    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
 
     return geometry, basis, periodic, coulomb, results, kwargs
 
@@ -129,7 +129,7 @@ def H2O_scc(device):
             device=device),
     }
 
-    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.0036749324}
+    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
 
     return geometry, basis, periodic, coulomb, results, kwargs
 
@@ -170,7 +170,7 @@ def C2H6_scc(device):
             device=device),
     }
 
-    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.0036749324}
+    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
 
     return geometry, basis, periodic, coulomb, results, kwargs
 
@@ -218,7 +218,7 @@ def dftb2_helper(calculator, geometry, basis, periodic, coulomb, results):
 
     def check_allclose(i):
         predicted = getattr(calculator, i)
-        is_close = torch.allclose(predicted, results[i], atol=1E-2)
+        is_close = torch.allclose(predicted, results[i], atol=1E-10)
         assert is_close, f'Attribute {i} is in error for system {geometry}'
         if isinstance(predicted, torch.Tensor):
             device_check = predicted.device == calculator.device
@@ -231,9 +231,11 @@ def test_dftb2_single(device, shell_resolved_feeds_scc):
     h_feed, s_feed, o_feed, u_feed = shell_resolved_feeds_scc
 
     systems = [H2_scc, H2O_scc, CH4_scc, C2H6_scc]
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
 
     for system in systems:
         geometry, basis, periodic, coulomb, results, kwargs = system(device)
+        kwargs['mix_params'] = mix_params
 
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
 

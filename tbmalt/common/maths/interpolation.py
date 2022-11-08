@@ -87,7 +87,7 @@ class PolyInterpU:
 
         # => polynomial fit
         if (ind <= n_grid_point).any():
-            _mask = ind <= n_grid_point
+            _mask = torch.logical_and(ind <= n_grid_point, ind != 0)
 
             # get the index of rr in grid points
             ind_last = (ind[_mask] + self.n_interp_r + 1).long()
@@ -113,7 +113,7 @@ class PolyInterpU:
 
             # get grid points and grid point values
             xa = (ilast - self.n_interp + torch.arange(
-                self.n_interp, device=self._device)) * self.grid_step
+                self.n_interp, device=self._device) - 1) * self.grid_step + self.xx[0]
             yb = self.yy[ilast - self.n_interp - 1: ilast - 1]
             xa = xa.repeat(dr.shape[0]).reshape(dr.shape[0], -1)
             yb = yb.unsqueeze(0).repeat_interleave(dr.shape[0], dim=0)
@@ -294,24 +294,29 @@ class CubicSpline(torch.nn.Module):
         )
 
         # get the nearest grid point index of distance in grid points
-        ind = torch.searchsorted(self.xp.detach(), xnew)
+        self.n_tail = int(self.tail / self.grid_step)
+        self.xx_ext = torch.linspace(
+            self.xp[0], self.xp[-1] + self.tail,
+            len(self.xp) + self.n_tail, device=self._device)
+        ind = torch.searchsorted(self.xx_ext.detach(), xnew)
 
         # interpolation of xx which not in the tail
         if (ind <= n_grid_point).any():
-            _mask = ind <= n_grid_point
+            _mask = torch.logical_and(ind <= n_grid_point, ind != 0)
             result[_mask] = self.cubic(xnew[_mask], ind[_mask] - 1)
 
-        r_max = (n_grid_point - 1) * self.grid_step + self.tail
+        r_max = self.xp[-2] + self.tail
         max_ind = n_grid_point - 1 + int(self.tail / self.grid_step)
         is_tail = ind.masked_fill(ind.ge(n_grid_point) * ind.le(max_ind), -1).eq(-1)
 
         if is_tail.any():
             dr = xnew[is_tail] - r_max
+            dr = dr.unsqueeze(-1) if self.yp.dim() == 2 else dr
             ilast = n_grid_point
 
             # get grid points and grid point values
             xa = (ilast - self.n_interp + torch.arange(
-                self.n_interp, device=self._device)) * self.grid_step
+                self.n_interp, device=self._device) - 1) * self.grid_step + self.xp[0]
             yb = self.yp[..., ilast - self.n_interp - 1: ilast - 1].T
             xa = xa.repeat(dr.shape[0]).reshape(dr.shape[0], -1)
             yb = yb.unsqueeze(0).repeat_interleave(dr.shape[0], dim=0)
