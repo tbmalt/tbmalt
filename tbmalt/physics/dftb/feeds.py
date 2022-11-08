@@ -885,7 +885,7 @@ class SkFeed(IntegralFeed):
             # Loop over the off-site interactions & construct the splines.
             for key, value in skf.__getattribute__(target).items():
                 off_sites[pair + key] = interpolation(
-                    *clip(skf.grid, value), **params)
+                    *clip(skf.grid.to(device), value.to(device)), **params)
 
                 # Add variables for spline training
                 if interpolation is CSpline and requires_grad:
@@ -898,7 +898,7 @@ class SkFeed(IntegralFeed):
                 for key, value in skf_2.__getattribute__(target).items():
                     if key[0] < key[1]:
                         off_sites[pair + (*reversed(key),)] = interpolation(
-                            *clip(skf_2.grid, value), **params)
+                            *clip(skf_2.grid.to(device), value.to(device)), **params)
 
                 # Add variables for spline training
                 if interpolation is CSpline and requires_grad:

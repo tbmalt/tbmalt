@@ -222,12 +222,12 @@ def gamma_exponential_pbc(geometry, basis, periodic, coulomb, hubbard_Us):
             an2 == i for i in gamma_element_list).bool().all():
         if z.ndim == 1:  # -> Single
             expcutoff = torch.cat([
-                gamma_cutoff[(*[ii.tolist(), jj.tolist()], 'cutoff')]
+                gamma_cutoff[(*[ii.tolist(), jj.tolist()], 'cutoff')].to(device)
                 for ii, jj in zip(an1, an2)]
                 ).unsqueeze(-2).repeat_interleave(r.size(-3), -2)
         else:  # -> Batch
             expcutoff = torch.stack([torch.cat([
-                gamma_cutoff[(*[ii.tolist(), jj.tolist()], 'cutoff')]
+                gamma_cutoff[(*[ii.tolist(), jj.tolist()], 'cutoff')].to(device)
                 for ii, jj in zip(an1[ibatch], an2[ibatch])])
                 for ibatch in range(an1.size(0))]
                 ).unsqueeze(-2).repeat_interleave(alpha.size(-2), dim=-2)

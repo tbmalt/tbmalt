@@ -141,7 +141,7 @@ def test_scipyskfeed_pbc_single(skf_file: str, device):
         skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
     S_feed = ScipySkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
-    cutoff = torch.tensor([18.38])  # Au-Au pair has a large cutoff
+    cutoff = torch.tensor([18.38], device=device)  # Au-Au pair has a large cutoff
 
     for sys, H_ref, S_ref in zip(
             systems(device), hamiltonians(device), overlaps(device)):
@@ -164,7 +164,7 @@ def test_scipyskfeed_pbc_batch(skf_file: str, device):
         skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
     S_feed = ScipySkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
-    cutoff = torch.tensor([18.38])
+    cutoff = torch.tensor([18.38], device=device)
 
     sys = reduce(lambda i, j: i+j, systems(device))
     basis = Basis(sys.atomic_numbers,
@@ -200,7 +200,7 @@ def test_skffeed_pbc_single(skf_file: str, device):
         skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
     S_feed = SkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
-    cutoff = torch.tensor([18.38])
+    cutoff = torch.tensor([18.38], device=device)
 
     for sys, H_ref, S_ref in zip(
             systems(device), hamiltonians(device), overlaps(device)):
@@ -223,7 +223,7 @@ def test_skffeed_pbc_batch(skf_file: str, device):
         skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
     S_feed = SkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
-    cutoff = torch.tensor([18.38])
+    cutoff = torch.tensor([18.38], device=device)
 
     sys = reduce(lambda i, j: i+j, systems(device))
     basis = Basis(sys.atomic_numbers,
