@@ -227,8 +227,8 @@ def dftb2_helper(calculator, geometry, basis, periodic, coulomb, results):
     check_allclose('q_final_atomic')
 
 
-def test_dftb2_single(device, shell_resolved_feeds_scc):
-    h_feed, s_feed, o_feed, u_feed = shell_resolved_feeds_scc
+def test_dftb2_single(device, feeds_scc):
+    h_feed, s_feed, o_feed, u_feed = feeds_scc
 
     systems = [H2_scc, H2O_scc, CH4_scc, C2H6_scc]
     mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
@@ -242,8 +242,8 @@ def test_dftb2_single(device, shell_resolved_feeds_scc):
         dftb2_helper(calculator, geometry, basis, periodic, coulomb, results)
 
 
-def test_dftb2_batch(device, shell_resolved_feeds_scc):
-    h_feed, s_feed, o_feed, u_feed = shell_resolved_feeds_scc
+def test_dftb2_batch(device, feeds_scc):
+    h_feed, s_feed, o_feed, u_feed = feeds_scc
 
     batches = [[H2_scc], [H2_scc, H2O_scc], [H2_scc, H2O_scc, CH4_scc],
                [H2_scc, H2O_scc, CH4_scc, C2H6_scc]]
