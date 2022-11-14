@@ -700,10 +700,8 @@ class SkFeed(IntegralFeed):
             for j, l_2 in enumerate(shells_2[o:], start=o):
                 # Retrieve/interpolate the integral spline, remove any NaNs
                 # due to extrapolation then convert to a torch tensor.
-                # inte = self.off_sites[(z_1, z_2, i, j)](dist.detach().cpu())
                 inte = self.off_sites[(z_1, z_2, i, j)](dist)
                 inte[inte != inte] = 0.0
-                inte = torch.tensor(inte, dtype=self.dtype, device=self.device)
 
                 # Apply the Slater-Koster transformation
                 inte = sub_block_rot(torch.tensor([l_1, l_2]), u_vec, inte)
