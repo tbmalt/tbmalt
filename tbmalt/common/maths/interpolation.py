@@ -6,6 +6,147 @@ from tbmalt.common.batch import pack
 Tensor = torch.Tensor
 
 
+class BicubInterp:
+    """Vectorized bicubic interpolation method designed for molecule.
+
+    The bicubic interpolation is designed to interpolate the integrals of
+    whole molecule. The xmesh, ymesh are the grid points and they are the same,
+    therefore only xmesh is needed here.
+    The zmesh is a 4D or 5D Tensor. The 1st, 2nd dimensions are corresponding
+    to the pairwise atoms in molecule. The 3rd and 4th are corresponding to
+    the xmesh and ymesh. The 5th dimension is optional. For bicubic
+    interpolation of single integral such as ss0 orbital, it is 4D Tensor.
+    For bicubic interpolation of all the orbital integrals, zmesh is 5D Tensor.
+
+    Arguments:
+        xmesh: 1D Tensor.
+        zmesh: 2D or 3D Tensor, 2D is for single integral with vrious
+            compression radii, 3D is for multi integrals.
+
+    References:
+        .. [wiki] https://en.wikipedia.org/wiki/Bicubic_interpolation
+    """
+
+    def __init__(self, xmesh: Tensor, zmesh: Tensor, hs_grid=None):
+        """Get interpolation with two variables."""
+        assert zmesh.shape[0] == zmesh.shape[1], \
+            f'1D and 2D shape of zmesh are not same, get {zmesh.shape[:2]}'
+        if zmesh.dim() < 2 or zmesh.dim() > 4:
+            raise ValueError(f'zmesh should be 2, 3, or 4D, get {zmesh.dim()}')
+        elif zmesh.dim() == 2:
+            assert hs_grid is None, 'Can not interpolate 2D tensor for hs_grid'
+            zmesh = zmesh.unsqueeze(0)  # -> single to batch
+        elif zmesh.dim() == 3:
+            if hs_grid is not None:
+                zmesh = zmesh.unsqueeze(-1)
+        elif zmesh.dim() == 4:
+            zmesh = zmesh.permute(-2, 0, 1, -1)
+
+        self.xmesh = xmesh
+        self.zmesh = zmesh
+        self.hs_grid = hs_grid
+
+    def __call__(self, xnew: Tensor, distances=None):
+        """Calculate bicubic interpolation.
+
+        Arguments:
+            xnew: The points to be interpolated for the first dimension and
+                second dimension.
+        """
+        self.xi = xnew if xnew.dim() == 2 else xnew.unsqueeze(0)
+        self.batch = self.xi.shape[0]  # number of atom pairs
+        self.arange_batch = torch.arange(self.batch)
+
+        if self.hs_grid is not None:  # with DFTB+ distance interpolation
+            assert distances is not None, 'if hs_grid is not None, '+ \
+                'distances is expected'
+
+            # original dims: vcr1, vcr2, distances, n_orb_pairs
+            # permute dims: distances, vcr1, vcr2, n_orb_pairs
+            zmesh = self.zmesh  #.permute([-2, 0, 1, -1])
+
+            ski = PolyInterpU(self.hs_grid, zmesh)
+            zmesh = ski(distances)
+        else:
+            zmesh = self.zmesh
+
+        coeff = torch.tensor([[1., 0., 0., 0.], [0., 0., 1., 0.],
+                              [-3., 3., -2., -1.], [2., -2., 1., 1.]])
+        coeff_ = torch.tensor([[1., 0., -3., 2.], [0., 0., 3., -2.],
+                               [0., 1., -2., 1.], [0., 0., -1., 1.]])
+
+        # get the nearest grid points, 1st and second neighbour indices of xi
+        self._get_indices()
+
+        # this is to transfer x to fraction and its square, cube
+        x_fra = (self.xi - self.xmesh[self.nx0]) / (
+            self.xmesh[self.nx1] - self.xmesh[self.nx0])
+        xmat = torch.stack([x_fra ** 0, x_fra ** 1, x_fra ** 2, x_fra ** 3])
+
+        # get four nearest grid points values, each will be: [natom, natom, 20]
+        f00, f10, f01, f11 = self._fmat0th(zmesh)
+
+        # get four nearest grid points derivative over x, y, xy
+        f02, f03, f12, f13, f20, f21, f30, f31, f22, f23, f32, f33 = \
+            self._fmat1th(zmesh, f00, f10, f01, f11)
+        fmat = torch.stack([torch.stack([f00, f01, f02, f03]),
+                            torch.stack([f10, f11, f12, f13]),
+                            torch.stack([f20, f21, f22, f23]),
+                            torch.stack([f30, f31, f32, f33])])
+
+        pdim = [2, 0, 1] if fmat.dim() == 3 else [2, 3, 0, 1]
+        a_mat = torch.matmul(torch.matmul(coeff, fmat.permute(pdim)), coeff_)
+
+        return torch.stack([torch.matmul(torch.matmul(
+            xmat[:, i, 0], a_mat[i]), xmat[:, i, 1]) for i in range(self.batch)])
+
+    def _get_indices(self):
+        """Get indices and repeat indices."""
+        self.nx0 = torch.searchsorted(self.xmesh, self.xi.detach()) - 1
+
+        # get all surrounding 4 grid points indices and repeat indices
+        self.nind = torch.tensor([ii for ii in range(self.batch)])
+        self.nx1 = torch.clamp(torch.stack([ii + 1 for ii in self.nx0]), 0,
+                               len(self.xmesh) - 1)
+        self.nx_1 = torch.clamp(torch.stack([ii - 1 for ii in self.nx0]), 0)
+        self.nx2 = torch.clamp(torch.stack([ii + 2 for ii in self.nx0]), 0,
+                               len(self.xmesh) - 1)
+
+    def _fmat0th(self, zmesh: Tensor):
+        """Construct f(0/1, 0/1) in fmat."""
+        f00 = zmesh[self.arange_batch, self.nx0[..., 0], self.nx0[..., 1]]
+        f10 = zmesh[self.arange_batch, self.nx1[..., 0], self.nx0[..., 1]]
+        f01 = zmesh[self.arange_batch, self.nx0[..., 0], self.nx1[..., 1]]
+        f11 = zmesh[self.arange_batch, self.nx1[..., 0], self.nx1[..., 1]]
+        return f00, f10, f01, f11
+
+    def _fmat1th(self, zmesh: Tensor, f00: Tensor, f10: Tensor, f01: Tensor,
+                 f11: Tensor):
+        """Get the 1st derivative of four grid points over x, y and xy."""
+        f_10 = zmesh[self.arange_batch, self.nx_1[..., 0], self.nx0[..., 1]]
+        f_11 = zmesh[self.arange_batch, self.nx_1[..., 0], self.nx1[..., 1]]
+        f0_1 = zmesh[self.arange_batch, self.nx0[..., 0], self.nx_1[..., 1]]
+        f02 = zmesh[self.arange_batch, self.nx0[..., 0], self.nx2[..., 1]]
+        f1_1 = zmesh[self.arange_batch, self.nx1[..., 0], self.nx_1[..., 1]]
+        f12 = zmesh[self.arange_batch, self.nx1[..., 0], self.nx2[..., 1]]
+        f20 = zmesh[self.arange_batch, self.nx2[..., 0], self.nx0[..., 1]]
+        f21 = zmesh[self.arange_batch, self.nx2[..., 0], self.nx1[..., 1]]
+
+        # calculate the derivative: (F(1) - F(-1) / (2 * grid)
+        fy00 = ((f01 - f0_1).T / (self.nx1[..., 1] - self.nx_1[..., 1])).T
+        fy01 = ((f02 - f00).T / (self.nx2[..., 1] - self.nx0[..., 1])).T
+        fy10 = ((f11 - f1_1).T / (self.nx1[..., 1] - self.nx_1[..., 1])).T
+        fy11 = ((f12 - f10).T / (self.nx2[..., 1] - self.nx0[..., 1])).T
+        fx00 = ((f10 - f_10).T / (self.nx1[..., 0] - self.nx_1[..., 0])).T
+        fx01 = ((f20 - f00).T / (self.nx2[..., 0] - self.nx0[..., 0])).T
+        fx10 = ((f11 - f_11).T / (self.nx1[..., 0] - self.nx_1[..., 0])).T
+        fx11 = ((f21 - f01).T / (self.nx2[..., 0] - self.nx0[..., 0])).T
+        fxy00, fxy11 = fy00 * fx00, fx11 * fy11
+        fxy01, fxy10 = fx01 * fy01, fx10 * fy10
+
+        return fy00, fy01, fy10, fy11, fx00, fx01, fx10, fx11, fxy00, fxy01, fxy10, fxy11
+
+
 class PolyInterpU:
     """Polynomial interpolation method with uniform grid points.
 
