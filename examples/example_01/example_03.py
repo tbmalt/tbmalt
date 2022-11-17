@@ -8,7 +8,7 @@ from tbmalt import Geometry, Basis
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
-from tbmalt.common.maths.interpolation import CubicSpline
+from tbmalt.common.maths.interpolation import BicubInterp, PolyInterpU
 from tbmalt.io.dataset import Dataloader
 
 from ase.build import molecule
@@ -37,14 +37,14 @@ shell_dict = {1: [0], 6: [0, 1], 7: [0, 1], 8: [0, 1]}
 # 1.2: Model settings
 # -------------------
 # Location at which the DFTB parameter set database is located
-parameter_db_path = 'example_dftb_parameters.h5'
+parameter_db_path = 'example_dftb_vcr.h5'
 
 # Should fitting be performed here?
 fit_model = True
 
 # Number of fitting cycles, number of batch size each cycle
 number_of_epochs = 20
-n_batch = 100
+n_batch = 200
 
 # Location of a file storing the properties that will be fit to.
 target_path = './dataset.h5'
@@ -109,11 +109,11 @@ species = species[species != 0].tolist()
 
 # Load the Hamiltonian feed model
 h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation=CubicSpline, requires_grad=True)
+                              interpolation=BicubInterp, requires_grad=True)
 
 # Load the overlap feed model
 s_feed = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation=CubicSpline, requires_grad=True)
+                              interpolation=BicubInterp, requires_grad=True)
 
 # Load the occupation feed object
 o_feed = SkfOccupationFeed.from_database(parameter_db_path, species)
@@ -128,11 +128,12 @@ u_feed = HubbardFeed.from_database(parameter_db_path, species)
 dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed)
 
 # Construct machine learning object
-lr = 0.01
+lr = 0.05
 criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
-h_var = [val.abcd for key, val in h_feed.off_sites.items()]
-s_var = [val.abcd for key, val in s_feed.off_sites.items()]
-optimizer = getattr(torch.optim, 'Adam')(h_var + s_var, lr=lr)
+comp_r = torch.ones(dataloder.dataset['atomic_numbers'].shape) * 3.5
+comp_r.requires_grad_(True)
+ml_params = {'compression_radii': comp_r}
+optimizer = getattr(torch.optim, 'Adam')([comp_r], lr=lr)
 
 
 # ================= #
@@ -175,12 +176,13 @@ if fit_model:
     for epoch in range(number_of_epochs):
 
         data = dataloder[indice[epoch % len(indice)]]
+        this_cr = comp_r[indice[epoch % len(indice)]]
 
         geometry = Geometry(data['atomic_numbers'], data['positions'], units='a')
         basis = Basis(geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
         # Perform the forwards operation
-        dftb_calculator(geometry, basis)
+        dftb_calculator(geometry, basis, ml_params=ml_params)
 
         # Calculate the loss
         loss = calculate_losses(dftb_calculator, data)

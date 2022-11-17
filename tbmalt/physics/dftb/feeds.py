@@ -13,12 +13,12 @@ import torch
 
 from tbmalt import Geometry, Basis
 from tbmalt.ml.integralfeeds import IntegralFeed
-from tbmalt.io.skf import Skf
+from tbmalt.io.skf import Skf, VCRSkf
 from tbmalt.physics.dftb.slaterkoster import sub_block_rot
 from tbmalt.data.elements import chemical_symbols
 from tbmalt.ml import Feed
 from tbmalt.common.batch import pack, prepeat_interleave
-from tbmalt.common.maths.interpolation import PolyInterpU
+from tbmalt.common.maths.interpolation import PolyInterpU, BicubInterp
 from tbmalt.common.maths.interpolation import CubicSpline as CSpline
 
 Tensor = torch.Tensor
@@ -384,6 +384,7 @@ class SkFeed(IntegralFeed):
     """
     def __init__(self, on_sites: Dict[int, Tensor],
                  off_sites: Dict[Tuple[int, int, int, int], CubicSpline],
+                 interpolation: Literal[CSpline, PolyInterpU, BicubInterp],
                  to_cpu: bool, block: bool,
                  dtype: Optional[torch.dtype] = None,
                  device: Optional[torch.device] = None):
@@ -401,13 +402,14 @@ class SkFeed(IntegralFeed):
         super().__init__(temp.dtype if dtype is None else dtype,
                          temp.device if device is None else device)
 
+        self.interpolation = interpolation
         self.to_cpu = to_cpu
         self.block = block
         self.on_sites = on_sites
         self.off_sites = off_sites
 
     def _off_site_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-                         geometry: Geometry, basis: Basis) -> Tensor:
+                         geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
         """Compute atomic interaction blocks (off-site only).
         Constructs the off-site atomic blocks using Slater-Koster integral
         tables.
@@ -434,6 +436,9 @@ class SkFeed(IntegralFeed):
                     - geometry.positions[atomic_idx_1.T])
         dist = torch.linalg.norm(dist_vec, dim=-1)
         u_vec = (dist_vec.T / dist).T
+        if self.interpolation is BicubInterp:
+            cr = kwargs.get('ml_params')['compression_radii']
+            cr = torch.stack([cr[atomic_idx_1.T], cr[atomic_idx_2.T]]).T
 
         # Work out the width of each sub-block then use it to get the row and
         # column index slicers for placing sub-blocks into their atom-blocks.
@@ -454,7 +459,10 @@ class SkFeed(IntegralFeed):
             for j, l_2 in enumerate(shells_2[o:], start=o):
                 # Retrieve/interpolate the integral spline, remove any NaNs
                 # due to extrapolation then convert to a torch tensor.
-                inte = self.off_sites[(z_1, z_2, i, j)](dist)
+                if self.interpolation is BicubInterp:
+                    inte = self.off_sites[(z_1, z_2, i, j)](cr, dist)
+                else:
+                    inte = self.off_sites[(z_1, z_2, i, j)](dist)
 
                 # Apply the Slater-Koster transformation
                 inte = sub_block_rot(torch.tensor([l_1, l_2]), u_vec, inte)
@@ -530,7 +538,8 @@ class SkFeed(IntegralFeed):
 
         if any(~on_site):  # Then the off-site blocks
             blks[~on_site] = self._off_site_blocks(
-                atomic_idx_1[~on_site], atomic_idx_2[~on_site], geometry, basis)
+                atomic_idx_1[~on_site], atomic_idx_2[~on_site],
+                geometry, basis, **kwargs)
 
         if flip:  # If the atoms were switched, then a transpose is required.
             blks = blks.transpose(-1, -2)
@@ -541,7 +550,7 @@ class SkFeed(IntegralFeed):
     def from_database(
             cls, path: str, species: List[int],
             target: Literal['hamiltonian', 'overlap'],
-            interpolation: Literal[CSpline, PolyInterpU] = PolyInterpU,
+            interpolation: Literal[CSpline, PolyInterpU, BicubInterp] = PolyInterpU,
             requires_grad: bool = False,
             block: bool = False,
             dtype: Optional[torch.dtype] = None,
@@ -590,7 +599,7 @@ class SkFeed(IntegralFeed):
             # Removes leading zeros from the sk data which may cause errors
             # when fitting the CubicSpline.
             start = torch.nonzero(y.sum(0), as_tuple=True)[0][0]
-            return x[start:], y[:, start:].T  # Transpose here to save effort
+            return x[start:], y[:, start:].transpose(0, 1)
 
         # Ensure a valid target is selected
         if target not in ['hamiltonian', 'overlap']:
@@ -604,15 +613,23 @@ class SkFeed(IntegralFeed):
         # The species list must be sorted to ensure that the lowest atomic
         # number comes first in the species pair.
         for pair in combinations_with_replacement(sorted(species), 2):
-            skf = Skf.read(path, pair)
+
+            skf = Skf.read(path, pair) if interpolation is not BicubInterp else\
+                VCRSkf.read(path, pair)
+
             # Loop over the off-site interactions & construct the splines.
             for key, value in skf.__getattribute__(target).items():
-                off_sites[pair + key] = interpolation(
-                    *clip(skf.grid, value), **params)
 
-                # Add variables for spline training
-                if interpolation is CSpline and requires_grad:
-                    off_sites[pair + key].abcd.requires_grad_(True)
+                if interpolation is BicubInterp:
+                    off_sites[pair + key] = interpolation(
+                        skf.compression_radii, value.transpose(0, 1), skf.grid, **params)
+                else:
+                    off_sites[pair + key] = interpolation(
+                        *clip(skf.grid, value), **params)
+
+                    # Add variables for spline training
+                    if interpolation is CSpline and requires_grad:
+                        off_sites[pair + key].abcd.requires_grad_(True)
 
             # The X-Y.skf file may not contain all information. Thus some info
             # must be loaded from its Y-X counterpart.
@@ -637,7 +654,7 @@ class SkFeed(IntegralFeed):
 
                 on_sites[pair[0]] = on_sites_vals
 
-        return cls(on_sites, off_sites, to_cpu, block, dtype, device)
+        return cls(on_sites, off_sites, interpolation, to_cpu, block, dtype, device)
 
     def __str__(self):
         elements = ', '.join([

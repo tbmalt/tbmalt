@@ -7,68 +7,56 @@ Tensor = torch.Tensor
 
 
 class BicubInterp:
-    """Vectorized bicubic interpolation method designed for molecule.
+    """Bicubic interpolation method.
 
-    The bicubic interpolation is designed to interpolate the integrals of
-    whole molecule. The xmesh, ymesh are the grid points and they are the same,
-    therefore only xmesh is needed here.
-    The zmesh is a 4D or 5D Tensor. The 1st, 2nd dimensions are corresponding
-    to the pairwise atoms in molecule. The 3rd and 4th are corresponding to
-    the xmesh and ymesh. The 5th dimension is optional. For bicubic
-    interpolation of single integral such as ss0 orbital, it is 4D Tensor.
-    For bicubic interpolation of all the orbital integrals, zmesh is 5D Tensor.
+    The bicubic interpolation is designed to interpolate the integrals with
+    given compression radii or distances.
 
     Arguments:
-        xmesh: 1D Tensor.
-        zmesh: 2D or 3D Tensor, 2D is for single integral with vrious
+        compr: Grid points for interpolation, 1D Tensor.
+        zmesh: 2D, 3D or 4D Tensor, 2D is for single integral with various
             compression radii, 3D is for multi integrals.
 
     References:
         .. [wiki] https://en.wikipedia.org/wiki/Bicubic_interpolation
     """
 
-    def __init__(self, xmesh: Tensor, zmesh: Tensor, hs_grid=None):
-        """Get interpolation with two variables."""
-        assert zmesh.shape[0] == zmesh.shape[1], \
-            f'1D and 2D shape of zmesh are not same, get {zmesh.shape[:2]}'
+    def __init__(self, compr: Tensor, zmesh: Tensor, hs_grid=None):
+        assert zmesh.shape[-2] == zmesh.shape[-2], \
+            f'size of last two dimension of zmesh are not same'
         if zmesh.dim() < 2 or zmesh.dim() > 4:
             raise ValueError(f'zmesh should be 2, 3, or 4D, get {zmesh.dim()}')
-        elif zmesh.dim() == 2:
-            assert hs_grid is None, 'Can not interpolate 2D tensor for hs_grid'
-            zmesh = zmesh.unsqueeze(0)  # -> single to batch
-        elif zmesh.dim() == 3:
-            if hs_grid is not None:
-                zmesh = zmesh.unsqueeze(-1)
-        elif zmesh.dim() == 4:
-            zmesh = zmesh.permute(-2, 0, 1, -1)
 
-        self.xmesh = xmesh
+        if hs_grid is not None:
+            assert zmesh.dim() == 4, 'zemsh dimension error'
+
+        self.compr = compr
         self.zmesh = zmesh
         self.hs_grid = hs_grid
 
-    def __call__(self, xnew: Tensor, distances=None):
+    def __call__(self, rr: Tensor, distances=None):
         """Calculate bicubic interpolation.
 
         Arguments:
-            xnew: The points to be interpolated for the first dimension and
+            rr: The points to be interpolated for the first dimension and
                 second dimension.
+            distances: interpolation points.
         """
-        self.xi = xnew if xnew.dim() == 2 else xnew.unsqueeze(0)
-        self.batch = self.xi.shape[0]  # number of atom pairs
+        if self.hs_grid is not None:
+            assert distances is not None, 'distances should not be None'
+
+        self.xi = rr if rr.dim() == 2 else rr.unsqueeze(0)
+        self.batch = self.xi.shape[0]
         self.arange_batch = torch.arange(self.batch)
 
         if self.hs_grid is not None:  # with DFTB+ distance interpolation
             assert distances is not None, 'if hs_grid is not None, '+ \
                 'distances is expected'
 
-            # original dims: vcr1, vcr2, distances, n_orb_pairs
-            # permute dims: distances, vcr1, vcr2, n_orb_pairs
-            zmesh = self.zmesh  #.permute([-2, 0, 1, -1])
-
-            ski = PolyInterpU(self.hs_grid, zmesh)
-            zmesh = ski(distances)
-        else:
-            zmesh = self.zmesh
+            ski = PolyInterpU(self.hs_grid, self.zmesh)
+            zmesh = ski(distances).permute(0, -2, -1, 1)
+        elif self.zmesh.dim() == 2:
+            zmesh = self.zmesh.repeat(rr.shape[0], 1, 1)
 
         coeff = torch.tensor([[1., 0., 0., 0.], [0., 0., 1., 0.],
                               [-3., 3., -2., -1.], [2., -2., 1., 1.]])
@@ -79,8 +67,8 @@ class BicubInterp:
         self._get_indices()
 
         # this is to transfer x to fraction and its square, cube
-        x_fra = (self.xi - self.xmesh[self.nx0]) / (
-            self.xmesh[self.nx1] - self.xmesh[self.nx0])
+        x_fra = (self.xi - self.compr[self.nx0]) / (
+            self.compr[self.nx1] - self.compr[self.nx0])
         xmat = torch.stack([x_fra ** 0, x_fra ** 1, x_fra ** 2, x_fra ** 3])
 
         # get four nearest grid points values, each will be: [natom, natom, 20]
@@ -102,15 +90,15 @@ class BicubInterp:
 
     def _get_indices(self):
         """Get indices and repeat indices."""
-        self.nx0 = torch.searchsorted(self.xmesh, self.xi.detach()) - 1
+        self.nx0 = torch.searchsorted(self.compr, self.xi.detach()) - 1
 
         # get all surrounding 4 grid points indices and repeat indices
         self.nind = torch.tensor([ii for ii in range(self.batch)])
         self.nx1 = torch.clamp(torch.stack([ii + 1 for ii in self.nx0]), 0,
-                               len(self.xmesh) - 1)
+                               len(self.compr) - 1)
         self.nx_1 = torch.clamp(torch.stack([ii - 1 for ii in self.nx0]), 0)
         self.nx2 = torch.clamp(torch.stack([ii + 2 for ii in self.nx0]), 0,
-                               len(self.xmesh) - 1)
+                               len(self.compr) - 1)
 
     def _fmat0th(self, zmesh: Tensor):
         """Construct f(0/1, 0/1) in fmat."""

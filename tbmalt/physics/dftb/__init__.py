@@ -156,7 +156,8 @@ class Dftb1(Calculator):
                 self._overlap = call_with_required_args(self.s_feed.matrix, self)
             else:
                 # Otherwise just make the default call
-                self._overlap = self.s_feed.matrix(self.geometry, self.basis)
+                self._overlap = self.s_feed.matrix(
+                    self.geometry, self.basis, ml_params=self.ml_params)
 
         # Return the cached overlap matrix.
         return self._overlap
@@ -174,7 +175,8 @@ class Dftb1(Calculator):
             if requires_args(self.h_feed.matrix):
                 self._hamiltonian = call_with_required_args(self.h_feed.matrix, self)
             else:
-                self._hamiltonian = self.h_feed.matrix(self.geometry, self.basis)
+                self._hamiltonian = self.h_feed.matrix(
+                    self.geometry, self.basis, ml_params=self.ml_params)
 
         return self._hamiltonian
 
@@ -445,9 +447,11 @@ class Dftb2(Dftb1):
         """Core Hamiltonian matrix"""
         if self._core_hamiltonian is None:
             if requires_args(self.h_feed.matrix):
-                self._core_hamiltonian = call_with_required_args(self.h_feed.matrix, self)
+                self._core_hamiltonian = call_with_required_args(
+                    self.h_feed.matrix, self)
             else:
-                self._core_hamiltonian = self.h_feed.matrix(self.geometry, self.basis)
+                self._core_hamiltonian = self.h_feed.matrix(
+                    self.geometry, self.basis, ml_params=self.ml_params)
 
         return self._core_hamiltonian
 

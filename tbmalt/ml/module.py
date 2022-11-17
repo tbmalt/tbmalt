@@ -88,6 +88,7 @@ class Calculator(ABC):
 
         self._geometry = None
         self._basis = None
+        self._ml_params = None
 
     @property
     def device(self) -> torch.device:
@@ -104,12 +105,14 @@ class Calculator(ABC):
         pass
 
     def __call__(self, geometry: Geometry, basis: Basis,
+                 ml_params: Dict = None,
                  cache: Optional[Dict[str, Any]] = None):
         """Run the calculator instance.
 
         Arguments:
             geometry: System(s) upon which the calculation is to be run.
             basis: Orbital information associated with said system(s).
+            ml_params: Machine learning parameters dict.
             cache: A cache entity that may be used to bootstrap the calculation.
 
         Returns:
@@ -150,6 +153,7 @@ class Calculator(ABC):
         else:
             self.reset()
             self._geometry, self._basis = geometry, basis
+            self._ml_params = ml_params
 
         return self.forward(cache=cache)
 
@@ -166,6 +170,10 @@ class Calculator(ABC):
     @property
     def geometry(self):
         return self._geometry
+
+    @property
+    def ml_params(self):
+        return self._ml_params
 
     @property
     def basis(self):
