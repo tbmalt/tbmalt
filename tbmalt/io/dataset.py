@@ -1,66 +1,122 @@
 # -*- coding: utf-8 -*-
-from typing import Dict, List
+from typing import Dict, List, Union
 import random
 
-import h5py
+from h5py import Group
 import torch
 from torch.utils.data import DataLoader as Loader
 from torch import Tensor
 
-from tbmalt.common.batch import deflate, pack
+from tbmalt.common.batch import pack
 
 
 class Dataloader(Loader):
-    """"""
+    """A class to read and load data.
 
-    def __init__(self, atomic_numbers: Tensor, positions: Tensor,
-                 dataset: Dict):
-        self.atomic_numbers = atomic_numbers
-        self.positions = positions
+    This class will use given targets to read and load data samples from
+    h5py files. The '__getitem__()' function, which is inherited from object
+    'torch.utils.data.Dataset', supports fetching data with specified indices.
+    The indices are from random numbers with defined seeds.
+
+    Arguments:
+        dataset: An dictionary which stores all the data.
+        labels: A list of label for each sample.
+        targets: Names of machine learned targets.
+        pbc: Whether read cells.
+        seed: Seed to generate random numbers, this will be used to
+            generate indices when loading samples.
+
+    """
+
+    def __init__(self, dataset: Dict, labels: List[str], targets, pbc, seed):
+        self.targets = targets
         self.dataset = dataset
-        size = len(atomic_numbers)
-        self.random_idx = random.sample(range(size), size)
-        print('self.random_idx', self.random_idx)
+        self.labels = labels
+        self.pbc = pbc
 
-    def __getitem__(self, idx):
-        """"""
-        # Select data with index
-        atomic_numbers = pack([self.atomic_numbers[ii] for ii in idx])
-        positions = pack([self.positions[ii] for ii in idx])
+        size = len(dataset['atomic_numbers'])
+        random.seed(seed)
+        self.random_idx = random.sample(range(size), size)
+
+    def __getitem__(self, idx: Tensor) -> Dict:
+        """Get data values according to input indices."""
+        atomic_numbers = self.dataset['atomic_numbers']
+        positions = self.dataset['positions']
+        if self.pbc:
+            cells = self.dataset['cells']
 
         # Select different properties
-        dataset = {key: pack([val[ii] for ii in idx])
-                   for key, val in self.dataset.items()}
+        data = {target: pack([self.dataset[target][ii] for ii in idx])
+                for target in self.targets}
 
-        return atomic_numbers, positions, dataset
+        # Select data with index
+        data['atomic_numbers'] = pack([atomic_numbers[ii] for ii in idx])
+        data['positions'] = pack([positions[ii] for ii in idx])
+        if self.pbc:
+            data['cells'] = pack([cells[ii] for ii in idx])
+
+        return data
 
     @classmethod
-    def load_reference(cls, dataset: str, size: int, properties: List):
-        """Load reference from h5py type data."""
-        data = {pro: [] for pro in properties}
-        positions, numbers = [], []
+    def load_reference(cls, groups: Union[Group, List[Group]],
+                       targets: List[str],
+                       sizes: Union[List[int], int] = None,
+                       pbc: bool = False, seed: int = 1):
+        """Load reference from h5py type data.
 
-        with h5py.File(dataset, 'r') as f:
-            gg = f['global_group']
-            molecule_specie = gg.attrs['molecule_specie_global']
+        Arguments:
+            groups: The groups in h5py binary files. The input groups
+                can be a single group or a list of groups.
+            targets: Loading targets, such as dipole, charge, etc.
+            sizes: Loading size of each group.
+            pbc: Whether read cells.
+            seed: Seed to generate random numbers, this will be used to
+                generate indices when loading samples.
 
-            size_mol = int(size / len(molecule_specie))
+        """
+        data = {target: [] for target in targets}
+        positions, numbers, labels = [], [], []
+        if pbc:
+            cells = []
 
-            # add atom name and atom number
-            for imol_spe in molecule_specie:
-                g = f[imol_spe]
-                g_size = g.attrs['n_molecule']
-                size_mol = min(g_size, size_mol)
+        def single_loader(g, size):
+            g_size = g.attrs['size']
+            this_size = min(g_size, size) if size is not None else g_size
 
-                ind = random.sample(torch.arange(g_size).tolist(), size_mol)
+            random.seed(seed)
+            ind = random.sample(torch.arange(g_size).tolist(), this_size)
+            labels.extend(g.attrs['label'])
 
-                # loop for the same molecule specie
-                for imol in ind:
-                    for ipro in properties:  # loop for each property
-                        idata = g[str(imol + 1) + ipro][()]
-                        data[ipro].append(torch.from_numpy(idata))
+            # loop for each property
+            for target in targets:
+                idata = g[target][()][ind]
+                data[target].append(torch.from_numpy(idata))
 
-                    positions.append(torch.from_numpy(g[str(imol + 1) + 'position'][()]))
-                    numbers.append(torch.from_numpy(g.attrs['numbers']))
+            positions.append(torch.from_numpy(g['positions'][()][ind]))
+            numbers.append(torch.from_numpy(g['atomic_numbers'][()][ind]))
+            if pbc:
+                cells.append(torch.from_numpy(g['cells'][()][ind]))
 
-        return cls(numbers, positions, data)
+        # Read data from specified groups
+        if isinstance(groups, list):
+
+            if sizes is not None:
+                assert len(groups) == len(sizes),\
+                    'len(size) should be equal to len(groups)'
+
+            for ii, g in enumerate(groups):
+                size = None if sizes is None else sizes[ii]
+                single_loader(g, size)
+        else:
+            single_loader(groups, sizes)
+
+        data['atomic_numbers'] = pack(numbers).flatten(0, 1)
+        data['positions'] = pack(positions).flatten(0, 1)
+        if pbc:
+            data['cells'] = pack(cells).flatten(0, 1)
+
+        # loop for each property and pack target values
+        for target in targets:
+            data[target] = pack(data[target]).flatten(0, 1)
+
+        return cls(data, labels, targets, pbc, seed)

@@ -6,6 +6,7 @@ mathematical functions.
 """
 from typing import Tuple, Union, Literal, Optional
 import torch
+import torch.nn as nn
 import numpy as np
 from numbers import Real
 Tensor = torch.Tensor
@@ -116,6 +117,16 @@ def hellinger(p: Tensor, q: Tensor) -> Tensor:
             torch.pow(torch.sqrt(p) - torch.sqrt(q), 2),
             -1)
     ) / np.sqrt(2)
+
+
+class HellingerLoss(nn.Module):
+    """Use the Hellinger distance as a loss function for training."""
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, p, q):
+        return hellinger(p, q).sum(0)
 
 
 def estimate_minmax(
