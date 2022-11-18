@@ -163,11 +163,11 @@ def prepare_data():
     indice = torch.arange(training_size + testing_size).tolist()
 
     data_train = dataloder_train[indice[: training_size]]
-    data_test = dataloder_train[indice[: testing_size]]
+    data_test = dataloder_test[indice[: testing_size]]
 
-    (numbers_train, positions_train, cells_train) = (data_train['atomic_numbers'],
-                                                     data_train['positions'],
-                                                     data_train['cells'])
+    numbers_train, positions_train, cells_train = (data_train['atomic_numbers'],
+                                                   data_train['positions'],
+                                                   data_train['cells'])
 
     numbers_test, positions_test, cells_test = (data_test['atomic_numbers'],
                                                 data_test['positions'],
