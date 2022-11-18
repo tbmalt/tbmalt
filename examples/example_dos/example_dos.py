@@ -92,7 +92,11 @@ u_feed = HubbardFeed.from_database(parameter_db_path, species)
 
 # 1.3: Construct the SCC-DFTB calculator object
 # ---------------------------------------------
-dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed)
+mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2,
+              'generations': 3, 'tolerance': 1e-10}
+kwargs = {}
+kwargs['mix_params'] = mix_params
+dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
 
 
 # ======================== #
