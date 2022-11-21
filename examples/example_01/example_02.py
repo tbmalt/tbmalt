@@ -2,6 +2,7 @@ from os.path import exists
 from typing import Any, List
 
 import torch
+import h5py
 
 from tbmalt import Geometry, Basis
 from tbmalt.ml.module import Calculator
@@ -25,8 +26,8 @@ torch.set_default_dtype(torch.float64)
 # --------------------
 
 # Provide a list of moecules upon which TBMaLT is to be run
-size = 1000
-targets = ['charge']
+size = [1000]
+targets = ['dipole']
 
 # Provide information about the orbitals on each atom; this is keyed by atomic
 # numbers and valued by azimuthal quantum numbers like so:
@@ -46,7 +47,7 @@ number_of_epochs = 20
 n_batch = 100
 
 # Location of a file storing the properties that will be fit to.
-target_path = './aims_6000_01.hdf'
+target_path = './dataset.h5'
 
 
 # ============= #
@@ -54,7 +55,7 @@ target_path = './aims_6000_01.hdf'
 # ============= #
 
 # load data set
-def load_target_data(path: str, size: int, properties: List) -> Any:
+def load_target_data(path: str, properties: List) -> Any:
     """Load fitting target data.
 
     Arguments:
@@ -68,7 +69,9 @@ def load_target_data(path: str, size: int, properties: List) -> Any:
     # Data could be loaded from a json file or an hdf5 file; use your own
     # discretion here. A dictionary might be the best object in which to store
     # the target data.
-    return Dataloader.load_reference(path, size, properties)
+    with h5py.File(path, 'r') as f:
+        groups = f['run1']['train']
+        return Dataloader.load_reference(groups, properties)
 
 
 def init_model():
@@ -78,7 +81,7 @@ def init_model():
 # 2.1: Target system specific objects
 # -----------------------------------
 if fit_model:
-    dataloder = load_target_data(target_path, size, targets)
+    dataloder = load_target_data(target_path, targets)
 else:
     raise NotImplementedError()
 
@@ -125,7 +128,7 @@ u_feed = HubbardFeed.from_database(parameter_db_path, species)
 dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed)
 
 # Construct machine learning object
-lr = 0.001
+lr = 0.01
 criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
 h_var = [val.abcd for key, val in h_feed.off_sites.items()]
 s_var = [val.abcd for key, val in s_feed.off_sites.items()]
@@ -135,7 +138,7 @@ optimizer = getattr(torch.optim, 'Adam')(h_var + s_var, lr=lr)
 # ================= #
 # STEP 3: Execution #
 # ================= #
-def calculate_losses(calculator: Calculator, targets: Any) -> Tensor:
+def calculate_losses(calculator: Calculator, data: Any) -> Tensor:
     """An example function computing the loss of the model.
 
     Args:
@@ -149,9 +152,9 @@ def calculate_losses(calculator: Calculator, targets: Any) -> Tensor:
     """
     loss = 0.0
 
-    for key, val in targets.items():
+    for key in targets:
         key = 'q_final_atomic' if key == 'charge' else key
-        loss += criterion(calculator.__getattribute__(key), val)
+        loss += criterion(calculator.__getattribute__(key), data[key])
 
     return loss
 
@@ -171,16 +174,16 @@ if fit_model:
 
     for epoch in range(number_of_epochs):
 
-        atomic_numbers, positions, targets = dataloder[indice[epoch % len(indice)]]
+        data = dataloder[indice[epoch % len(indice)]]
 
-        geometry = Geometry(atomic_numbers, positions, units='a')
+        geometry = Geometry(data['atomic_numbers'], data['positions'], units='a')
         basis = Basis(geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
         # Perform the forwards operation
         dftb_calculator(geometry, basis)
 
         # Calculate the loss
-        loss = calculate_losses(dftb_calculator, targets)
+        loss = calculate_losses(dftb_calculator, data)
         print(loss)
 
         optimizer.zero_grad()
