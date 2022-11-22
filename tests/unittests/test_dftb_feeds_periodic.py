@@ -7,7 +7,7 @@ from typing import List
 import numpy as np
 from tbmalt.io.skf import Skf
 from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed, SkFeed
-from tbmalt import Geometry, Basis, Periodic
+from tbmalt import Geometry, Basis
 from tbmalt.common.batch import pack
 from functools import reduce
 
@@ -29,6 +29,10 @@ def systems(device) -> List[Geometry]:
     Returns:
         geometries: A list of `Geometry` objects.
     """
+
+    cutoff = torch.tensor([9.98], device=device)
+    cutoff2 = torch.tensor([18.38], device=device)  # Au-Au cutoff
+
     H2 = Geometry(
         torch.tensor([1, 1], device=device),
         torch.tensor([
@@ -39,7 +43,7 @@ def systems(device) -> List[Geometry]:
             [1.5, 0.0, 0.0],
             [0.0, 1.5, 0.0],
             [0.0, 0.0, 1.5]],
-            device=device))
+            device=device), cutoff=cutoff)
 
     CH4 = Geometry(torch.tensor([6, 1, 1, 1, 1], device=device),
                    torch.tensor([
@@ -54,7 +58,7 @@ def systems(device) -> List[Geometry]:
                         [0.0, 5.0, 0.0],
                         [0.0, 0.0, 6.0]],
                        device=device),
-                   units='angstrom')
+                   units='angstrom', cutoff=cutoff)
 
     H2O = Geometry(torch.tensor([1, 8, 1], device=device),
                    torch.tensor([
@@ -67,7 +71,7 @@ def systems(device) -> List[Geometry]:
                         [0.0, 5.0, 0.0],
                         [0.0, 0.0, 6.0]],
                        device=device),
-                   units='angstrom')
+                   units='angstrom', cutoff=cutoff)
 
     C2H6 = Geometry(torch.tensor([6, 6, 1, 1, 1, 1, 1, 1], device=device),
                     torch.tensor([
@@ -85,7 +89,7 @@ def systems(device) -> List[Geometry]:
                         [0.0, 5.0, 0.0],
                         [0.0, 4.0, 4.0]],
                        device=device),
-                    units='angstrom')
+                    units='angstrom', cutoff=cutoff)
 
     C2H2Au2S3 = Geometry(torch.tensor([1, 6, 16, 79, 16, 79, 16, 6, 1], device=device),
                          torch.tensor([
@@ -104,7 +108,7 @@ def systems(device) -> List[Geometry]:
                               [0.0, 5.0, 0.0],
                               [0.0, 0.0, 5.0]],
                              device=device),
-                         units='angstrom')
+                         units='angstrom', cutoff=cutoff2)
 
     return [H2, CH4, H2O, C2H6, C2H2Au2S3]
 
@@ -141,13 +145,11 @@ def test_scipyskfeed_pbc_single(skf_file: str, device):
         skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
     S_feed = ScipySkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
-    cutoff = torch.tensor([18.38], device=device)  # Au-Au pair has a large cutoff
 
     for sys, H_ref, S_ref in zip(
             systems(device), hamiltonians(device), overlaps(device)):
-        periodic = Periodic(sys, sys.cells, cutoff)
-        H = H_feed.matrix(sys, Basis(sys.atomic_numbers, b_def), periodic)
-        S = S_feed.matrix(sys, Basis(sys.atomic_numbers, b_def), periodic)
+        H = H_feed.matrix(sys, Basis(sys.atomic_numbers, b_def))
+        S = S_feed.matrix(sys, Basis(sys.atomic_numbers, b_def))
 
         check_1 = torch.allclose(H, H_ref, atol=1E-2)
         check_2 = torch.allclose(S, S_ref, atol=1E-1)
@@ -164,23 +166,20 @@ def test_scipyskfeed_pbc_batch(skf_file: str, device):
         skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
     S_feed = ScipySkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
-    cutoff = torch.tensor([18.38], device=device)
 
     sys = reduce(lambda i, j: i+j, systems(device))
     basis = Basis(sys.atomic_numbers,
                   {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]})
-    periodic = Periodic(sys, sys.cells, cutoff)
 
-    H = H_feed.matrix(sys, basis, periodic)
-    S = S_feed.matrix(sys, basis, periodic)
+    H = H_feed.matrix(sys, basis)
+    S = S_feed.matrix(sys, basis)
 
     check_1 = torch.allclose(H, pack(hamiltonians(device)), atol=1E-2)
     check_2 = torch.allclose(S, pack(overlaps(device)), atol=1E-1)
     check_3 = H.device == device
 
     # Check that batches of size one do not cause problems
-    check_4 = (H_feed.matrix(sys[0:1], basis[0:1], Periodic(
-        sys[0:1], sys[0:1].cells, cutoff)).ndim == 3)
+    check_4 = (H_feed.matrix(sys[0:1], basis[0:1]).ndim == 3)
 
     assert check_1, 'ScipySkFeed H matrix outside of tolerance (batch)'
     assert check_2, 'ScipySkFeed S matrix outside of tolerance (batch)'
@@ -200,13 +199,11 @@ def test_skffeed_pbc_single(skf_file: str, device):
         skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
     S_feed = SkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
-    cutoff = torch.tensor([18.38], device=device)
 
     for sys, H_ref, S_ref in zip(
             systems(device), hamiltonians(device), overlaps(device)):
-        periodic = Periodic(sys, sys.cells, cutoff)
-        H = H_feed.matrix(sys, Basis(sys.atomic_numbers, b_def), periodic)
-        S = S_feed.matrix(sys, Basis(sys.atomic_numbers, b_def), periodic)
+        H = H_feed.matrix(sys, Basis(sys.atomic_numbers, b_def))
+        S = S_feed.matrix(sys, Basis(sys.atomic_numbers, b_def))
 
         check_1 = torch.allclose(H, H_ref, atol=1E-12)
         check_2 = torch.allclose(S, S_ref, atol=1E-12)
@@ -223,23 +220,20 @@ def test_skffeed_pbc_batch(skf_file: str, device):
         skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
     S_feed = SkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
-    cutoff = torch.tensor([18.38], device=device)
 
     sys = reduce(lambda i, j: i+j, systems(device))
     basis = Basis(sys.atomic_numbers,
                   {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]})
-    periodic = Periodic(sys, sys.cells, cutoff)
 
-    H = H_feed.matrix(sys, basis, periodic)
-    S = S_feed.matrix(sys, basis, periodic)
+    H = H_feed.matrix(sys, basis)
+    S = S_feed.matrix(sys, basis)
 
     check_1 = torch.allclose(H, pack(hamiltonians(device)), atol=1E-12)
     check_2 = torch.allclose(S, pack(overlaps(device)), atol=1E-12)
     check_3 = H.device == device
 
     # Check that batches of size one do not cause problems
-    check_4 = (H_feed.matrix(sys[0:1], basis[0:1], Periodic(
-        sys[0:1], sys[0:1].cells, cutoff)).ndim == 3)
+    check_4 = (H_feed.matrix(sys[0:1], basis[0:1]).ndim == 3)
 
     assert check_1, 'SkFeed H matrix outside of tolerance (batch)'
     assert check_2, 'SkFeed S matrix outside of tolerance (batch)'

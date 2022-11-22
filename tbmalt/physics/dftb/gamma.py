@@ -3,7 +3,7 @@
 from typing import Literal
 import torch
 from torch import Tensor
-from tbmalt import Geometry, Basis, Periodic
+from tbmalt import Geometry, Basis
 from tbmalt.physics.dftb.feeds import Feed
 from tbmalt.physics.dftb.coulomb import Coulomb
 import numpy as np
@@ -185,10 +185,10 @@ def gamma_gaussian(geometry: Geometry, basis: Basis, hubbard_Us: Tensor
     return gamma
 
 
-def gamma_exponential_pbc(geometry, basis, periodic, coulomb, hubbard_Us):
+def gamma_exponential_pbc(geometry, basis, coulomb, hubbard_Us):
     """Build the Slater type gamma in second-order term with pbc."""
 
-    r = periodic.periodic_distances
+    r = geometry.periodic.periodic_distances
     U = torch.clone(hubbard_Us).repeat(r.size(-3), 1, 1).transpose(0, 1)
     z = geometry.atomic_numbers
     U = U.squeeze(0) if z.ndim == 1 else U
@@ -362,7 +362,7 @@ def _expgamma(distance_tr, alpha, beta, mask_homo, mask_hetero, gamma_tem):
 
 
 def build_gamma_matrix(
-        geometry: Geometry, basis: Basis, periodic: Periodic, coulomb: Coulomb,
+        geometry: Geometry, basis: Basis, coulomb: Coulomb,
         hubbard_Us: Tensor, scheme: Literal['exponential', 'gaussian'] =
         'exponential'):
     """Construct the gamma matrix
@@ -371,12 +371,10 @@ def build_gamma_matrix(
         geometry: `Geometry` object of the system(s) whose gamma matrix is to
             be constructed.
         basis: `Basis` instance associated with the target system.
+        coulomb: `Coulomb` object of the targer system(s) containing 1/R matrix.
         hubbard_Us: Hubbard U values. one value should be specified for each
             atom or shell depending if the calculation being performed is atom
             or shell resolved.
-        periodic: `Periodic` object of the targer system(s) containing distance
-            matrix.
-        coulomb: `Coulomb` object of the targer system(s) containing 1/R matrix.
         scheme: scheme used to construct the gamma matrix. This may be either
             either "exponential" or "gaussian". [DEFAULT="exponential"]
 
@@ -385,7 +383,7 @@ def build_gamma_matrix(
 
     """
 
-    if periodic is None:
+    if geometry.periodic is None:
         if scheme == 'exponential':
             return gamma_exponential(geometry, basis, hubbard_Us)
 
@@ -396,7 +394,6 @@ def build_gamma_matrix(
                 f'Gamma constructor method {scheme} is unknown'))
     else:
         if scheme == 'exponential':
-            return gamma_exponential_pbc(geometry, basis, periodic,
-                                         coulomb, hubbard_Us)
+            return gamma_exponential_pbc(geometry, basis, coulomb, hubbard_Us)
         elif scheme == 'gaussian':
             raise NotImplementedError('Not implement gaussian for pbc yet.')

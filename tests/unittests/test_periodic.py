@@ -18,20 +18,25 @@ from tbmalt.data.units import length_units
 
 torch.set_default_dtype(torch.float64)
 
+
 ######################
 # Geometry Test Data #
 ######################
-@fix_seed
 def cells_data(device, batch=False, requires_grad=False):
     rg = requires_grad
     if not batch:
-        return torch.rand(3, 3, device=device, requires_grad=rg)
+        return torch.tensor([[4, 0, 0.], [0, 4, 0], [0, 0, 4]],
+                            device=device, requires_grad=rg)
     else:
-        return [torch.rand((3, 3), device=device, requires_grad=rg),
-                torch.rand((3, 3), device=device, requires_grad=rg),
-                torch.rand((3, 3), device=device, requires_grad=rg)]
+        return [torch.tensor([[4, 0, 0.], [0, 4, 0], [0, 0, 4]],
+                             device=device, requires_grad=rg),
+                torch.tensor([[5, 0, 0.], [0, 5, 0], [0, 0, 5]],
+                             device=device, requires_grad=rg),
+                torch.tensor([[6, 0, 0.], [0, 6, 0], [0, 0, 6]],
+                             device=device, requires_grad=rg)]
 
 
+@fix_seed
 def positions_data(device, batch=False, requires_grad=False):
     rg = requires_grad
     if not batch:
@@ -564,9 +569,9 @@ def test_cell_translation_single(device):
     cellvec_ref3, rcellvec_ref3 = _get_cell_trans(geom3.cells, cutoff + 1)
 
     # Check: Check cell translation
-    periodic1 = Periodic(geom1, geom1.cells, cutoff)
-    periodic2 = Periodic(geom2, geom2.cells, cutoff)
-    periodic3 = Periodic(geom3, geom3.cells, cutoff)
+    periodic1 = geom1.periodic
+    periodic2 = geom2.periodic
+    periodic3 = geom3.periodic
     check1 = (torch.allclose(periodic1.cellvec, cellvec_ref1)
               and torch.allclose(periodic1.rcellvec, rcellvec_ref1))
     check2 = (torch.allclose(periodic2.cellvec, cellvec_ref2)
@@ -594,7 +599,7 @@ def test_cell_translation_batch(device):
                         for icell in geom.cells], value=1e3)
 
     # Check: Check cell translation
-    periodic = Periodic(geom, geom.cells, cutoff)
+    periodic = geom.periodic
     check = torch.allclose(periodic.cellvec, cellvec_ref)
 
     assert check, 'Periodic failed to correctly implement cell translation (batch)'

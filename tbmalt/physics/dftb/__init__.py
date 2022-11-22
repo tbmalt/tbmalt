@@ -158,8 +158,7 @@ class Dftb1(Calculator):
                 self._overlap = call_with_required_args(self.s_feed.matrix, self)
             else:
                 # Otherwise just make the default call
-                self._overlap = self.s_feed.matrix(self.geometry, self.basis,
-                                                   self.periodic)
+                self._overlap = self.s_feed.matrix(self.geometry, self.basis)
 
         # Return the cached overlap matrix.
         return self._overlap
@@ -177,8 +176,7 @@ class Dftb1(Calculator):
             if requires_args(self.h_feed.matrix):
                 self._hamiltonian = call_with_required_args(self.h_feed.matrix, self)
             else:
-                self._hamiltonian = self.h_feed.matrix(self.geometry, self.basis,
-                                                       self.periodic)
+                self._hamiltonian = self.h_feed.matrix(self.geometry, self.basis)
 
         return self._hamiltonian
 
@@ -492,8 +490,7 @@ class Dftb2(Dftb1):
             if requires_args(self.h_feed.matrix):
                 self._core_hamiltonian = call_with_required_args(self.h_feed.matrix, self)
             else:
-                self._core_hamiltonian = self.h_feed.matrix(self.geometry, self.basis,
-                                                            self.periodic)
+                self._core_hamiltonian = self.h_feed.matrix(self.geometry, self.basis)
 
         return self._core_hamiltonian
 
@@ -506,7 +503,7 @@ class Dftb2(Dftb1):
         """Gamma matrix"""
         if self._gamma is None:
             self._gamma = build_gamma_matrix(
-                self.geometry, self.basis, self.periodic, self.coulomb,
+                self.geometry, self.basis, self.coulomb,
                 self.u_feed(self.basis), self._gamma_scheme)
         return self._gamma
 

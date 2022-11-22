@@ -24,8 +24,6 @@ class Coulomb:
 
     Arguments:
         geometry: Object for calculation, storing the data of input geometry.
-        periodic: Object for calculation, storing the data of translation
-            vectors and neighbour list for periodic boundary conditoin.
 
     Keyword Arguments:
         tol_ewald: EWald tolerance.
@@ -42,18 +40,17 @@ class Coulomb:
         >>> pos = torch.tensor([[0., 0., 0.], [0., 2., 0.]])
         >>> num = torch.tensor([1, 1])
         >>> cutoff = torch.tensor([9.98])
-        >>> system = Geometry(num, pos, cell, units='a')
-        >>> periodic = Periodic(system, system.cells, cutoff=cutoff)
-        >>> coulomb = Coulomb(system, periodic, method='search')
+        >>> system = Geometry(num, pos, cell, units='a', cutoff=cutoff)
+        >>> coulomb = Coulomb(system, method='search')
         >>> print(coulomb.invrmat)
         tensor([[-0.4778, -0.2729],
                 [-0.2729, -0.4778]])
 
     """
 
-    def __init__(self, geometry: Geometry, periodic: Periodic, **kwargs):
+    def __init__(self, geometry: Geometry, **kwargs):
         self.geometry: Geometry = geometry
-        self.periodic: Periodic = periodic
+        self.periodic: Periodic = geometry.periodic
 
         # Check the type of pbc and choose corresponding subclass
         if self.geometry.pbc.ndim == 1:  # -> Single
@@ -192,7 +189,8 @@ class Ewald(ABC):
 
     def _update_latvec(self) -> Tuple[Tensor, Tensor]:
         """Update the lattice points for reciprocal Ewald summation."""
-        update = Periodic(self.geometry, self.recvec, cutoff=self.maxg,
+        update = Periodic(self.geometry.positions, self.geometry.n_atoms,
+                          self.recvec, cutoff=self.maxg,
                           distance_extention=0, positive_extention=0,
                           negative_extention=0)
 
@@ -200,7 +198,8 @@ class Ewald(ABC):
 
     def _update_neighbour(self) -> Tuple[Tensor, Tensor]:
         """Update the neighbour lists for real Ewald summation."""
-        update = Periodic(self.geometry, self.latvec, cutoff=self.maxr,
+        update = Periodic(self.geometry.positions, self.geometry.n_atoms,
+                          self.latvec, cutoff=self.maxr,
                           distance_extention=0)
 
         return update.periodic_distances, update.neighbour

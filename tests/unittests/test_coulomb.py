@@ -5,7 +5,7 @@ is tested."""
 
 import torch
 import pytest
-from tbmalt import Geometry, Periodic, Coulomb
+from tbmalt import Geometry, Coulomb
 from tbmalt.physics.dftb.coulomb import Ewald3d
 from tbmalt.common.batch import pack
 torch.set_default_dtype(torch.float64)
@@ -18,8 +18,8 @@ def test_get_alpha(device):
     positions = torch.tensor([[0., 0., 0.], [0., 2., 0.]], device=device)
     numbers = torch.tensor([1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    periodic = system.periodic
     coulomb = Ewald3d(system, periodic, method='search')
 
     # Check the tolerance and device
@@ -46,8 +46,8 @@ def test_get_alpha_batch(device):
                torch.tensor([1, 1], device=device),
                torch.tensor([1, 1], device=device)]
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    periodic = system.periodic
     coulomb = Ewald3d(system, periodic, method='search')
 
     # Check the tolerance and device
@@ -68,9 +68,8 @@ def test_coulomb_3d(device):
         [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
-    coulomb = Coulomb(system, periodic, method='search')
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    coulomb = Coulomb(system, method='search')
 
     # Check the tolerance and device
     check1 = torch.max(abs(coulomb.invrmat - invr_ch4_from_dftbplus.to(device))
@@ -99,9 +98,8 @@ def test_coulomb_3d_batch(device):
                torch.tensor([1, 1], device=device),
                torch.tensor([1, 8, 1], device=device)]
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
-    coulomb = Coulomb(system, periodic, method='search')
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    coulomb = Coulomb(system, method='search')
 
     # Check the tolerance and device
     check1 = torch.max(abs(coulomb.invrmat - invr_batch_3d.to(device))
@@ -121,9 +119,8 @@ def test_coulomb_2d_ch4(device):
         [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
-    coulomb = Coulomb(system, periodic)
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    coulomb = Coulomb(system)
 
     # Check the tolerance and device
     check1 = torch.max(abs(coulomb.invrmat - invr_2d_ch4.to(device))
@@ -141,9 +138,8 @@ def test_coulomb_2d_h2(device):
     positions = torch.tensor([[0., 0., 0.], [0., 0., 2.]], device=device)
     numbers = torch.tensor([1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
-    coulomb = Coulomb(system, periodic)
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    coulomb = Coulomb(system)
 
     # Check the tolerance and device
     check1 = torch.max(abs(coulomb.invrmat - invr_2d_h2.to(device))
@@ -162,9 +158,8 @@ def test_coulomb_2d_h2o(device):
                               [2.244, 0.660, 0.778]], device=device)
     numbers = torch.tensor([1, 8, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
-    coulomb = Coulomb(system, periodic)
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    coulomb = Coulomb(system)
 
     # Check the tolerance and device
     check1 = torch.max(abs(coulomb.invrmat - invr_2d_h2o.to(device))
@@ -193,9 +188,8 @@ def test_coulomb_2d_batch(device):
                torch.tensor([1, 1], device=device),
                torch.tensor([1, 8, 1], device=device)]
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
-    coulomb = Coulomb(system, periodic)
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    coulomb = Coulomb(system)
 
     # Check the tolerance and device
     check1 = torch.max(abs(coulomb.invrmat - invr_batch_2d.to(device))
@@ -215,9 +209,8 @@ def test_coulomb_1d_ch4(device):
         [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
-    coulomb = Coulomb(system, periodic)
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    coulomb = Coulomb(system)
 
     # Check the tolerance and device
     check1 = torch.max(abs(coulomb.invrmat - invr_1d_ch4.to(device))
@@ -235,9 +228,8 @@ def test_coulomb_1d_h2(device):
     positions = torch.tensor([[0., 0., 0.], [2., 0., 0.]], device=device)
     numbers = torch.tensor([1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
-    coulomb = Coulomb(system, periodic)
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    coulomb = Coulomb(system)
 
     # Check the tolerance and device
     check1 = torch.max(abs(coulomb.invrmat - invr_1d_h2.to(device))
@@ -256,9 +248,8 @@ def test_coulomb_1d_h2o(device):
                               [2.244, 0.660, 0.778]], device=device)
     numbers = torch.tensor([1, 8, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
-    coulomb = Coulomb(system, periodic)
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    coulomb = Coulomb(system)
 
     # Check the tolerance and device
     check1 = torch.max(abs(coulomb.invrmat - invr_1d_h2o.to(device))
@@ -287,9 +278,8 @@ def test_coulomb_1d_batch(device):
                torch.tensor([1, 1], device=device),
                torch.tensor([1, 8, 1], device=device)]
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
-    coulomb = Coulomb(system, periodic)
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    coulomb = Coulomb(system)
 
     # Check the tolerance and device
     check1 = torch.max(abs(coulomb.invrmat - invr_batch_1d.to(device))
@@ -309,14 +299,13 @@ def test_coulomb_3d_convergence(device):
         [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
-    coulomb = Coulomb(system, periodic, method='search')
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    coulomb = Coulomb(system, method='search')
 
     # Increase the positions among atoms twice
-    system2 = Geometry(numbers, positions * 2, latvec * 2, units='a')
-    periodic2 = Periodic(system2, system2.cells, cutoff=cutoff)
-    coulomb2 = Coulomb(system2, periodic2, method='search')
+    system2 = Geometry(numbers, positions * 2, latvec * 2, units='a',
+                       cutoff=cutoff)
+    coulomb2 = Coulomb(system2, method='search')
 
     # Check the convergence of 3d ewald summation
     check1 = torch.max(abs(coulomb.invrmat - 2 * coulomb2.invrmat)
@@ -339,14 +328,13 @@ def test_coulomb_2d_convergence(device):
         [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
-    coulomb = Coulomb(system, periodic)
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    coulomb = Coulomb(system)
 
     # Increase the positions among atoms twice
-    system2 = Geometry(numbers, positions * 2, latvec * 2, units='a')
-    periodic2 = Periodic(system2, system2.cells, cutoff=cutoff)
-    coulomb2 = Coulomb(system2, periodic2)
+    system2 = Geometry(numbers, positions * 2, latvec * 2, units='a',
+                       cutoff=cutoff)
+    coulomb2 = Coulomb(system2)
 
     # Check the convergence of 3d ewald summation
     check1 = torch.max(abs(coulomb.invrmat - 2 * coulomb2.invrmat)
@@ -369,14 +357,13 @@ def test_coulomb_1d_convergence(device):
         [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
-    system = Geometry(numbers, positions, latvec, units='a')
-    periodic = Periodic(system, system.cells, cutoff=cutoff)
-    coulomb = Coulomb(system, periodic)
+    system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
+    coulomb = Coulomb(system)
 
     # Increase the positions among atoms twice
-    system2 = Geometry(numbers, positions * 2, latvec * 2, units='a')
-    periodic2 = Periodic(system2, system2.cells, cutoff=cutoff)
-    coulomb2 = Coulomb(system2, periodic2)
+    system2 = Geometry(numbers, positions * 2, latvec * 2, units='a',
+                       cutoff=cutoff)
+    coulomb2 = Coulomb(system2)
 
     # Check the convergence of 3d ewald summation
     check1 = torch.max(abs(coulomb.invrmat - 2 * coulomb2.invrmat)

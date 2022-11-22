@@ -3,7 +3,7 @@ import pytest
 import torch
 from ase.build import molecule
 
-from tbmalt import Geometry, Basis, Periodic
+from tbmalt import Geometry, Basis
 from tbmalt.physics.dftb import Dftb1, Dftb2
 from tbmalt.physics.dftb.coulomb import Coulomb
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
@@ -32,6 +32,8 @@ def feeds_scc(device, skf_file):
 
 def H2_scc(device):
 
+    cutoff = torch.tensor([9.98], device=device)
+
     geometry = Geometry(
         torch.tensor([1, 1], device=device),
         torch.tensor([
@@ -42,15 +44,11 @@ def H2_scc(device):
             [1.5, 0.0, 0.0],
             [0.0, 1.5, 0.0],
             [0.0, 0.0, 1.5]],
-            device=device))
+            device=device), cutoff=cutoff)
 
     basis = Basis(geometry.atomic_numbers, {1: [0]})
 
-    cutoff = torch.tensor([9.98], device=device)
-
-    periodic = Periodic(geometry, geometry.cells, cutoff=cutoff)
-
-    coulomb = Coulomb(geometry, periodic, method='search')
+    coulomb = Coulomb(geometry, method='search')
 
     results = {
         'q_final_atomic': torch.tensor([
@@ -60,10 +58,12 @@ def H2_scc(device):
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
 
-    return geometry, basis, periodic, coulomb, results, kwargs
+    return geometry, basis, coulomb, results, kwargs
 
 
 def CH4_scc(device):
+
+    cutoff = torch.tensor([9.98], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 1, 1, 1, 1], device=device),
@@ -78,15 +78,11 @@ def CH4_scc(device):
             [4.0, 4.0, 0.0],
             [5.0, 0.0, 5.0],
             [0.0, 6.0, 6.0]],
-            device=device), units='a')
+            device=device), units='a', cutoff=cutoff)
 
     basis = Basis(geometry.atomic_numbers, {1: [0], 6: [0, 1]})
 
-    cutoff = torch.tensor([9.98], device=device)
-
-    periodic = Periodic(geometry, geometry.cells, cutoff=cutoff)
-
-    coulomb = Coulomb(geometry, periodic, method='search')
+    coulomb = Coulomb(geometry, method='search')
 
     results = {
         'q_final_atomic': torch.tensor([
@@ -97,10 +93,12 @@ def CH4_scc(device):
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
 
-    return geometry, basis, periodic, coulomb, results, kwargs
+    return geometry, basis, coulomb, results, kwargs
 
 
 def H2O_scc(device):
+
+    cutoff = torch.tensor([9.98], device=device)
 
     geometry = Geometry(
         torch.tensor([1, 8, 1], device=device),
@@ -113,15 +111,11 @@ def H2O_scc(device):
             [4.0, 0.0, 0.0],
             [0.0, 5.0, 0.0],
             [0.0, 0.0, 6.0]],
-            device=device), units='a')
+            device=device), units='a', cutoff=cutoff)
 
     basis = Basis(geometry.atomic_numbers, {1: [0], 8: [0, 1]})
 
-    cutoff = torch.tensor([9.98], device=device)
-
-    periodic = Periodic(geometry, geometry.cells, cutoff=cutoff)
-
-    coulomb = Coulomb(geometry, periodic, method='search')
+    coulomb = Coulomb(geometry, method='search')
 
     results = {
         'q_final_atomic': torch.tensor([
@@ -131,10 +125,12 @@ def H2O_scc(device):
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
 
-    return geometry, basis, periodic, coulomb, results, kwargs
+    return geometry, basis, coulomb, results, kwargs
 
 
 def C2H6_scc(device):
+
+    cutoff = torch.tensor([9.98], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 6, 1, 1, 1, 1, 1, 1], device=device),
@@ -152,15 +148,11 @@ def C2H6_scc(device):
             [5.0, 0.0, 0.0],
             [0.0, 5.0, 0.0],
             [0.0, 0.0, 5.0]],
-            device=device), units='a')
+            device=device), units='a', cutoff=cutoff)
 
     basis = Basis(geometry.atomic_numbers, {1: [0], 6: [0, 1]})
 
-    cutoff = torch.tensor([9.98], device=device)
-
-    periodic = Periodic(geometry, geometry.cells, cutoff=cutoff)
-
-    coulomb = Coulomb(geometry, periodic, method='search')
+    coulomb = Coulomb(geometry, method='search')
 
     results = {
         'q_final_atomic': torch.tensor([
@@ -172,18 +164,18 @@ def C2H6_scc(device):
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
 
-    return geometry, basis, periodic, coulomb, results, kwargs
+    return geometry, basis, coulomb, results, kwargs
 
 
 def merge_systems(device, *systems):
     """Combine multiple test systems into a batch."""
 
-    geometry, basis, periodic, coulomb, results, kwargs = systems[0](device)
+    geometry, basis, coulomb, results, kwargs = systems[0](device)
 
     results = {k: [v] for k, v in results.items()}
 
     for system in systems[1:]:
-        t_geometry, t_basis, t_periodic, t_coulomb, t_results, t_kwargs = system(device)
+        t_geometry, t_basis, t_coulomb, t_results, t_kwargs = system(device)
 
         assert t_kwargs == kwargs, 'Test systems with different settings ' \
                                    'cannot be used together'
@@ -196,19 +188,15 @@ def merge_systems(device, *systems):
 
     results = {k: pack(v) for k, v in results.items()}
 
-    cutoff = torch.tensor([9.98], device=device)
+    coulomb = Coulomb(geometry, method='search')
 
-    periodic = Periodic(geometry, geometry.cells, cutoff=cutoff)
-
-    coulomb = Coulomb(geometry, periodic, method='search')
-
-    return geometry, basis, periodic, coulomb, results, kwargs
+    return geometry, basis, coulomb, results, kwargs
 
 
-def dftb2_helper(calculator, geometry, basis, periodic, coulomb, results):
+def dftb2_helper(calculator, geometry, basis, coulomb, results):
 
     # Trigger the calculation
-    _ = calculator(geometry, basis, periodic, coulomb)
+    _ = calculator(geometry, basis, coulomb)
 
     # Ensure that the `hamiltonian` and `overlap` properties return the correct
     # matrices. We do not need to actually check if the matrices are themselves
@@ -234,12 +222,12 @@ def test_dftb2_single(device, feeds_scc):
     mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
 
     for system in systems:
-        geometry, basis, periodic, coulomb, results, kwargs = system(device)
+        geometry, basis, coulomb, results, kwargs = system(device)
         kwargs['mix_params'] = mix_params
 
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
 
-        dftb2_helper(calculator, geometry, basis, periodic, coulomb, results)
+        dftb2_helper(calculator, geometry, basis, coulomb, results)
 
 
 def test_dftb2_batch(device, feeds_scc):
@@ -249,9 +237,9 @@ def test_dftb2_batch(device, feeds_scc):
                [H2_scc, H2O_scc, CH4_scc, C2H6_scc]]
 
     for batch in batches:
-        geometry, basis, periodic, coulomb, results, kwargs = merge_systems(device, *batch)
+        geometry, basis, coulomb, results, kwargs = merge_systems(device, *batch)
 
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
 
-        dftb2_helper(calculator, geometry, basis, periodic, coulomb, results)
+        dftb2_helper(calculator, geometry, basis, coulomb, results)

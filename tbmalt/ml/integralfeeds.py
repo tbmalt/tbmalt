@@ -9,13 +9,13 @@ class methods respectively.
 Warning this is development stage code and is subject to significant change.
 """
 from abc import ABC
-from typing import Union, Optional
+from typing import Union
 
 import numpy as np
 import torch
 from h5py import Group
 from numpy import ndarray as Array
-from tbmalt import Geometry, Basis, Periodic
+from tbmalt import Geometry, Basis
 from tbmalt.ml import Feed
 from torch import Tensor
 
@@ -184,16 +184,12 @@ class IntegralFeed(ABC, Feed):
         #
         raise NotImplementedError()
 
-    def matrix(self, geometry: Geometry, basis: Basis,
-               periodic: Optional[Periodic] = None, **kwargs) -> Tensor:
+    def matrix(self, geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
         """Construct the hermitian matrix associated with this feed.
 
         Arguments:
             geometry: Systems whose matrices are to be constructed.
             basis: Orbital information associated with said systems.
-            periodic: Distance matrix and position vectors including periodic
-                  images.
-
 
         Keyword Arguments:
             kwargs: Any keyword arguments provided are passed during calls to
@@ -247,8 +243,7 @@ class IntegralFeed(ABC, Feed):
             blk_idx = self.atomic_block_indices(a_idx_l, b_idx_l, basis)
 
             # Construct the blocks for these interactions
-            blks = self.blocks(a_idx_l, b_idx_l, geometry, basis, periodic,
-                               **kwargs)
+            blks = self.blocks(a_idx_l, b_idx_l, geometry, basis, **kwargs)
 
             # Assign data to the matrix. As on-site blocks are not masked out
             # during the transpose assignment the transpose assignment must

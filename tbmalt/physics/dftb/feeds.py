@@ -290,8 +290,7 @@ class ScipySkFeed(IntegralFeed):
         return blks
 
     def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-               geometry: Geometry, basis: Basis, periodic: Periodic,
-               **kwargs) -> Tensor:
+               geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
         r"""Compute atomic interaction blocks using SK-integral tables.
 
           Returns the atomic blocks associated with the atoms in ``atomic_idx_1``
@@ -308,8 +307,6 @@ class ScipySkFeed(IntegralFeed):
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
               basis: Orbital information associated with said systems.
-              periodic: Distance matrix and position vectors including periodic
-                  images.
 
           Returns:
               blocks: Requested atomic interaction sub-blocks.
@@ -359,21 +356,21 @@ class ScipySkFeed(IntegralFeed):
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
-            if periodic is not None:
+            if geometry.periodic is not None:
                 _on_site = self._pe_blocks(
                     atomic_idx_1[on_site], atomic_idx_2[on_site],
-                    geometry, basis, periodic, onsite=True)
+                    geometry, basis, geometry.periodic, onsite=True)
                 blks[on_site] = blks[on_site] + _on_site
 
         if any(~on_site):  # Then the off-site blocks
-            if periodic is None:
+            if geometry.periodic is None:
                 blks[~on_site] = self._off_site_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
                     geometry, basis)
             else:
                 blks[~on_site] = self._pe_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
-                    geometry, basis, periodic)
+                    geometry, basis, geometry.periodic)
 
         if flip:  # If the atoms were switched, then a transpose is required.
             blks = blks.transpose(-1, -2)
@@ -728,8 +725,7 @@ class SkFeed(IntegralFeed):
         return blks
 
     def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-               geometry: Geometry, basis: Basis, periodic: Periodic,
-               **kwargs) -> Tensor:
+               geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
         r"""Compute atomic interaction blocks using SK-integral tables.
           Returns the atomic blocks associated with the atoms in ``atomic_idx_1``
           interacting with those in ``atomic_idx_2`` splines and Slater-Koster
@@ -743,8 +739,6 @@ class SkFeed(IntegralFeed):
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
               basis: Orbital information associated with said systems.
-              periodic: Distance matrix and position vectors including periodic
-                  images.
           Returns:
               blocks: Requested atomic interaction sub-blocks.
           Warnings:
@@ -791,21 +785,21 @@ class SkFeed(IntegralFeed):
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
-            if periodic is not None:
+            if geometry.periodic is not None:
                 _on_site = self._pe_blocks(
                     atomic_idx_1[on_site], atomic_idx_2[on_site],
-                    geometry, basis, periodic, onsite=True)
+                    geometry, basis, geometry.periodic, onsite=True)
                 blks[on_site] = blks[on_site] + _on_site
 
         if any(~on_site):  # Then the off-site blocks
-            if periodic is None:
+            if geometry.periodic is None:
                 blks[~on_site] = self._off_site_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
                     geometry, basis)
             else:
                 blks[~on_site] = self._pe_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
-                    geometry, basis, periodic)
+                    geometry, basis, geometry.periodic)
 
         if flip:  # If the atoms were switched, then a transpose is required.
             blks = blks.transpose(-1, -2)
