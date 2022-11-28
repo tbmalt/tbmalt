@@ -16,11 +16,8 @@ Tensor = torch.Tensor
 _euler = 0.5772156649
 
 
-class Coulomb:
-    """Class to assist the calculation of coulomb interaction by ABC 'Ewald'.
-
-    The 'Coulomb' class checks the type of periodic boundary condition and
-    decides which subclass of ewald summation to use.
+def build_coulomb_matrix(geometry: Geometry, **kwargs):
+    """Construct the 1/R matrix for the periodic geometry.
 
     Arguments:
         geometry: Object for calculation, storing the data of input geometry.
@@ -30,42 +27,36 @@ class Coulomb:
         method: Method to obtain parameters of alpha and cutoff.
         nsearchiter: Maximum of iteration for searching alpha, maxg and maxr.
 
-    Attributes:
-        invrmat: 1/R matrix for the periodic geometry.
-
     Examples:
-        >>> from tbmalt import Geometry, Periodic, Coulomb
+        >>> from tbmalt import Geometry
+        >>> from tbmalt.physics.dftb.coulomb import build_coulomb_matrix
         >>> import torch
         >>> cell = torch.tensor([[2., 0., 0.], [0., 4., 0.], [0., 0., 2.]])
         >>> pos = torch.tensor([[0., 0., 0.], [0., 2., 0.]])
         >>> num = torch.tensor([1, 1])
         >>> cutoff = torch.tensor([9.98])
         >>> system = Geometry(num, pos, cell, units='a', cutoff=cutoff)
-        >>> coulomb = Coulomb(system, method='search')
-        >>> print(coulomb.invrmat)
+        >>> invrmat = build_coulomb_matrix(system, method='search')
+        >>> print(invrmat)
         tensor([[-0.4778, -0.2729],
                 [-0.2729, -0.4778]])
 
     """
 
-    def __init__(self, geometry: Geometry, **kwargs):
-        self.geometry: Geometry = geometry
-        self.periodic: Periodic = geometry.periodic
+    # Check the type of pbc and choose corresponding subclass
+    if geometry.pbc.ndim == 1:  # -> Single
+        _sum_dim = geometry.pbc.sum(dim=-1)
+    else:  # -> Batch
+        _sum_dim = geometry.pbc[0].sum(dim=-1)
 
-        # Check the type of pbc and choose corresponding subclass
-        if self.geometry.pbc.ndim == 1:  # -> Single
-            _sum_dim = self.geometry.pbc.sum(dim=-1)
-        else:  # -> Batch
-            _sum_dim = self.geometry.pbc[0].sum(dim=-1)
+    if _sum_dim == 1:  # -> 1D pbc
+        coulomb = Ewald1d(geometry, geometry.periodic, **kwargs)
+    elif _sum_dim == 2:  # -> 2D pbc
+        coulomb = Ewald2d(geometry, geometry.periodic, **kwargs)
+    elif _sum_dim == 3:  # -> 3D pbc
+        coulomb = Ewald3d(geometry, geometry.periodic, **kwargs)
 
-        if _sum_dim == 1:  # -> 1D pbc
-            coulomb = Ewald1d(self.geometry, self.periodic, **kwargs)
-        elif _sum_dim == 2:  # -> 2D pbc
-            coulomb = Ewald2d(self.geometry, self.periodic, **kwargs)
-        elif _sum_dim == 3:  # -> 3D pbc
-            coulomb = Ewald3d(self.geometry, self.periodic, **kwargs)
-
-        self.invrmat: Tensor = coulomb.invrmat
+    return coulomb.invrmat
 
 
 class Ewald(ABC):

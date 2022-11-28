@@ -5,7 +5,6 @@ from functools import wraps
 import torch
 
 from tbmalt import Geometry, Basis
-from tbmalt.physics.dftb.coulomb import Coulomb
 
 
 def require_args(*r_args, **r_kwargs):
@@ -89,7 +88,6 @@ class Calculator(ABC):
 
         self._geometry = None
         self._basis = None
-        self._coulomb = None
 
     @property
     def device(self) -> torch.device:
@@ -106,14 +104,12 @@ class Calculator(ABC):
         pass
 
     def __call__(self, geometry: Geometry, basis: Basis,
-                 coulomb: Optional[Coulomb] = None,
                  cache: Optional[Dict[str, Any]] = None):
         """Run the calculator instance.
 
         Arguments:
             geometry: System(s) upon which the calculation is to be run.
             basis: Orbital information associated with said system(s).
-            coulomb: 1/R matrix for the periodic geometry.
             cache: A cache entity that may be used to bootstrap the calculation.
 
         Returns:
@@ -153,8 +149,7 @@ class Calculator(ABC):
             self.reset()
         else:
             self.reset()
-            self._geometry, self._basis, self._coulomb =\
-                geometry, basis, coulomb
+            self._geometry, self._basis = geometry, basis
 
         return self.forward(cache=cache)
 
@@ -175,10 +170,6 @@ class Calculator(ABC):
     @property
     def basis(self):
         return self._basis
-
-    @property
-    def coulomb(self):
-        return self._coulomb
 
     @abstractmethod
     def reset(self):

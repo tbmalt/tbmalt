@@ -5,8 +5,8 @@ is tested."""
 
 import torch
 import pytest
-from tbmalt import Geometry, Coulomb
-from tbmalt.physics.dftb.coulomb import Ewald3d
+from tbmalt import Geometry
+from tbmalt.physics.dftb.coulomb import Ewald3d, build_coulomb_matrix
 from tbmalt.common.batch import pack
 torch.set_default_dtype(torch.float64)
 
@@ -69,12 +69,12 @@ def test_coulomb_3d(device):
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    coulomb = Coulomb(system, method='search')
+    invrmat = build_coulomb_matrix(system, method='search')
 
     # Check the tolerance and device
-    check1 = torch.max(abs(coulomb.invrmat - invr_ch4_from_dftbplus.to(device))
+    check1 = torch.max(abs(invrmat - invr_ch4_from_dftbplus.to(device))
                        ) < 1E-15
-    check2 = coulomb.invrmat.device == device
+    check2 = invrmat.device == device
 
     assert check1, 'Ewald summation for 3d pbc is out of tolerance (single).'
     assert check2, 'Coulomb returned on incorrect device.'
@@ -99,12 +99,12 @@ def test_coulomb_3d_batch(device):
                torch.tensor([1, 8, 1], device=device)]
     cutoff = torch.tensor([9.98], device=device)
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    coulomb = Coulomb(system, method='search')
+    invrmat = build_coulomb_matrix(system, method='search')
 
     # Check the tolerance and device
-    check1 = torch.max(abs(coulomb.invrmat - invr_batch_3d.to(device))
+    check1 = torch.max(abs(invrmat - invr_batch_3d.to(device))
                        ) < 1E-15
-    check2 = coulomb.invrmat.device == device
+    check2 = invrmat.device == device
 
     assert check1, 'Ewald summation for 3d pbc is out of tolerance (batch).'
     assert check2, 'Coulomb returned on incorrect device.'
@@ -120,12 +120,12 @@ def test_coulomb_2d_ch4(device):
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    coulomb = Coulomb(system)
+    invrmat = build_coulomb_matrix(system)
 
     # Check the tolerance and device
-    check1 = torch.max(abs(coulomb.invrmat - invr_2d_ch4.to(device))
+    check1 = torch.max(abs(invrmat - invr_2d_ch4.to(device))
                        ) < 1E-15
-    check2 = coulomb.invrmat.device == device
+    check2 = invrmat.device == device
 
     assert check1, 'Ewald summation for 2d pbc is out of tolerance (single).'
     assert check2, 'Coulomb returned on incorrect device.'
@@ -139,12 +139,12 @@ def test_coulomb_2d_h2(device):
     numbers = torch.tensor([1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    coulomb = Coulomb(system)
+    invrmat = build_coulomb_matrix(system)
 
     # Check the tolerance and device
-    check1 = torch.max(abs(coulomb.invrmat - invr_2d_h2.to(device))
+    check1 = torch.max(abs(invrmat - invr_2d_h2.to(device))
                        ) < 1E-15
-    check2 = coulomb.invrmat.device == device
+    check2 = invrmat.device == device
 
     assert check1, 'Ewald summation for 2d pbc is out of tolerance (single).'
     assert check2, 'Coulomb returned on incorrect device.'
@@ -159,12 +159,12 @@ def test_coulomb_2d_h2o(device):
     numbers = torch.tensor([1, 8, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    coulomb = Coulomb(system)
+    invrmat = build_coulomb_matrix(system)
 
     # Check the tolerance and device
-    check1 = torch.max(abs(coulomb.invrmat - invr_2d_h2o.to(device))
+    check1 = torch.max(abs(invrmat - invr_2d_h2o.to(device))
                        ) < 1E-15
-    check2 = coulomb.invrmat.device == device
+    check2 = invrmat.device == device
 
     assert check1, 'Ewald summation for 2d pbc is out of tolerance (single).'
     assert check2, 'Coulomb returned on incorrect device.'
@@ -189,12 +189,12 @@ def test_coulomb_2d_batch(device):
                torch.tensor([1, 8, 1], device=device)]
     cutoff = torch.tensor([9.98], device=device)
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    coulomb = Coulomb(system)
+    invrmat = build_coulomb_matrix(system)
 
     # Check the tolerance and device
-    check1 = torch.max(abs(coulomb.invrmat - invr_batch_2d.to(device))
+    check1 = torch.max(abs(invrmat - invr_batch_2d.to(device))
                        ) < 1E-15
-    check2 = coulomb.invrmat.device == device
+    check2 = invrmat.device == device
 
     assert check1, 'Ewald summation for 2d pbc is out of tolerance (batch).'
     assert check2, 'Coulomb returned on incorrect device.'
@@ -210,12 +210,12 @@ def test_coulomb_1d_ch4(device):
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    coulomb = Coulomb(system)
+    invrmat = build_coulomb_matrix(system)
 
     # Check the tolerance and device
-    check1 = torch.max(abs(coulomb.invrmat - invr_1d_ch4.to(device))
+    check1 = torch.max(abs(invrmat - invr_1d_ch4.to(device))
                        ) < 1E-15
-    check2 = coulomb.invrmat.device == device
+    check2 = invrmat.device == device
 
     assert check1, 'Ewald summation for 1d pbc is out of tolerance (single).'
     assert check2, 'Coulomb returned on incorrect device.'
@@ -229,12 +229,12 @@ def test_coulomb_1d_h2(device):
     numbers = torch.tensor([1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    coulomb = Coulomb(system)
+    invrmat = build_coulomb_matrix(system)
 
     # Check the tolerance and device
-    check1 = torch.max(abs(coulomb.invrmat - invr_1d_h2.to(device))
+    check1 = torch.max(abs(invrmat - invr_1d_h2.to(device))
                        ) < 1E-15
-    check2 = coulomb.invrmat.device == device
+    check2 = invrmat.device == device
 
     assert check1, 'Ewald summation for 1d pbc is out of tolerance (single).'
     assert check2, 'Coulomb returned on incorrect device.'
@@ -249,12 +249,12 @@ def test_coulomb_1d_h2o(device):
     numbers = torch.tensor([1, 8, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    coulomb = Coulomb(system)
+    invrmat = build_coulomb_matrix(system)
 
     # Check the tolerance and device
-    check1 = torch.max(abs(coulomb.invrmat - invr_1d_h2o.to(device))
+    check1 = torch.max(abs(invrmat - invr_1d_h2o.to(device))
                        ) < 1E-15
-    check2 = coulomb.invrmat.device == device
+    check2 = invrmat.device == device
 
     assert check1, 'Ewald summation for 1d pbc is out of tolerance (single).'
     assert check2, 'Coulomb returned on incorrect device.'
@@ -279,12 +279,12 @@ def test_coulomb_1d_batch(device):
                torch.tensor([1, 8, 1], device=device)]
     cutoff = torch.tensor([9.98], device=device)
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    coulomb = Coulomb(system)
+    invrmat = build_coulomb_matrix(system)
 
     # Check the tolerance and device
-    check1 = torch.max(abs(coulomb.invrmat - invr_batch_1d.to(device))
+    check1 = torch.max(abs(invrmat - invr_batch_1d.to(device))
                        ) < 1E-15
-    check2 = coulomb.invrmat.device == device
+    check2 = invrmat.device == device
 
     assert check1, 'Ewald summation for 1d pbc is out of tolerance (batchg).'
     assert check2, 'Coulomb returned on incorrect device.'
@@ -300,21 +300,21 @@ def test_coulomb_3d_convergence(device):
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    coulomb = Coulomb(system, method='search')
+    invrmat = build_coulomb_matrix(system, method='search')
 
     # Increase the positions among atoms twice
     system2 = Geometry(numbers, positions * 2, latvec * 2, units='a',
                        cutoff=cutoff)
-    coulomb2 = Coulomb(system2, method='search')
+    invrmat2 = build_coulomb_matrix(system2, method='search')
 
     # Check the convergence of 3d ewald summation
-    check1 = torch.max(abs(coulomb.invrmat - 2 * coulomb2.invrmat)
+    check1 = torch.max(abs(invrmat - 2 * invrmat2)
                        ) < 1E-15
     assert check1, '3d Ewald summation does not converge.'
 
     # Check the device
-    check2a = coulomb.invrmat.device == device
-    check2b = coulomb2.invrmat.device == device
+    check2a = invrmat.device == device
+    check2b = invrmat2.device == device
     check2 = (check2a and check2b)
     assert check2, 'Coulomb returned on incorrect device.'
 
@@ -329,21 +329,21 @@ def test_coulomb_2d_convergence(device):
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    coulomb = Coulomb(system)
+    invrmat = build_coulomb_matrix(system)
 
     # Increase the positions among atoms twice
     system2 = Geometry(numbers, positions * 2, latvec * 2, units='a',
                        cutoff=cutoff)
-    coulomb2 = Coulomb(system2)
+    invrmat2 = build_coulomb_matrix(system2)
 
     # Check the convergence of 3d ewald summation
-    check1 = torch.max(abs(coulomb.invrmat - 2 * coulomb2.invrmat)
+    check1 = torch.max(abs(invrmat - 2 * invrmat2)
                        ) < 1E-15
     assert check1, '2d Ewald summation does not converge.'
 
     # Check the device
-    check2a = coulomb.invrmat.device == device
-    check2b = coulomb2.invrmat.device == device
+    check2a = invrmat.device == device
+    check2b = invrmat2.device == device
     check2 = (check2a and check2b)
     assert check2, 'Coulomb returned on incorrect device.'
 
@@ -358,21 +358,21 @@ def test_coulomb_1d_convergence(device):
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
     cutoff = torch.tensor([9.98], device=device)
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    coulomb = Coulomb(system)
+    invrmat = build_coulomb_matrix(system)
 
     # Increase the positions among atoms twice
     system2 = Geometry(numbers, positions * 2, latvec * 2, units='a',
                        cutoff=cutoff)
-    coulomb2 = Coulomb(system2)
+    invrmat2 = build_coulomb_matrix(system2)
 
     # Check the convergence of 3d ewald summation
-    check1 = torch.max(abs(coulomb.invrmat - 2 * coulomb2.invrmat)
+    check1 = torch.max(abs(invrmat - 2 * invrmat2)
                        ) < 1E-15
     assert check1, '1d Ewald summation does not converge.'
 
     # Check the device
-    check2a = coulomb.invrmat.device == device
-    check2b = coulomb2.invrmat.device == device
+    check2a = invrmat.device == device
+    check2b = invrmat2.device == device
     check2 = (check2a and check2b)
     assert check2, 'Coulomb returned on incorrect device.'
 

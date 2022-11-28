@@ -12,6 +12,7 @@ from tbmalt.physics.dftb.feeds import Feed, SkfOccupationFeed
 from tbmalt.physics.filling import (
     fermi_search, fermi_smearing, gaussian_smearing, entropy_term, aufbau_filling)
 from tbmalt.common.maths import eighb
+from tbmalt.physics.dftb.coulomb import build_coulomb_matrix
 from tbmalt.physics.dftb.gamma import build_gamma_matrix
 from tbmalt.physics.dftb.properties import dos
 from tbmalt.common.batch import prepeat_interleave
@@ -414,6 +415,8 @@ class Dftb2(Dftb1):
             may also be provided directly.
         gamma_scheme: scheme used to construct the gamma matrix. This may be
             either "exponential" or "gaussian". [DEFAULT="exponential"]
+        coulomb_scheme: scheme used to construct the coulomb matrix. This may
+            be either "search" or "experience". [DEFAULT="search"]
         max_scc_iter: maximum permitted number of SCC iterations. If one or
             more system fail to converge within ``max_scc_iter`` cycles then a
             convergence error will be raise; unless the ``suppress_SCF_error``
@@ -431,6 +434,7 @@ class Dftb2(Dftb1):
             `h_feed` entity.
         gamma: the gamma matrix, this is constructed via the specified scheme
             and uses the Hubbard-U values produced by the `u_feed`
+        invr: the 1/R matrix.
         hamiltonian: second order Hamiltonian matrix as produced via the SCC
             cycle.
         converged: a tensor of booleans indicating which systems have and
@@ -459,12 +463,14 @@ class Dftb2(Dftb1):
 
         self._core_hamiltonian: Optional[Tensor] = None
         self._gamma: Optional[Tensor] = None
+        self._invr: Optional[Tensor] = None
         self.converged: Optional[Tensor] = None
 
         # Calculator Settings
         self.max_scc_iter = max_scc_iter
         self.suppress_SCF_error = kwargs.get('supress_SCF_error', False)
         self._gamma_scheme = kwargs.get('gamma_scheme', 'exponential')
+        self._coulomb_scheme = kwargs.get('coulomb_scheme', 'search')
 
         # If no pre-initialised was provided then construct one.
         if isinstance(mixer, str):
@@ -499,11 +505,29 @@ class Dftb2(Dftb1):
         self._core_hamiltonian = value
 
     @property
+    def invr(self):
+        """1/R matrix"""
+        if self._invr is None:
+            if self.geometry.periodic is not None:
+                self._invr = build_coulomb_matrix(self.geometry,
+                                                  method=self._coulomb_scheme)
+            else:
+                _r = self.geometry.distances
+                _r[_r != 0.0] = 1.0 / _r[_r != 0.0]
+                self.invr = _r
+
+        return self._invr
+
+    @invr.setter
+    def invr(self, value):
+        self._invr = value
+
+    @property
     def gamma(self):
         """Gamma matrix"""
         if self._gamma is None:
             self._gamma = build_gamma_matrix(
-                self.geometry, self.basis, self.coulomb,
+                self.geometry, self.basis, self.invr,
                 self.u_feed(self.basis), self._gamma_scheme)
         return self._gamma
 
@@ -550,7 +574,7 @@ class Dftb2(Dftb1):
 
         # Calls are made to the various cached properties to ensure that they
         # are constructed within the purview of the graph.
-        self.overlap, self.core_hamiltonian, self.gamma
+        self.overlap, self.core_hamiltonian, self.invr, self.gamma
 
         # Step 2: Preliminary SCC cycle
         # A preliminary SCC cycle is performed outside of the gradient and acts
@@ -593,7 +617,7 @@ class Dftb2(Dftb1):
                 # required as it is regenerated in full in the second SCC cycle.
                 c_geometry, c_basis = self.geometry, self.basis
                 c_overlap, c_gamma = self.overlap, self.gamma
-                c_hamiltonian_copy = self.core_hamiltonian
+                c_invr, c_hamiltonian_copy = self.invr, self.core_hamiltonian
 
                 # Todo:
                 #  Implement a method that can identify which properties do and
@@ -641,7 +665,7 @@ class Dftb2(Dftb1):
                         # raised to help with debugging.
                         self._geometry, self._basis = c_geometry, c_basis
                         self.overlap, self.gamma = c_overlap, c_gamma
-                        self.core_hamiltonian = c_hamiltonian_copy
+                        self.invr, self.core_hamiltonian = c_invr, c_hamiltonian_copy
 
                         raise ConvergenceError(
                             "SCC cycle failed to converge; "
@@ -652,7 +676,7 @@ class Dftb2(Dftb1):
                 # assumed that they will be overridden in the next stage.
                 self._geometry, self._basis = c_geometry, c_basis
                 self.overlap, self.gamma = c_overlap, c_gamma
-                self.core_hamiltonian = c_hamiltonian_copy
+                self.invr, self.core_hamiltonian = c_invr, c_hamiltonian_copy
 
         # Step 3: Final SCC cycle
         # A single shot SCC cycle is now performed using the converged charges

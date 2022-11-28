@@ -5,7 +5,6 @@ import torch
 from torch import Tensor
 from tbmalt import Geometry, Basis
 from tbmalt.physics.dftb.feeds import Feed
-from tbmalt.physics.dftb.coulomb import Coulomb
 import numpy as np
 from tbmalt.common.batch import pack, prepeat_interleave
 from tbmalt.data import gamma_cutoff, gamma_element_list
@@ -185,7 +184,7 @@ def gamma_gaussian(geometry: Geometry, basis: Basis, hubbard_Us: Tensor
     return gamma
 
 
-def gamma_exponential_pbc(geometry, basis, coulomb, hubbard_Us):
+def gamma_exponential_pbc(geometry, basis, invr, hubbard_Us):
     """Build the Slater type gamma in second-order term with pbc."""
 
     r = geometry.periodic.periodic_distances
@@ -262,8 +261,7 @@ def gamma_exponential_pbc(geometry, basis, coulomb, hubbard_Us):
 
     # Subtract the gamma matrix from the inverse distance to get the final
     # result.
-    invrmat = coulomb.invrmat
-    gamma = invrmat - gamma
+    gamma = invr - gamma
 
     return gamma
 
@@ -362,7 +360,7 @@ def _expgamma(distance_tr, alpha, beta, mask_homo, mask_hetero, gamma_tem):
 
 
 def build_gamma_matrix(
-        geometry: Geometry, basis: Basis, coulomb: Coulomb,
+        geometry: Geometry, basis: Basis, invr: Tensor,
         hubbard_Us: Tensor, scheme: Literal['exponential', 'gaussian'] =
         'exponential'):
     """Construct the gamma matrix
@@ -371,7 +369,7 @@ def build_gamma_matrix(
         geometry: `Geometry` object of the system(s) whose gamma matrix is to
             be constructed.
         basis: `Basis` instance associated with the target system.
-        coulomb: `Coulomb` object of the targer system(s) containing 1/R matrix.
+        invr: 1/R matrix.
         hubbard_Us: Hubbard U values. one value should be specified for each
             atom or shell depending if the calculation being performed is atom
             or shell resolved.
@@ -394,6 +392,6 @@ def build_gamma_matrix(
                 f'Gamma constructor method {scheme} is unknown'))
     else:
         if scheme == 'exponential':
-            return gamma_exponential_pbc(geometry, basis, coulomb, hubbard_Us)
+            return gamma_exponential_pbc(geometry, basis, invr, hubbard_Us)
         elif scheme == 'gaussian':
             raise NotImplementedError('Not implement gaussian for pbc yet.')
