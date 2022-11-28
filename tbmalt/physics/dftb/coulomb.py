@@ -136,7 +136,7 @@ class Ewald(ABC):
                                       dtype=self._dtype))
 
         # Method to obtain parameters for calculation
-        self.method: str = kwargs.get('method', 'default')
+        self.method: str = kwargs.get('method', 'experience')
 
         # Maximun number of iteration when searching alpha
         self.nsearchiter: int = kwargs.get('nsearchiter', 30)
@@ -145,7 +145,7 @@ class Ewald(ABC):
         self._max_natoms: Tensor = torch.max(self.natom)
 
         # Default method to obtain parameters by empirical formulas
-        if self.method == 'default':
+        if self.method == 'experience':
 
             # Splitting parameter
             self.alpha: Tensor = self._default_alpha()
