@@ -623,6 +623,11 @@ class SkFeed(IntegralFeed):
                         off_sites[pair + (*reversed(key),)] = interpolation(
                             *clip(skf_2.grid, value), **params)
 
+                        # Add variables for spline training
+                        if interpolation is CSpline and requires_grad:
+                            off_sites[pair + (*reversed(key),)
+                                      ].abcd.requires_grad_(True)
+
                 # Add variables for spline training
                 if interpolation is CSpline and requires_grad:
                     off_sites[pair + key].abcd.requires_grad_(True)
