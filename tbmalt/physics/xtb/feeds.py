@@ -23,6 +23,7 @@ from tbmalt.ml.module import require_args
 
 from external.dxtb.origin.dxtb.ncoord import get_coordination_number, exp_count
 from external.dxtb.origin.dxtb.basis import IndexHelper
+from external.dxtb.origin.dxtb.integral import Overlap
 from external.dxtb.origin.dxtb.param import Param, get_elem_angular
 from external.dxtb.origin.dxtb.xtb import Hamiltonian
 
@@ -93,13 +94,18 @@ class XtbOccupationFeed(Feed):
 
     def __call__(self, basis: Basis) -> torch.Tensor:
         numbers = basis.atomic_numbers
-        dummy = torch.tensor(0.0, dtype=self.dtype, device=self.device)
 
         # helper for mapping atomic, orbital and shell indices
         ihelp = IndexHelper.from_numbers(numbers, get_elem_angular(self.par.element))
 
         # second argument (positions) is only required for settings dtype/device
-        return Hamiltonian(numbers, dummy, self.par, ihelp).get_occupation()
+        return Hamiltonian(
+            numbers,
+            self.par,
+            ihelp,
+            device=self.device,
+            dtype=self.dtype,
+        ).get_occupation()
 
 
 class Gfn1OccupationFeed(XtbOccupationFeed):
@@ -157,8 +163,14 @@ class XtbOverlapFeed(IntegralFeed):
         ihelp = IndexHelper.from_numbers(numbers, get_elem_angular(self.par.element))
 
         # constructing overlap
-        h0 = Hamiltonian(numbers, positions, self.par, ihelp)
-        return h0.overlap()
+        s = Overlap(
+            numbers,
+            self.par,
+            ihelp,
+            device=self.device,
+            dtype=self.dtype,
+        )
+        return s.build(positions)
 
 
 class XtbHamiltonianFeed(IntegralFeed):
@@ -175,8 +187,8 @@ class XtbHamiltonianFeed(IntegralFeed):
         super().__init__(dtype, device)
         self.par = par
 
-    @require_args("geometry")
-    def matrix(self, geometry: Geometry) -> torch.Tensor:
+    @require_args("geometry", "overlap")
+    def matrix(self, geometry: Geometry, overlap: torch.Tensor) -> torch.Tensor:
         """
         Construct the Hamiltonian matrix.
         The basis is constructed within the dxtb's `Hamiltonian` class.
@@ -201,9 +213,14 @@ class XtbHamiltonianFeed(IntegralFeed):
         ihelp = IndexHelper.from_numbers(numbers, get_elem_angular(self.par.element))
 
         # constructing hamiltonian and overlap
-        h0 = Hamiltonian(numbers, positions, self.par, ihelp)
-        o = h0.overlap()
-        return h0.build(o, cn=cn)
+        h0 = Hamiltonian(
+            numbers,
+            self.par,
+            ihelp,
+            device=self.device,
+            dtype=self.dtype,
+        )
+        return h0.build(positions, overlap, cn=cn)
 
 
 class Gfn1OverlapFeed(XtbOverlapFeed):

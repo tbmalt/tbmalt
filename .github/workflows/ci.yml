@@ -16,16 +16,16 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.8, 3.9, "3.10"]
+        python-version: ["3.8", "3.9", "3.10"]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
 
       - name: Setup SSH key
-        uses: webfactory/ssh-agent@v0.6.0
+        uses: webfactory/ssh-agent@v0.7.0
         with:
-          ssh-private-key: ${{ secrets.DXTB_SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ secrets.DXTB_DEPLOY_KEY }}
 
       - name: Checkout submodules
         run: git submodule update --init --recursive
