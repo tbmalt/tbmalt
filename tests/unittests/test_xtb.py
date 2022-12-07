@@ -191,28 +191,6 @@ def load_from_npz(
     return torch.from_numpy(npzfile[name]).type(dtype).to(device)
 
 
-def combinations(x: torch.Tensor, r: int = 2) -> torch.Tensor:
-    """
-    Generate all combinations of matrix elements.
-
-    This is required for the comparision of overlap and Hmailtonian for
-    larger systems because these matrices do not coincide with tblite.
-    This is possibly due to switched indices, which were introduced in
-    the initial Fortran-to-Python port.
-
-    Parameters
-    ----------
-    x : Tensor
-        Matrix to generate combinations from.
-
-    Returns
-    -------
-    Tensor
-        Matrix of combinations (n, 2).
-    """
-    return torch.combinations(torch.sort(x.flatten())[0], r)
-
-
 ##############
 # TEST FEEDS #
 ##############
@@ -234,16 +212,16 @@ def test_feed_single(device: torch.device, name: str) -> None:
     ref_h = load_from_npz(ref_h0, name, dtype, device)
 
     # create integral feed and get matrix
-    h_feed = Gfn1HamiltonianFeed(GFN1_XTB, dtype, device)
-    h = h_feed.matrix(geometry)
     s_feed = Gfn1OverlapFeed(GFN1_XTB, dtype, device)
     s = s_feed.matrix(geometry)
+    h_feed = Gfn1HamiltonianFeed(GFN1_XTB, dtype, device)
+    h = h_feed.matrix(geometry, s)
 
     assert torch.allclose(s, s.mT, atol=tol)
-    assert torch.allclose(combinations(s), combinations(ref_s), atol=tol)
+    assert torch.allclose(s, ref_s, atol=tol)
 
     assert torch.allclose(h, h.mT, atol=tol)
-    assert torch.allclose(combinations(h), combinations(ref_h), atol=tol)
+    assert torch.allclose(h, ref_h, atol=tol)
 
 
 ###################
