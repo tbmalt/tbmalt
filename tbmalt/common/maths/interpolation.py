@@ -8,15 +8,12 @@ Tensor = torch.Tensor
 
 class BicubInterp:
     """Bicubic interpolation method.
-
     The bicubic interpolation is designed to interpolate the integrals with
     given compression radii or distances.
-
     Arguments:
         compr: Grid points for interpolation, 1D Tensor.
         zmesh: 2D, 3D or 4D Tensor, 2D is for single integral with various
             compression radii, 3D is for multi integrals.
-
     References:
         .. [wiki] https://en.wikipedia.org/wiki/Bicubic_interpolation
     """
@@ -36,7 +33,6 @@ class BicubInterp:
 
     def __call__(self, rr: Tensor, distances=None):
         """Calculate bicubic interpolation.
-
         Arguments:
             rr: The points to be interpolated for the first dimension and
                 second dimension.
@@ -201,7 +197,7 @@ class PolyInterpU:
         """
         n_grid_point = len(self.xx)  # -> number of grid points
         r_max = (n_grid_point - 1) * self.grid_step + self.tail
-        ind = torch.searchsorted(self.xx, rr).to(self._device)
+        ind = torch.round((rr - self.xx[0]) / self.grid_step).to(self._device)
         result = (
             torch.zeros(rr.shape, device=self._device)
             if self.yy.dim() == 1
@@ -226,8 +222,8 @@ class PolyInterpU:
             result[_mask] = poly_interp(xa, yb, rr[_mask])
 
         # Beyond the grid => extrapolation with polynomial of 5th order
-        max_ind = n_grid_point - 1 + int(self.tail / self.grid_step)
-        is_tail = ind.masked_fill(ind.ge(n_grid_point) * ind.le(max_ind), -1).eq(-1)
+        # max_ind = n_grid_point - 1 + int(self.tail / self.grid_step)
+        is_tail = rr.gt(self.xx[-1]) * rr.lt(self.xx[-1] + self.tail)
         if is_tail.any():
             dr = rr[is_tail] - r_max
             ilast = n_grid_point
@@ -245,6 +241,7 @@ class PolyInterpU:
             y1 = self.yy[ilast - 2]
             y1p = (y2 - y0) / (2.0 * self.delta_r)
             y1pp = (y2 + y0 - 2.0 * y1) / (self.delta_r * self.delta_r)
+            dr = dr.repeat(self.yy.shape[1], 1).T if self.yy.dim() == 2 else dr
 
             result[is_tail] = poly_to_zero(
                 dr, -1.0 * self.tail, -1.0 / self.tail, y1, y1p, y1pp)
@@ -415,7 +412,7 @@ class CubicSpline(torch.nn.Module):
         )
 
         # get the nearest grid point index of distance in grid points
-        ind = torch.searchsorted(self.xp.detach(), xnew)
+        ind = torch.round((xnew - self.xp[0]) / self.grid_step).to(self._device).long()
 
         # interpolation of xx which not in the tail
         if (ind <= n_grid_point).any():
@@ -423,8 +420,9 @@ class CubicSpline(torch.nn.Module):
             result[_mask] = self.cubic(xnew[_mask], ind[_mask] - 1)
 
         r_max = (n_grid_point - 1) * self.grid_step + self.tail
-        max_ind = n_grid_point - 1 + int(self.tail / self.grid_step)
-        is_tail = ind.masked_fill(ind.ge(n_grid_point) * ind.le(max_ind), -1).eq(-1)
+        # max_ind = n_grid_point - 1 + int(self.tail / self.grid_step)
+        # is_tail = ind.masked_fill(ind.ge(n_grid_point) * ind.le(max_ind), -1).eq(-1)
+        is_tail = xnew.gt(self.xp[-1]) * xnew.lt(self.xp[-1] + self.tail)
 
         if is_tail.any():
             dr = xnew[is_tail] - r_max
@@ -443,6 +441,7 @@ class CubicSpline(torch.nn.Module):
             y1 = self.yp[..., ilast - 2]
             y1p = (y2 - y0) / (2.0 * self.delta_r)
             y1pp = (y2 + y0 - 2.0 * y1) / (self.delta_r * self.delta_r)
+            dr = dr.repeat(self.yp.shape[0], 1).T if self.yp.dim() == 2 else dr
 
             result[is_tail] = poly_to_zero(
                 dr, -1.0 * self.tail, -1.0 / self.tail, y1, y1p, y1pp)

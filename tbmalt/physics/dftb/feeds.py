@@ -280,7 +280,6 @@ class ScipySkFeed(IntegralFeed):
             >>> for file in [f'{i}-{j}.skf' for i in Zs for j in Zs]:
             >>>     Skf.read(file).write('my_skf.hdf5')
 
-
         """
         # As C-H & C-H interactions are the same only one needs to be loaded.
         # Thus only off-site interactions where z₁≤z₂ are generated. However,
@@ -437,8 +436,7 @@ class SkFeed(IntegralFeed):
         dist = torch.linalg.norm(dist_vec, dim=-1)
         u_vec = (dist_vec.T / dist).T
         if self.interpolation is BicubInterp:
-            cr = kwargs.get('ml_params')['compression_radii']
-            cr = torch.stack([cr[atomic_idx_1.T], cr[atomic_idx_2.T]]).T
+            cr = torch.stack([self.vcr[atomic_idx_1.T], self.vcr[atomic_idx_2.T]]).T
 
         # Work out the width of each sub-block then use it to get the row and
         # column index slicers for placing sub-blocks into their atom-blocks.
@@ -533,8 +531,12 @@ class SkFeed(IntegralFeed):
         # Identify which are on-site blocks and which are off-site
         on_site = self._partition_blocks(atomic_idx_1, atomic_idx_2)
 
-        if any(on_site):  # Construct the on-site blocks (if any are present)
+        # Construct the on-site blocks (if any are present)
+        if any(on_site) and not self.is_local_onsite:
             blks[on_site] = torch.diag(self.on_sites[int(z_1)])
+        elif any(on_site) and self.is_local_onsite:
+            blks[on_site] = torch.diag_embed(
+                self.on_sites[int(z_1)], dim1=-2, dim2=-1)
 
         if any(~on_site):  # Then the off-site blocks
             blks[~on_site] = self._off_site_blocks(
@@ -639,6 +641,11 @@ class SkFeed(IntegralFeed):
                     if key[0] < key[1]:
                         off_sites[pair + (*reversed(key),)] = interpolation(
                             *clip(skf_2.grid, value), **params)
+
+                        # Add variables for spline training
+                        if interpolation is CSpline and requires_grad:
+                            off_sites[pair + (*reversed(key),)
+                                      ].abcd.requires_grad_(True)
 
                 # Add variables for spline training
                 if interpolation is CSpline and requires_grad:

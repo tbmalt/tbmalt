@@ -1,3 +1,5 @@
+"""Training on two simple molecules."""
+
 from os.path import exists
 from typing import Any
 import torch
@@ -78,11 +80,11 @@ species = species[species != 0].tolist()
 
 # Load the Hamiltonian feed model
 h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation=CubicSpline, requires_grad=True)
+                              interpolation=CubicSpline)
 
 # Load the overlap feed model
 s_feed = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation=CubicSpline, requires_grad=True)
+                              interpolation=CubicSpline)
 
 # Load the occupation feed object
 o_feed = SkfOccupationFeed.from_database(parameter_db_path, species)
@@ -100,8 +102,16 @@ dftb_calculator(geometry, basis)
 # Construct machine learning object
 lr = 0.002
 criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
-h_var = [val.abcd for key, val in h_feed.off_sites.items()]
-s_var = [val.abcd for key, val in s_feed.off_sites.items()]
+
+h_var, s_var = [], []
+for key in h_feed.off_sites.keys():
+
+    # Collect spline parameters and add to optimizer
+    h_feed.off_sites[key].abcd.requires_grad_(True)
+    s_feed.off_sites[key].abcd.requires_grad_(True)
+    h_var.append({'params': h_feed.off_sites[key].abcd, 'lr': lr})
+    s_var.append({'params': s_feed.off_sites[key].abcd, 'lr': lr})
+
 optimizer = getattr(torch.optim, 'Adam')(h_var + s_var, lr=lr)
 
 
@@ -170,6 +180,7 @@ if fit_model:
         loss = calculate_losses(dftb_calculator, targets)
 
         optimizer.zero_grad()
+        print(epoch, loss)
 
         # Invoke the autograd engine
         loss.backward()

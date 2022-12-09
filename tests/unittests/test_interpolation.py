@@ -118,7 +118,7 @@ def test_spline_cubic(device):
     cs0 = SciCubSpl(xa0.cpu(), yb0.cpu())
     ref0 = torch.from_numpy(cs0(np.array([2.0, 2.5, 3.5, 4.9, 5.5, 6.2])))
 
-    assert torch.allclose(ref0, pred0.cpu()), 'tolerance check'
+    assert torch.allclose(ref0, pred0.cpu(), atol=1e-6), 'tolerance check'
 
     # Check device: Device persistence check
     check_dev = pred0.device == xa0.device
@@ -134,7 +134,7 @@ def test_spline_cubic(device):
     cs = SciCubSpl(xa.cpu(), yb.cpu())
     ref = torch.from_numpy(cs(torch.tensor([2.0, 2.5, 3.5, 4.9, 5.5, 6.2])))
 
-    assert torch.allclose(ref, pred.cpu()), 'tolerance check'
+    assert torch.allclose(ref, pred.cpu(), atol=1e-5), 'tolerance check'
 
     # Check device: Device persistence check
     check_dev = pred.device == xa.device
