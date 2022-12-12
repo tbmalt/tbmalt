@@ -514,7 +514,7 @@ class Dftb2(Dftb1):
             else:
                 _r = self.geometry.distances
                 _r[_r != 0.0] = 1.0 / _r[_r != 0.0]
-                self.invr = _r
+                self._invr = _r
 
         return self._invr
 
@@ -714,6 +714,7 @@ class Dftb2(Dftb1):
         self._overlap = self._overlap[~mask, :n_orbs, :n_orbs]
         self._core_hamiltonian = self._core_hamiltonian[~mask, :n_orbs, :n_orbs]
         self._gamma = self._gamma[~mask, :n_res, :n_res]
+        self._invr = self._invr[~mask, :n_res, :n_res]
 
     def _scc_cycle(self, q_in: Tensor) -> Tensor:
         """Perform a single self-consistent charge cycle.
@@ -770,6 +771,7 @@ class Dftb2(Dftb1):
         self._core_hamiltonian = None
         self._hamiltonian = None
         self._gamma = None
+        self._invr = None
         self.converged = None
 
         self.rho = None
