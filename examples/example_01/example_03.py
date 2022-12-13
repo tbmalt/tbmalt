@@ -2,7 +2,6 @@ import pickle
 from os.path import exists
 from typing import Any, List
 
-import numpy as np
 import torch
 import h5py
 from h5py import Group
@@ -49,8 +48,20 @@ fit_model = True
 pred_model = True
 
 # Number of fitting cycles, number of batch size each cycle
-number_of_epochs = 5
+number_of_epochs = 120
 n_fit_batch = 1000
+lr = 0.01
+onsite_lr = 1e-3
+criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
+# ACSF parameters
+g1_params = 6.0
+g2_params = torch.tensor([0.5, 1.0])
+g4_params = torch.tensor([[0.02, 1.0, -1.0]])
+element_resolve = True  # If ACSF is element resolved
+n_estimators = 100  # parameters in random forest
+global_r = True  # If basis parameters is global
+tolerance = 1e-6  # tolerance of loss
+shell_resolved = False  # If DFTB Hubbard U is shell resolved
 
 # Location of a file storing the properties that will be fit to.
 target_path = './dataset.h5'
@@ -80,14 +91,12 @@ def load_target_data(properties: List, groups: Group) -> Any:
 
 # 2.1: Target system specific objects
 # -----------------------------------
-if fit_model:
+if fit_model or pred_model:
     with h5py.File(target_path, 'r') as f:
         dataloder_fit = [load_target_data(targets, g) for g in
                          [f['run1']['train'], f['run2']['train'], f['run3']['train']]]
         dataloder_test = [load_target_data(targets, g) for g in
                           [f['run1']['test'], f['run2']['test'], f['run3']['test']]]
-else:
-    raise NotImplementedError()
 
 
 # 2.2: Loading of the DFTB parameters into their associated feed objects
@@ -96,9 +105,6 @@ else:
 # ase.Atoms object while the latter provides information about what orbitals
 # are present and which atoms they belong two. `Basis` is perhaps a poor choice
 # of name and `OrbitalInfo` would be more appropriate.
-# geometry = Geometry(atomic_numbers, positions, units='a')
-# basis = Basis(geometry.atomic_numbers, shell_dict, shell_resolved=False)
-
 # Construct the Hamiltonian and overlap matrix feeds; but ensure that the DFTB
 # parameter set database actually exists first.
 if not exists(parameter_db_path):
@@ -143,22 +149,12 @@ with open('dftb_calculator_vcr_init_std.pkl', 'wb') as w:
         h_feed_std, s_feed_std, o_feed_std, u_feed_std)
     pickle.dump(dftb_calculator_init_std, w)
 
+
 # 2.4: Construct machine learning object
-lr = 0.02
-onsite_lr = 1e-4
-criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
-g1_params = 6.0
-g2_params = torch.tensor([0.5, 1.0])
-g4_params = torch.tensor([[0.02, 1.0, -1.0]])
-element_resolve = True
-n_estimators = 100
-global_r = True
-tolerance = 1e-5
-
-
 def build_optim(dftb_calculator, dataloder, global_r):
     """Build optimizer for VCR training."""
     comp_r = torch.ones(dataloder.dataset['atomic_numbers'].shape) * 3.5
+    assert shell_resolved is False, 'do not support shell_resolved is True'
 
     if not global_r:
         comp_r[dataloder.dataset['atomic_numbers'] == 1] = 3.0
@@ -167,38 +163,34 @@ def build_optim(dftb_calculator, dataloder, global_r):
         comp_r[dataloder.dataset['atomic_numbers'] == 8] = 2.3
         comp_r.requires_grad_(True)
 
-        ml_onsite, ml_onsite_dict = [], {}
+        ml_onsite, onsite_dict = [], {}
         numbers = dataloder.dataset['atomic_numbers']
 
         for key, val in h_feed.on_sites.items():
             n_atoms = (numbers == key).sum()
-            ml_onsite_dict.update({key: val.repeat(n_atoms, 1)})
-
-        dftb_calculator.h_feed.on_sites = ml_onsite_dict
-        for key, val in dftb_calculator.h_feed.on_sites.items():
-            dftb_calculator.h_feed.on_sites[key].requires_grad_(True)
-            ml_onsite.append(
-                {'params': dftb_calculator.h_feed.on_sites[key], 'lr': onsite_lr})
+            for l in shell_dict[key]:
+                onsite_dict.update({(key, l): val[int(l ** 2)].repeat(
+                    n_atoms).requires_grad_(True)})
+                ml_onsite.append({'params': onsite_dict[(key, l)], 'lr': onsite_lr})
 
         optimizer = getattr(torch.optim, 'Adam')(
             [{'params': comp_r, 'lr': lr}] + ml_onsite, lr=lr)
 
-        return comp_r, ml_onsite_dict, optimizer
+        return comp_r, onsite_dict, optimizer
     else:
         # For global compression radii, optimize each atom specie parameters
-        unq_atm = torch.unique(dataloder.dataset['atomic_numbers'])
-        unq_atm = unq_atm[unq_atm.ne(0)]
         comp_r0 = torch.tensor([3.0, 2.7, 2.2, 2.3])
         comp_r0.requires_grad_(True)
 
-        ml_onsite = []
-        for key, val in h_feed.on_sites.items():
-            h_feed.on_sites[key].requires_grad_(True)
-            ml_onsite.append({'params': val, 'lr': onsite_lr})
+        ml_onsite, onsite_dict = [], {}
+        for key, val in dftb_calculator.h_feed.on_sites.items():
+            for l in shell_dict[key]:
+                onsite_dict.update({(key, l): val[int(l ** 2)].requires_grad_(True)})
+                ml_onsite.append({'params': onsite_dict[(key, l)], 'lr': onsite_lr})
 
         optimizer = getattr(torch.optim, 'Adam')(
             [{'params': comp_r0, 'lr': lr}] + ml_onsite, lr=lr)
-        return comp_r0, optimizer
+        return comp_r0, onsite_dict, optimizer
 
 
 # ================= #
@@ -239,11 +231,12 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
     indice = torch.split(torch.tensor(dataloder.random_idx), n_batch)
 
     if not global_r:
-        comp_r, ml_onsite_dict, optimizer = build_optim(dftb_calculator, dataloder, global_r)
+        comp_r, onsite_dict, optimizer = build_optim(
+            dftb_calculator, dataloder, global_r)
         dftb_calculator.h_feed.is_local_onsite = True
-        dftb_calculator.h_feed.on_sites = ml_onsite_dict
     else:
-        comp_r, optimizer = build_optim(dftb_calculator, dataloder, global_r)
+        comp_r, onsite_dict, optimizer = build_optim(
+            dftb_calculator, dataloder, global_r)
 
     loss_old = 0
     for epoch in range(number_of_epochs):
@@ -251,14 +244,26 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
         data = dataloder[indice[epoch % len(indice)]]
 
         geometry = Geometry(data['atomic_numbers'], data['positions'], units='a')
-        basis = Basis(geometry.atomic_numbers, shell_dict, shell_resolved=False)
+        basis = Basis(geometry.atomic_numbers, shell_dict,
+                      shell_resolved=shell_resolved)
 
         if not global_r:
             this_cr = comp_r[indice[epoch % len(indice)]]
+            if not shell_resolved:
+                dftb_calculator.h_feed.on_sites = {
+                    iatm: torch.cat([onsite_dict[(iatm, l)].repeat(2 * l + 1, 1).T
+                                     for l in shell_dict[iatm]], -1)
+                    for iatm in geometry.unique_atomic_numbers().tolist()}
         else:
             this_cr = torch.ones(geometry.atomic_numbers.shape)
             for ii, iatm in enumerate(geometry.unique_atomic_numbers()):
                 this_cr[iatm == geometry.atomic_numbers] = comp_r[ii]
+
+            if not shell_resolved:
+                dftb_calculator.h_feed.on_sites = {
+                    iatm: torch.cat([onsite_dict[(iatm, l)].repeat(2 * l + 1).T
+                                     for l in shell_dict[iatm]], -1)
+                    for iatm in geometry.unique_atomic_numbers().tolist()}
 
         # Perform the forwards operation
         dftb_calculator.h_feed.vcr = this_cr
@@ -269,8 +274,6 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
         loss = calculate_losses(dftb_calculator, data)
         optimizer.zero_grad()
         print(epoch, loss)
-        print('dftb_calculator.h_feed.on_sites', dftb_calculator.h_feed.on_sites)
-        # print('dftb_calculator.h_feed.vcr', dftb_calculator.h_feed.vcr)
 
         # Invoke the autograd engine
         loss.backward()
@@ -281,10 +284,10 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
         loss_old = loss.detach().clone()
 
         this_cr = this_cr.detach().clone()
-        min_mask = this_cr[this_cr != 0].lt(2.0)
-        max_mask = this_cr[this_cr != 0].gt(9.0)
+        min_mask = this_cr[this_cr != 0].lt(1.75)
+        max_mask = this_cr[this_cr != 0].gt(9.5)
 
-        # To make sure compression radii inside grid points
+        # To make sure compression radii inside reasonable range
         if min_mask.any():
             with torch.no_grad():
                 comp_r.clamp_(min=2.0)
@@ -292,8 +295,11 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
             with torch.no_grad():
                 comp_r.clamp_(max=9.0)
 
+    # store optimized results to dftb calculator
     if global_r:
         dftb_calculator.h_feed.vcr = comp_r
+    else:
+        dftb_calculator.h_feed.on_sites = onsite_dict
 
     return dftb_calculator
 
@@ -311,11 +317,11 @@ def scikit_learn_model(x_train, y_train, x_test,
     """ML process with random forest method.
 
     Arguments:
-        x_train:
-        y_train:
-        x_test:
+        x_train: Features of training set.
+        y_train: Target values of training set.
+        x_test: Features of testing set.
         geometry_test:
-        atom_like:
+        atom_like: If output is atomic like or batch like.
     """
     reg = RandomForestRegressor(n_estimators=n_estimators)
     reg.fit(x_train, y_train)
@@ -330,17 +336,17 @@ def scikit_learn_model(x_train, y_train, x_test,
 
 def single_test(dftb_calculator: Dftb2,
                 dftb_calculator_std: Dftb2,
-                dataloder_fit,
                 dataloder_test,
                 global_r):
 
-    geometry_fit = Geometry(dataloder_fit.dataset['atomic_numbers'],
-                            dataloder_fit.dataset['positions'], units='a')
-    basis_fit = Basis(geometry_fit.atomic_numbers, shell_dict, shell_resolved=False)
+    # There is random seed when choosing data, make sure the order is correct
+    geometry_fit = dftb_calculator.geometry
+    basis_fit = dftb_calculator.basis
 
     geometry_test = Geometry(dataloder_test.dataset['atomic_numbers'],
                              dataloder_test.dataset['positions'], units='a')
-    basis_test = Basis(geometry_test.atomic_numbers, shell_dict, shell_resolved=False)
+    basis_test = Basis(geometry_test.atomic_numbers, shell_dict,
+                       shell_resolved=shell_resolved)
 
     if not global_r:
         # flatten and remove padding atomic numbers
@@ -360,14 +366,18 @@ def single_test(dftb_calculator: Dftb2,
         y_pred_on_dict = {}
         for key, val in dftb_calculator.h_feed.on_sites.items():
             y_pred_on = scikit_learn_model(
-                x_fit[numbers_fit == key], val.detach(),
-                x_test[numbers_test == key], geometry_test, True)
+                x_fit[numbers_fit == key[0]], val.detach(),
+                x_test[numbers_test == key[0]], geometry_test, atom_like=True)
 
-            y_pred_on_dict.update({key: y_pred_on if y_pred_on.dim() == 2
-                else y_pred_on.unsqueeze(-1)})
+            y_pred_on_dict.update({key: y_pred_on})
 
-        # Update compression radii and onsite
-        dftb_calculator.h_feed.on_sites = y_pred_on_dict
+        if not shell_resolved:
+            dftb_calculator.h_feed.on_sites = {
+                iatm: torch.cat([y_pred_on_dict[(iatm, l)].repeat(2 * l + 1, 1).T
+                                 for l in shell_dict[iatm]], -1)
+                for iatm in geometry_test.unique_atomic_numbers().tolist()}
+
+        # Update predicted compression radii and onsite
         dftb_calculator.h_feed.vcr = y_pred
         dftb_calculator.s_feed.vcr = y_pred
     else:
@@ -375,7 +385,7 @@ def single_test(dftb_calculator: Dftb2,
         this_cr = torch.ones(geometry_test.atomic_numbers.shape)
         for ii, iatm in enumerate(geometry_test.unique_atomic_numbers()):
             this_cr[iatm == geometry_test.atomic_numbers] = comp_r[ii]
-        print('comp_r', dftb_calculator.h_feed.on_sites)
+
         # Perform the forwards operation
         dftb_calculator.h_feed.vcr = this_cr
         dftb_calculator.s_feed.vcr = this_cr
@@ -383,15 +393,6 @@ def single_test(dftb_calculator: Dftb2,
     # Perform DFTB calculations
     dftb_calculator_std(geometry_test, basis_test)
     dftb_calculator(geometry_test, basis_test)
-    print(torch.sum(torch.abs(dftb_calculator_std.dipole - dataloder_test.dataset['dipole']))
-          / dftb_calculator.geometry._n_batch)
-    print(torch.sum(torch.abs(dftb_calculator.dipole - dataloder_test.dataset['dipole']))
-          / dftb_calculator.geometry._n_batch)
-    import matplotlib.pyplot as plt
-    plt.plot(dataloder_test.dataset['dipole'], dataloder_test.dataset['dipole'], 'k')
-    plt.plot(dataloder_test.dataset['dipole'], dftb_calculator_std.dipole, 'r.')
-    plt.plot(dataloder_test.dataset['dipole'], dftb_calculator.dipole.detach(), 'b.')
-    plt.show()
 
 
 # STEP 3.1: Execution training
@@ -412,10 +413,6 @@ if fit_model:
             with open(f'dftb_calculator_vcr_{ii}_local.pkl', 'wb') as w:
                 pickle.dump(dftb_calculator, w)
 
-else:
-    # Run the DFTB calculation
-    raise NotImplementedError()
-
 
 # STEP 3.2: Execution testing
 if pred_model:
@@ -431,10 +428,12 @@ if pred_model:
             with open(f'dftb_calculator_vcr_{ii}_global.pkl', 'rb') as w:
                 dftb_calculator = pickle.load(w)
 
-            single_test(dftb_calculator, dftb_calculator_std, d_fit, d_test, global_r)
+            single_test(dftb_calculator, dftb_calculator_std, d_test, global_r)
         else:
             with open(f'dftb_calculator_vcr_{ii}_local.pkl', 'rb') as w:
                 dftb_calculator = pickle.load(w)
 
-            single_test(dftb_calculator, dftb_calculator_std, d_fit, d_test, global_r)
+            single_test(dftb_calculator, dftb_calculator_std, d_test, global_r)
 
+# global: [0.1331, 0.1340, 0.1356], [0.0259, 0.0259, 0.0254]
+# local: [0.1331, 0.1340, 0.1356], [0.0175, 0.0175, 0.0178]

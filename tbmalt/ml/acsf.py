@@ -39,8 +39,6 @@ class Acsf:
                  g3_params: Optional[Tensor] = None,
                  g4_params: Optional[Tensor] = None,
                  g5_params: Optional[Tensor] = None,
-                 rcut_extra: Union[float, Tensor] = None,
-                 extra_params: Optional[dict] = None,
                  unit: Literal['bohr', 'angstrom'] = 'angstrom',
                  element_resolve: Optional[bool] = True,
                  atom_like: Optional[bool] = True):
@@ -53,9 +51,6 @@ class Acsf:
         self.g3_params = g3_params
         self.g4_params = g4_params
         self.g5_params = g5_params
-        self.rcut_extra = None if rcut_extra is None else \
-            rcut_extra * length_units[unit]
-        self.extra_params = extra_params
         self.atom_like = atom_like
         self.element_resolve = element_resolve
 
@@ -70,54 +65,19 @@ class Acsf:
         self.basis = basis if basis.atomic_numbers.dim() == 2 else Basis(
             self.atomic_numbers, shell_dict)
         self.shell_dict = shell_dict
+
         # build orbital like atomic number matrix, expand size from
         # [n_batch, max_atom] to flatten [n_batch * max_atom, max_atom]
         ano = self.basis.atomic_number_matrix(form='atomic')[..., 1]
         self.ano = ano.view(-1, ano.shape[-1])
 
-
-        self.extra_params_matrix = self._build_extra_params_matrix()
-
         # calculate G1, which is cutoff function
         self.fc, self.g1 = self.g1_func(self.g1_params)
-        if self.rcut_extra is not None:
-            self.fc_extra, _ = self.g1_func(self.rcut_extra)
 
         # transfer all geometric parameters to angstrom unit
         d_vect = self.geometry.distance_vectors / length_units['angstrom']
         self._d_vec = d_vect.unsqueeze(0) if d_vect.dim() == 3 else d_vect
         self._dist = self.distances / length_units['angstrom']
-
-    def _build_extra_params_matrix(self, diff=False):
-        """Build parameters matrix with shape: [n_batch, max_atom,
-        max_atom, dim], where dim equals to dimnesion of ."""
-        if self.extra_params is None:
-            return None
-        else:
-            dim = len(self.extra_params[self.unique_atomic_numbers[0].tolist()])
-            n_batch, max_atom = self.atomic_numbers.shape
-
-            # Build a matrix which store all the extra_params for each atom
-            _extra_params_mat = torch.zeros(*self.atomic_numbers.shape, dim)
-            for ia in self.unique_atomic_numbers:
-                mask = ia == self.atomic_numbers
-                _extra_params_mat[mask] = self.extra_params[ia.tolist()]
-
-            # Calculate difference between extra params
-            if diff:
-                extra_params_mat = _extra_params_mat.repeat_interleave(
-                    max_atom, 1) - _extra_params_mat.repeat(1, max_atom, 1)
-                extra_params_mat = extra_params_mat.reshape(
-                    n_batch, max_atom, max_atom, -1)
-            # Calculate product between extra params
-            else:
-                extra_params_mat = _extra_params_mat.unsqueeze(-2) * \
-                    _extra_params_mat.unsqueeze(-3)
-
-            # Make sure all on-site equals to zeros
-            extra_params_mat[self.geometry.distances.eq(0)] = 0
-
-            return extra_params_mat
 
     def _update_geo(self, geometry: object):
         """Update geometric information if geometry object changes."""
@@ -168,23 +128,6 @@ class Acsf:
             _g, self.g4 = self.g4_func(_g, self.g4_params)
         if self.g5_params is not None:
             _g, self.g5 = self.g5_func(_g, self.g5_params)
-
-
-        # if self.extra_params is not None:
-        #     _g, self.eg = self.extra_fun(_g, self.extra_params)
-        if self.extra_params is not None:
-            _g, self.eg = self.extra_fun2(_g, self.g2_params, self.extra_params)
-
-        # if self.extra_params is not None:
-        #     _eg = torch.zeros(self.geometry.atomic_numbers.shape)
-        #     _mask = self.geometry.atomic_numbers.ne(0)
-        #     _eg[_mask] = _g[..., -1]
-        #     _eg = _eg.unsqueeze(-1) - _eg.unsqueeze(-2)
-        #     _eg[self._dist.eq(0)] = 0
-        #     _eg = torch.nn.functional.normalize(_eg)
-        #     _g, self.eg = self.extra_fun_2(_g, self.g2_params, _eg)
-        if self.extra_params is not None:
-            _g, self.eg = self.extra_fun4(_g, self.g4_params, self.extra_params)
 
         # if atom_like is True, return g in sequence of each atom in batch,
         # else return g in sequence of each geometry
@@ -348,52 +291,6 @@ class Acsf:
 
         return fc, mask
 
-    def extra_fun2(self, g, g2, eg):
-        """Calculate some self-defined parameters."""
-        _fc = self.fc if self.rcut_extra is None else self.fc_extra
-        _matrix = torch.zeros(self.extra_params_matrix.shape)
-
-        _matrix[self.mask] = torch.sign(self.extra_params_matrix[self.mask]) * torch.exp(
-            self.extra_params_matrix[self.mask] * ((
-                g2[..., 1] - self._dist[self.mask].unsqueeze(1))) ** 2)
-        eg = self._element_wise((_matrix.permute(
-            3, 0, 1, 2) * _fc).permute(1, 2, 3, 0))
-        g = g.unsqueeze(1) if g.dim() == 1 else g
-
-        # return (torch.cat([g, eg.sum(-1).unsqueeze(1)], dim=1), eg)
-        return (torch.cat([g, eg], dim=1), eg) if self.element_resolve else \
-            (torch.cat([g, eg.sum(-1).unsqueeze(1)], dim=1), eg)
-
-    def extra_fun_2(self, g, g2, eg):
-        """Calculate some self-defined parameters."""
-        _fc = self.fc if self.rcut_extra is None else self.fc_extra
-        _matrix = torch.zeros(self.extra_params_matrix.shape)
-        _matrix[self.mask] = torch.sign(eg[self.mask].unsqueeze(1)) * torch.exp(
-            eg[self.mask].unsqueeze(1) * ((
-                g2[..., 1] - self._dist[self.mask].unsqueeze(1))) ** 2)
-        eg = self._element_wise((_matrix.permute(
-            3, 0, 1, 2) * _fc).permute(1, 2, 3, 0))
-        g = g.unsqueeze(1) if g.dim() == 1 else g
-
-        # return (torch.cat([g, eg.sum(-1).unsqueeze(1)], dim=1), eg)
-        return (torch.cat([g, eg], dim=1), eg) if self.element_resolve else \
-            (torch.cat([g, eg.sum(-1).unsqueeze(1)], dim=1), eg)
-
-    def extra_fun4(self, g, g4, eg):
-        """Calculate some self-defined parameters."""
-        _fc = self.fc if self.rcut_extra is None else self.fc_extra
-        _matrix = torch.zeros(self.extra_params_matrix.shape)
-
-        return self._angle4(g, g4, self.extra_params_matrix, jk=True)
-
-        # eg = self._element_wise((_matrix.permute(
-        #     3, 0, 1, 2) * _fc).permute(1, 2, 3, 0))
-        # g = g.unsqueeze(1) if g.dim() == 1 else g
-
-        # # return (torch.cat([g, eg.sum(-1).unsqueeze(1)], dim=1), eg)
-        # return (torch.cat([g, eg], dim=1), eg) if self.element_resolve else \
-        #     (torch.cat([g, eg.sum(-1).unsqueeze(1)], dim=1), eg)
-
     def _angle4(self, g, g_params, _extra, jk=True):
         """Calculate G4 parameters."""
         eta, zeta, lamb = g_params.squeeze()
@@ -402,7 +299,6 @@ class Acsf:
         # the dimension of d_ij * d_ik is [n_batch, n_atom_ij, n_atom_jk]
         _dist = self._dist * _extra.squeeze()
         dist_ijk = _dist.unsqueeze(-1) * _dist.unsqueeze(-2)
-        mask1 = dist_ijk.gt(0)
         dist2_ijk = _dist.unsqueeze(-1) ** 2 + _dist.unsqueeze(-2) ** 2
         dist2_ijk = _dist.unsqueeze(-3) ** 2 + dist2_ijk if jk else dist2_ijk
 

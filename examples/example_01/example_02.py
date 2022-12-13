@@ -47,7 +47,11 @@ test_model = True
 # Number of fitting cycles, number of batch size each cycle
 number_of_epochs = 120
 n_batch = [1000, 1000, 1000]  # Batch size of three fitting run
-
+lr = 0.003
+onsite_lr = 3e-4
+tolerance = 1e-6
+criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
+shell_resolved = False
 # Location of a file storing the properties that will be fit to.
 target_path = './dataset.h5'
 
@@ -80,14 +84,12 @@ def init_model():
 
 # 2.1: Target system specific objects
 # -----------------------------------
-if fit_model:
+if fit_model or test_model:
     with h5py.File(target_path, 'r') as f:
         dataloder_fit = [load_target_data(target_path, targets, g) for g in
                          [f['run1']['train'], f['run2']['train'], f['run3']['train']]]
         dataloder_test = [load_target_data(target_path, targets, g) for g in
                           [f['run1']['test'], f['run2']['test'], f['run3']['test']]]
-else:
-    raise NotImplementedError()
 
 
 # 2.2: Loading of the DFTB parameters into their associated feed objects
@@ -131,12 +133,8 @@ u_feed = HubbardFeed.from_database(parameter_db_path, species)
 # calculator object.
 dftb_calculator_init = Dftb2(h_feed, s_feed, o_feed, u_feed)
 
-# Construct machine learning object
-lr = 0.01
-onsite_lr = 1e-4
-tolerance = 1e-5
-criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
 
+# Construct machine learning object
 def build_optim(dftb_calculator):
     h_var, s_var = [], []
 
@@ -148,13 +146,15 @@ def build_optim(dftb_calculator):
         h_var.append({'params': dftb_calculator.h_feed.off_sites[key].abcd, 'lr': lr})
         s_var.append({'params': dftb_calculator.s_feed.off_sites[key].abcd, 'lr': lr})
 
-    ml_onsite = []
-    for key, val in h_feed.on_sites.items():
-        h_feed.on_sites[key].requires_grad_(True)
-        ml_onsite.append({'params': val, 'lr': onsite_lr})
+    ml_onsite, onsite_dict = [], {}
+    for key, val in dftb_calculator.h_feed.on_sites.items():
+        for l in shell_dict[key]:
+            onsite_dict.update({(key, l): val[int(l ** 2)].requires_grad_(True)})
+            ml_onsite.append({'params': onsite_dict[(key, l)], 'lr': onsite_lr})
 
     optimizer = getattr(torch.optim, 'Adam')(h_var + s_var + ml_onsite, lr=lr)
-    return optimizer
+    return optimizer, onsite_dict
+
 
 with open('dftb_calculator_init.pkl', 'wb') as w:
     pickle.dump(dftb_calculator_init, w)
@@ -195,7 +195,7 @@ def update_model(calculator: Calculator):
 
 def single_fit(dftb_calculator, dataloder, size):
     indice = torch.split(torch.tensor(dataloder.random_idx), size)
-    optimizer = build_optim(dftb_calculator)
+    optimizer, onsite_dict = build_optim(dftb_calculator)
     loss_old = 0
 
     for epoch in range(number_of_epochs):
@@ -204,6 +204,12 @@ def single_fit(dftb_calculator, dataloder, size):
 
         geometry = Geometry(data['atomic_numbers'], data['positions'], units='a')
         basis = Basis(geometry.atomic_numbers, shell_dict, shell_resolved=False)
+
+        if not shell_resolved:
+            dftb_calculator.h_feed.on_sites = {
+                iatm: torch.cat([onsite_dict[(iatm, l)].repeat(2 * l + 1).T
+                                 for l in shell_dict[iatm]], -1)
+                for iatm in geometry.unique_atomic_numbers().tolist()}
 
         # Perform the forwards operation
         dftb_calculator(geometry, basis)
@@ -239,10 +245,6 @@ def single_test(dftb_calculator, dftb_calculator_init, dataloder):
     # Perform DFTB calculations
     dftb_calculator_init(geometry, basis)
     dftb_calculator(geometry, basis)
-    print(torch.sum(torch.abs(dftb_calculator_init.dipole - dataloder.dataset['dipole']))
-          / dftb_calculator.geometry._n_batch)
-    print(torch.sum(torch.abs(dftb_calculator.dipole - dataloder.dataset['dipole']))
-          / dftb_calculator.geometry._n_batch)
 
 
 # STEP 3.1: Execution fitting
@@ -257,9 +259,7 @@ if fit_model:
 
         with open(f'dftb_calculator_{ii}.pkl', 'wb') as w:
             pickle.dump(dftb_calculator, w)
-else:
-    # Run the DFTB calculation
-    raise NotImplementedError()
+
 
 # STEP 3.2: Execution testing
 if test_model:
@@ -273,3 +273,5 @@ if test_model:
             dftb_calculator = pickle.load(r)
 
         single_test(dftb_calculator, dftb_calculator_init, dataloder)
+
+# spl: [0.1331, 0.1340, 0.1356], [0.0175, 0.0170, 0.0172]
