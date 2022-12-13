@@ -38,7 +38,7 @@ def indices(dims, dtype=None, device=None):
 
 
 class IntegralFeed(ABC, Feed):
-    """ABC for Hamiltonian and overlap matrix constructors.
+    r"""ABC for Hamiltonian and overlap matrix constructors.
 
     Subclasses of this abstract base class are responsible for constructing
     the Hamiltonian and overlap matrices.
@@ -46,12 +46,17 @@ class IntegralFeed(ABC, Feed):
     Arguments:
         device: Device on which the feed object and its contents resides.
         dtype: Floating point dtype used by feed object.
+        vcr: Compression radii in DFTB basis.
+        is_local_onsite: `is_local_onsite` allows for constructing chemical
+            environment dependent on-site energies.
     """
 
     def __init__(self, dtype, device):
         # These variables must NEVER be modified outside of the .to method!
         self.__device = device
         self.__dtype = dtype
+        self._vcr = None
+        self.is_local_onsite = False
 
     def __init_subclass__(cls, **kwargs):
         """Initialises subclass structures.
@@ -73,6 +78,18 @@ class IntegralFeed(ABC, Feed):
         name = self.__class__.__name__
         raise AttributeError(f'{name} object\'s dtype can only be modified '
                              'via the ".to" method.')
+
+    @property
+    def vcr(self):
+        return self._vcr
+
+    @vcr.setter
+    def vcr(self, value):
+        self._vcr = value
+
+    def local_onsite(self, value: Tensor):
+        """Only when is_local_onsite is True local_onsite will return Tensor. """
+        return value if self.is_local_onsite else None
 
     @property
     def dtype(self) -> torch.dtype:

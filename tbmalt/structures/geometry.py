@@ -175,6 +175,12 @@ class Geometry:
         dist = torch.cdist(self.positions, self.positions, p=2)
         # Ensure padding area is zeroed out
         dist[self._mask_dist] = 0
+
+        # cdist bug, sometimes distances diagonal is not zero
+        idx = torch.arange(dist.shape[-1])
+        if not (dist[..., idx, idx].eq(0)).all():
+            dist[..., idx, idx] = 0.0
+
         return dist
 
     @property

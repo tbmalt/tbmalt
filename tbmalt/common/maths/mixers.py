@@ -284,7 +284,6 @@ class Simple(_Mixer):
                     'from a failure provide a "new_size" arg to mixer.cull.'
                 )
 
-
         # Check all tensor dimensions match
         assert x_old.shape == x_new.shape,\
             'new & old systems must have matching shapes.'
@@ -341,10 +340,6 @@ class Simple(_Mixer):
         cull = ~cull_list
         self._x_old = self._x_old[[cull, *slicers]]
         self._delta = self._delta[[cull, *slicers]]
-
-
-
-
 
 
 class Anderson(_Mixer):

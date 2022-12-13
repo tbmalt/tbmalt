@@ -88,6 +88,7 @@ class Calculator(ABC):
 
         self._geometry = None
         self._basis = None
+        self._ml_params = None
 
     @property
     def device(self) -> torch.device:
@@ -104,7 +105,7 @@ class Calculator(ABC):
         pass
 
     def __call__(self, geometry: Geometry, basis: Basis,
-                 cache: Optional[Dict[str, Any]] = None):
+                 cache: Optional[Dict[str, Any]] = None, **kwargs):
         """Run the calculator instance.
 
         Arguments:
@@ -151,7 +152,7 @@ class Calculator(ABC):
             self.reset()
             self._geometry, self._basis = geometry, basis
 
-        return self.forward(cache=cache)
+        return self.forward(cache=cache, **kwargs)
 
     @property
     def is_batch(self):
