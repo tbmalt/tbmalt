@@ -7,7 +7,6 @@ import numpy as np
 import h5py
 
 from tbmalt import Geometry, Basis, Periodic
-from tbmalt.physics.dftb.coulomb import Coulomb
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
@@ -33,7 +32,7 @@ torch.set_default_dtype(torch.float64)
 # 1.1: System settings
 # --------------------
 
-# Provide a list of moecules upon which TBMaLT is to be run
+# Provide a list of systems upon which TBMaLT is to be run
 training_size = 1
 testing_size = 1
 targets = ['dos']
@@ -51,16 +50,16 @@ species = species[species != 0].tolist()
 # 1.2: Model settings
 # -------------------
 # Location at which the DFTB parameter set database is located
-parameter_db_path = './skf/siband.hdf5'
+parameter_db_path = './siband.hdf5'
 
 # Should fitting be performed here?
 fit_model = True
 
 # Should test the trained mode?
-test = False
+test = True
 
 # Number of fitting cycles, number of batch size each cycle
-number_of_epochs = 10
+number_of_epochs = 1800
 n_batch = 1
 
 # learning rate
@@ -70,11 +69,17 @@ lr = 0.000005
 loss_function = 'Hellinger'
 
 # Location of a file storing the properties that will be fit to.
-# target_path = './aims_si64_diamond_rattled_hse_60.hdf'
 target_path = './dataset_dos.h5'
 
+# Choose which training and testing dataset to be loaded
+# To run training and testing using the rattled type silicon systems, target_run
+#    can be set as 'run1', 'run2' and 'run3'. To run the transferability test,
+#    target_run should use 'run_transfer'.
+target_run = 'run2'
+
 # Energy window for dos sampling
-points = torch.linspace(-3.3, 1.6, 491)
+points = torch.linspace(-3.3, 1.6, 491) if target_run != 'run_transfer' else\
+    torch.linspace(-4.7, 1.6, 631)
 
 # Load the Hamiltonian feed model
 h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
@@ -96,7 +101,8 @@ mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2,
               'generations': 3, 'tolerance': 1e-10}
 kwargs = {}
 kwargs['mix_params'] = mix_params
-dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
+dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, supress_SCF_error=True,
+                        **kwargs)
 
 
 # ======================== #
@@ -125,7 +131,8 @@ def load_target_data(path: str, group1: str, group2: str, properties: List,
     # the target data.
     with h5py.File(path, 'r') as f:
         groups = f[group1][group2]
-        return Dataloader.load_reference(groups, properties, size, pbc=True)
+        return Dataloader.load_reference(groups, properties, size, pbc=True,
+                                         rand=False)
 
 
 # 2.2 prepare training and testing data
@@ -154,16 +161,16 @@ class SiliconDataset(Dataset):
         return system
 
 
-def prepare_data():
+def prepare_data(run):
     """Prepare training and testing data."""
     try:
         os.mkdir('./result')
     except FileExistsError:
         pass
 
-    # Build a random index to select systems for training and testing
-    dataloder_train = load_target_data(target_path, 'run1', 'train', ['homo_lumos', 'eigenvalues'], training_size)
-    dataloder_test = load_target_data(target_path, 'run1', 'test', ['homo_lumos', 'eigenvalues'], testing_size)
+    # Select systems for training and testing
+    dataloder_train = load_target_data(target_path, run, 'train', ['homo_lumos', 'eigenvalues'], training_size)
+    dataloder_test = load_target_data(target_path, run, 'test', ['homo_lumos', 'eigenvalues'], testing_size)
     indice = torch.arange(training_size + testing_size).tolist()
 
     data_train = dataloder_train[indice[: training_size]]
@@ -184,8 +191,6 @@ def prepare_data():
                                   data_test['homo_lumos'],
                                   data_test['eigenvalues'])
 
-    # Build objects for DFTB calculaitons
-
     # Calculate reference dos and implement sampling
     ref_ev = data_train['eigenvalues']
     fermi_train = data_train['homo_lumos'].mean(dim=-1)
@@ -199,9 +204,9 @@ def prepare_data():
 
 
 # split the data according to batch size and number of processers
-def data_split(rank, world_size, dataset, batch_size=1, pin_memory=False,
+def data_split(rank, world_size, dataset, batch_size, pin_memory=False,
                num_workers=0):
-    """Prepare the training data for distributed environment."""
+    """Prepare the data for distributed environment."""
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank,
                                  shuffle=False, drop_last=False)
     dataloader = DataLoader(dataset, batch_size=batch_size,
@@ -225,7 +230,8 @@ def loss_fn(results, ref_dos, ibatch):
     # Calculate the loss
     ref = ref_dos[..., 1][ibatch] if ref_dos.ndim == 3 else ref_dos[..., 1]
     fermi_dftb = getattr(results, 'homo_lumo').mean(dim=-1)
-    energies_dftb = fermi_dftb + points
+    energies_dftb = fermi_dftb.unsqueeze(-1) + points.unsqueeze(0).repeat_interleave(
+        n_batch, 0)
     dos_dftb = dos((getattr(results, 'eigenvalue')),
                    energies_dftb, 0.09)
     loss = loss + criterion(dos_dftb, ref)
@@ -233,22 +239,38 @@ def loss_fn(results, ref_dos, ibatch):
     return loss
 
 
-def dftb_results(numbers, positions, cells):
+def dftb_results(numbers, positions, cells, **kwargs):
     """Perform forward DFTB calculatoins."""
-    # Build objects for DFTB calculations
-    geometry = Geometry(numbers, positions, cells, units='a')
-    basis = Basis(geometry.atomic_numbers, shell_dict, shell_resolved=False)
-    periodic = Periodic(geometry, geometry.cells, cutoff=torch.tensor([18.0]))
-    coulomb = Coulomb(geometry, periodic)
-    dftb_calculator(geometry, basis, periodic, coulomb)
+    # Whether do original DFTB calculations
+    dftb = kwargs.get('dftb', False)
 
-    return dftb_calculator
+    # Build objects for DFTB calculations
+    geometry = Geometry(numbers, positions, cells, units='a',
+                        cutoff=torch.tensor([18.0]))
+    basis = Basis(geometry.atomic_numbers, shell_dict, shell_resolved=False)
+
+    if not dftb:
+        dftb_calculator(geometry, basis)
+    else:
+        # Build new feeds
+        h_feed_o = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
+                                        interpolation=CubicSpline)
+        s_feed_o = SkFeed.from_database(parameter_db_path, species, 'overlap',
+                                        interpolation=CubicSpline)
+        mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2,
+              'generations': 3, 'tolerance': 1e-10}
+        kwargs = {}
+        kwargs['mix_params'] = mix_params
+        dftb_calculator_o = Dftb2(h_feed_o, s_feed_o, o_feed, u_feed, **kwargs)
+        dftb_calculator_o(geometry, basis)
+
+    return dftb_calculator if not dftb else dftb_calculator_o
 
 
 def main(rank, world_size, train_dataset, data_train_dos):
     """ML training to optimize DFTB H and S matrix."""
     # Initial the model
-    train_data = data_split(rank, world_size, train_dataset)
+    train_data = data_split(rank, world_size, train_dataset, batch_size=n_batch)
     h_var = [val.abcd for key, val in h_feed.off_sites.items()]
     s_var = [val.abcd for key, val in s_feed.off_sites.items()]
     variable = h_var + s_var
@@ -290,18 +312,26 @@ def test(rank, world_size, test_dataset):
         os.mkdir('./result/test')
     except FileExistsError:
         pass
-    test_data = data_split(rank, world_size, test_dataset)
+
+    test_data = data_split(rank, world_size, test_dataset, batch_size=1)
     energies_test = torch.linspace(-18.0, 5.0, 500)
     dos_pred_tot = []
     hl_pred_tot = []
+    dos_dftb_tot = []
+    hl_dftb_tot = []
+
+    # Pred
     for ibatch, data in enumerate(test_data):
         scc_pred = dftb_results(data['number'], data['position'],
                                 data['latvec'])
-        # Pred
+        fermi_pred = getattr(scc_pred, 'fermi_energy').detach()
         hl_pred = getattr(scc_pred, 'homo_lumo').detach()
         hl_pred_tot.append(hl_pred)
         eigval_pred = getattr(scc_pred, 'eigenvalue').detach()
         dos_pred = dos((eigval_pred), energies_test, 0.09)
+        f = open('./result/test/Pred_fermi' + str(ibatch + 1) + '.dat', 'w')
+        np.savetxt(f, fermi_pred)
+        f.close()
         f = open('./result/test/Pred_homo_lumo' + str(ibatch + 1) + '.dat', 'w')
         np.savetxt(f, hl_pred)
         f.close()
@@ -332,9 +362,52 @@ def test(rank, world_size, test_dataset):
     np.savetxt(f, pack(hl_pred_tot).std(dim=0).detach())
     f.close()
 
+    # DFTB
+    for ibatch, data in enumerate(test_data):
+        scc_dftb = dftb_results(data['number'], data['position'],
+                                data['latvec'], dftb=True)
+        # dftb
+        fermi_dftb = getattr(scc_dftb, 'fermi_energy').detach()
+        hl_dftb = getattr(scc_dftb, 'homo_lumo').detach()
+        hl_dftb_tot.append(hl_dftb)
+        eigval_dftb = getattr(scc_dftb, 'eigenvalue').detach()
+        dos_dftb = dos((eigval_dftb), energies_test, 0.09)
+        f = open('./result/test/dftb_fermi' + str(ibatch + 1) + '.dat', 'w')
+        np.savetxt(f, fermi_dftb)
+        f.close()
+        f = open('./result/test/dftb_homo_lumo' + str(ibatch + 1) + '.dat', 'w')
+        np.savetxt(f, hl_dftb)
+        f.close()
+        dftb_dos = torch.cat((energies_test.unsqueeze(-1),
+                              dos_dftb.unsqueeze(-1).squeeze(0)), -1)
+        dos_dftb_tot.append(dos_dftb)
+        f = open('./result/test/dftb_dos' + str(ibatch + 1) + '.dat', 'w')
+        np.savetxt(f, dftb_dos)
+        f.close()
+        f = open('./result/test/dftb_eigenvalue' + str(ibatch + 1) + '.dat', 'w')
+        np.savetxt(f, eigval_dftb.squeeze(0))
+        f.close()
+
+    # DFTB mean
+    dos_dftb_mean = pack(dos_dftb_tot).mean(dim=0)
+    dos_dftb_std = pack(dos_dftb_tot).std(dim=0)
+    f = open('./result/dftb_dos_mean.dat', 'w')
+    np.savetxt(f, torch.cat((energies_test.unsqueeze(-1),
+                             dos_dftb_mean.unsqueeze(-1).squeeze(0)), -1))
+    f.close()
+    f = open('./result/dftb_dos_std.dat', 'w')
+    np.savetxt(f, dos_dftb_std.squeeze(0))
+    f.close()
+    f = open('./result/dftb_homo_lumo_mean.dat', 'w')
+    np.savetxt(f, pack(hl_dftb_tot).mean(dim=0).detach())
+    f.close()
+    f = open('./result/dftb_homo_lumo_std.dat', 'w')
+    np.savetxt(f, pack(hl_dftb_tot).std(dim=0).detach())
+    f.close()
+
 
 if __name__ == '__main__':
-    dataset_train, dataset_test, data_train_dos = prepare_data()
+    dataset_train, dataset_test, data_train_dos = prepare_data(target_run)
     main(0, 1, dataset_train, data_train_dos)
     if test:
         test(0, 1, dataset_test)

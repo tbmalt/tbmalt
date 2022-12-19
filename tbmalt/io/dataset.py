@@ -61,7 +61,7 @@ class Dataloader(Loader):
     def load_reference(cls, groups: Union[Group, List[Group]],
                        targets: List[str],
                        sizes: Union[List[int], int] = None,
-                       pbc: bool = False, seed: int = 1):
+                       pbc: bool = False, rand: bool = True, seed: int = 1):
         """Load reference from h5py type data.
 
         Arguments:
@@ -70,6 +70,7 @@ class Dataloader(Loader):
             targets: Loading targets, such as dipole, charge, etc.
             sizes: Loading size of each group.
             pbc: Whether read cells.
+            rand: whether using random index to read geometries.
             seed: Seed to generate random numbers, this will be used to
                 generate indices when loading samples.
 
@@ -83,19 +84,36 @@ class Dataloader(Loader):
             g_size = g.attrs['size']
             this_size = min(g_size, size) if size is not None else g_size
 
-            random.seed(seed)
-            ind = random.sample(torch.arange(g_size).tolist(), this_size)
+            if rand:
+                random.seed(seed)
+                ind = random.sample(torch.arange(g_size).tolist(), this_size)
+            else:
+                ind = torch.arange(g_size)
             labels.extend(g.attrs['label'])
 
             # loop for each property
             for target in targets:
                 idata = g[target][()][ind]
-                data[target].append(torch.from_numpy(idata))
+                if g_size != 1:
+                    data[target].append(torch.from_numpy(idata))
+                else:
+                    data[target].append(torch.from_numpy(idata).unsqueeze(0))
 
-            positions.append(torch.from_numpy(g['positions'][()][ind]))
-            numbers.append(torch.from_numpy(g['atomic_numbers'][()][ind]))
+            if g_size != 1:
+                positions.append(torch.from_numpy(g['positions'][()][ind]))
+                numbers.append(torch.from_numpy(g['atomic_numbers'][()][ind]))
+            else:
+                positions.append(torch.from_numpy(g['positions'][()][ind]
+                                                  ).unsqueeze(0))
+                numbers.append(torch.from_numpy(g['atomic_numbers'][()][ind]
+                                                ).unsqueeze(0))
+
             if pbc:
-                cells.append(torch.from_numpy(g['cells'][()][ind]))
+                if g_size != 1:
+                    cells.append(torch.from_numpy(g['cells'][()][ind]))
+                else:
+                    cells.append(torch.from_numpy(g['cells'][()][ind]
+                                                  ).unsqueeze(0))
 
         # Read data from specified groups
         if isinstance(groups, list):
