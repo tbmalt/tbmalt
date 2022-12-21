@@ -290,7 +290,8 @@ class DFTB_DDP(torch.nn.Module):
         scc = dftb_results(data['number'], data['position'],
                            data['latvec'], h_feed_p, s_feed_p)
         fermi_dftb = getattr(scc, 'homo_lumo').mean(dim=-1)
-        energies_dftb = fermi_dftb + points
+        energies_dftb = fermi_dftb.unsqueeze(-1) + points.unsqueeze(
+            0).repeat_interleave(n_batch, 0)
         dos_dftb = dos((getattr(scc, 'eigenvalue')),
                        energies_dftb, 0.09)
         return dos_dftb
