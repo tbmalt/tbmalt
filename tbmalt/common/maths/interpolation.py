@@ -294,7 +294,7 @@ class CubicSpline(torch.nn.Module):
         )
 
         # get the nearest grid point index of distance in grid points
-        self.n_tail = int(self.tail / self.grid_step)
+        self.n_tail = int((self.tail / self.grid_step).round())
         self.xx_ext = torch.linspace(
             self.xp[0], self.xp[-1] + self.tail,
             len(self.xp) + self.n_tail, device=self._device)
