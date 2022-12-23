@@ -80,7 +80,7 @@ def test_polyinterpu_tail(device):
     pred2 = fit(torch.tensor([10.015547739468293], device=device))
     ref2 = torch.tensor([9.760620707717307E-06], device=device)
 
-    assert (abs(ref2 - pred2) < 1E-12).all(), 'tolerance check'
+    assert (abs(ref2 - pred2) < 1E-11).all(), 'tolerance check'
 
     # Check delta_r
     fit.tail, fit.delta_r = 1.0, 1E-4
@@ -160,7 +160,7 @@ def test_cubic_spline_tail(device):
     pred2 = fit(torch.tensor([10.015547739468293], device=device))
     ref2 = torch.tensor([9.760620707717307E-06], device=device)
 
-    assert (abs(ref2 - pred2) < 1E-12).all(), 'tolerance check'
+    assert (abs(ref2 - pred2) < 1E-11).all(), 'tolerance check'
 
     # Check delta_r
     fit.tail, fit.delta_r = 1.0, 1E-4

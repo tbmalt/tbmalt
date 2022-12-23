@@ -13,6 +13,7 @@ from h5py import Group
 from ase import Atoms
 from ase.lattice.bravais import Lattice
 from tbmalt.structures.cell import Pbc
+from tbmalt.structures.periodic import Periodic
 from tbmalt.common.batch import pack, merge, deflate
 from tbmalt.data.units import length_units
 from tbmalt.data import chemical_symbols
@@ -33,6 +34,8 @@ class Geometry:
         cells: Lattice vectors of the periodic systems. [DEFAULT: None]
         frac: Whether using fractional coordinates to describe periodic
             systems. [DEFAULT: False]
+        cutoff: Global cutoff for the diatomic interactions in periodic
+            systems. [DEFAULT: None]
         units: Unit in which ``positions`` and ``cells`` were specified. For a
             list of available units see :mod:`.units`. [DEFAULT='bohr']
 
@@ -41,6 +44,7 @@ class Geometry:
         positions : Coordinates of the atoms.
         n_atoms: Number of atoms in the system.
         cells: Lattice vectors of the periodic systems.
+        periodic: Periodic object to store related information.
 
     Notes:
         When representing multiple systems, the `atomic_numbers` & `positions`
@@ -81,8 +85,8 @@ class Geometry:
 
     """
 
-    __slots__ = ['atomic_numbers', 'positions', 'n_atoms',
-                 'cells', '_n_batch', '_mask_dist', '_cell',
+    __slots__ = ['atomic_numbers', 'positions', 'n_atoms', 'cells', 'periodic',
+                 'cutoff', '_cutoff', '_n_batch', '_mask_dist', '_cell',
                  '__dtype', '__device']
 
     def __init__(self, atomic_numbers: Union[Tensor, List[Tensor]],
@@ -90,6 +94,7 @@ class Geometry:
                  cells: Optional[Union[Tensor, List[Tensor],
                                        Type[Lattice]]] = None,
                  frac: bool = False,
+                 cutoff: Optional[Union[Tensor, float]] = None,
                  units: Optional[str] = 'bohr'):
 
         # "pack" will only effect lists of tensors; make sure to remove any
@@ -110,6 +115,10 @@ class Geometry:
         # Number of batches if in batch mode (for internal use only)
         self._n_batch: Optional[int] = (None if self.atomic_numbers.dim() == 1
                                         else len(atomic_numbers))
+
+        # Cutoff distance for the diatomic interactions in periodic systems
+        self._cutoff = torch.tensor(
+            [9.98], device=self.positions.device) if cutoff is None else cutoff
 
         # Return cell information
         if cells is not None:
@@ -147,6 +156,10 @@ class Geometry:
         # Ensure tensors are on the same device (only two present currently)
         if self.positions.device != self.positions.device:
             raise RuntimeError('All tensors must be on the same device!')
+
+        # Periodic object to store related information
+        self.periodic = Periodic(self.positions, self.n_atoms, self.cells,
+                                 self._cutoff) if cells is not None else None
 
     @property
     def device(self) -> torch.device:
@@ -414,7 +427,7 @@ class Geometry:
         new_cells = self.cells[selector, ...] \
             if self.cells is not None else self.cells
 
-        return self.__class__(new_zs, new_pos, new_cells)
+        return self.__class__(new_zs, new_pos, new_cells, cutoff=self._cutoff)
 
     def __add__(self, other: 'Geometry') -> 'Geometry':
         """Combine two `Geometry` objects together."""
@@ -435,6 +448,9 @@ class Geometry:
         cells_1 = self.cells
         cells_2 = other.cells
 
+        cutoff_1 = self._cutoff
+        cutoff_2 = other._cutoff
+
         pos_1 = pos_1 if s_batch else pos_1.unsqueeze(0)
         pos_2 = pos_2 if o_batch else pos_2.unsqueeze(0)
 
@@ -445,7 +461,8 @@ class Geometry:
             cells_1 = cells_1 if s_batch else cells_1.unsqueeze(0)
             cells_2 = cells_2 if o_batch else cells_2.unsqueeze(0)
             return self.__class__(merge([an_1, an_2]), merge([pos_1, pos_2]),
-                                  merge([cells_1, cells_2]))
+                                  merge([cells_1, cells_2]),
+                                  cutoff=torch.max(cutoff_1, cutoff_2))
         else:  # -> One PBC object and one non-PBC object
             raise TypeError(
                 'Addition can not take place between a PBC object and '
