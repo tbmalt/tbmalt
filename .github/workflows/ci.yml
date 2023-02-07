@@ -22,13 +22,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
 
-      - name: Setup SSH key
-        uses: webfactory/ssh-agent@v0.7.0
-        with:
-          ssh-private-key: ${{ secrets.DXTB_DEPLOY_KEY }}
+      # - name: Setup SSH key
+      #   uses: webfactory/ssh-agent@v0.7.0
+      #   with:
+      #     ssh-private-key: ${{ secrets.DXTB_DEPLOY_KEY }}
 
-      - name: Checkout submodules
-        run: git submodule update --init --recursive
+      # - name: Checkout submodules
+      #   run: git submodule update --init --recursive
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v2

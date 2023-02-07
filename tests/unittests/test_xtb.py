@@ -3,11 +3,11 @@ Test the xTB adapter.
 
 The eigenvalues (`eig_values`) can only loosely be compared between DFTB2 and
 GFN1 because of the different Coulomb potentials in the SCC. Comparison for
-DFTB1 does not work because the xTB Hamiltonian always contains contributions 
+DFTB1 does not work because the xTB Hamiltonian always contains contributions
 from the potential, even in the first diagonalization/iteration.
 """
 
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List
 from math import sqrt
 import numpy as np
 import pytest
@@ -24,7 +24,14 @@ from tbmalt.physics.dftb import Dftb1, Dftb2
 from tbmalt.physics.dftb.feeds import HubbardFeed
 from tbmalt.common.batch import pack
 
-from external.dxtb.origin.dxtb.param import GFN1_XTB, get_elem_angular
+try:
+    import external.dxtb.origin.dxtb as dxtb
+
+    GFN1_XTB = dxtb.param.GFN1_XTB
+    get_elem_angular = dxtb.param.get_elem_angular
+except ModuleNotFoundError:
+    dxtb = None
+
 
 # fixture
 from tests.test_utils import skf_file
@@ -196,6 +203,7 @@ def load_from_npz(
 ##############
 
 
+@pytest.mark.skipif(dxtb is None, reason="dxtb not yet available")
 @pytest.mark.parametrize("name", sample_list)
 def test_feed_single(device: torch.device, name: str) -> None:
     dtype = torch.get_default_dtype()
@@ -266,6 +274,7 @@ def dftb_checker(
         assert False
 
 
+@pytest.mark.skipif(dxtb is None, reason="dxtb not yet available")
 @pytest.mark.parametrize("name", sample_list)
 def test_dftb1_single(device: torch.device, name: str, skf_file) -> None:
     dtype = torch.get_default_dtype()
@@ -291,6 +300,7 @@ def test_dftb1_single(device: torch.device, name: str, skf_file) -> None:
     dftb_checker(calc_dftb1, [name], [sample], dtype, device)
 
 
+@pytest.mark.skipif(dxtb is None, reason="dxtb not yet available")
 @pytest.mark.parametrize("name1", sample_list)
 @pytest.mark.parametrize("name2", sample_list)
 def test_dftb1_batch(device: torch.device, name1: str, name2: str, skf_file) -> None:
@@ -317,6 +327,7 @@ def test_dftb1_batch(device: torch.device, name1: str, name2: str, skf_file) -> 
     dftb_checker(calc_dftb1, [name1, name2], [s1, s2], dtype, device)
 
 
+@pytest.mark.skipif(dxtb is None, reason="dxtb not yet available")
 @pytest.mark.parametrize("name", sample_list)
 def test_dftb2_single(device: torch.device, name: str, skf_file) -> None:
     dtype = torch.get_default_dtype()
@@ -344,6 +355,7 @@ def test_dftb2_single(device: torch.device, name: str, skf_file) -> None:
     dftb_checker(calc_dftb2, [name], [sample], dtype, device)
 
 
+@pytest.mark.skipif(dxtb is None, reason="dxtb not yet available")
 @pytest.mark.parametrize("name1", sample_list)
 @pytest.mark.parametrize("name2", sample_list)
 def test_dftb2_batch(device: torch.device, name1: str, name2: str, skf_file) -> None:
