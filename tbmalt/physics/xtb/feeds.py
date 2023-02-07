@@ -21,11 +21,19 @@ from tbmalt.ml import Feed
 from tbmalt.ml.integralfeeds import IntegralFeed
 from tbmalt.ml.module import require_args
 
-from external.dxtb.origin.dxtb.ncoord import get_coordination_number, exp_count
-from external.dxtb.origin.dxtb.basis import IndexHelper
-from external.dxtb.origin.dxtb.integral import Overlap
-from external.dxtb.origin.dxtb.param import Param, get_elem_angular
-from external.dxtb.origin.dxtb.xtb import Hamiltonian
+try:
+    from external.dxtb.origin.dxtb.ncoord import get_coordination_number, exp_count
+    from external.dxtb.origin.dxtb.basis import IndexHelper
+    from external.dxtb.origin.dxtb.integral import Overlap
+    from external.dxtb.origin.dxtb.param import Param, get_elem_angular
+    from external.dxtb.origin.dxtb.xtb import Hamiltonian
+except ModuleNotFoundError as e:
+    raise ModuleNotFoundError(
+        (
+            "The module 'dxtb' is not yet publicly available. "
+            "Access can be granted upon reasonable request."
+        )
+    ) from e
 
 
 class XtbOccupationFeed(Feed):

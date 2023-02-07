@@ -15,16 +15,17 @@ import torch
 
 from tbmalt import Geometry, Basis
 from tbmalt.ml.module import Calculator
-from tbmalt.physics.xtb.feeds import (
-    Gfn1HamiltonianFeed,
-    Gfn1OverlapFeed,
-    Gfn1OccupationFeed,
-)
 from tbmalt.physics.dftb import Dftb1, Dftb2
 from tbmalt.physics.dftb.feeds import HubbardFeed
 from tbmalt.common.batch import pack
 
 try:
+    from tbmalt.physics.xtb.feeds import (
+        Gfn1HamiltonianFeed,
+        Gfn1OverlapFeed,
+        Gfn1OccupationFeed,
+    )
+
     import external.dxtb.origin.dxtb as dxtb
 
     GFN1_XTB = dxtb.param.GFN1_XTB
