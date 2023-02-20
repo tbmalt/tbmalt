@@ -3,11 +3,11 @@ Test the xTB adapter.
 
 The eigenvalues (`eig_values`) can only loosely be compared between DFTB2 and
 GFN1 because of the different Coulomb potentials in the SCC. Comparison for
-DFTB1 does not work because the xTB Hamiltonian always contains contributions 
+DFTB1 does not work because the xTB Hamiltonian always contains contributions
 from the potential, even in the first diagonalization/iteration.
 """
 
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List
 from math import sqrt
 import numpy as np
 import pytest
@@ -15,16 +15,24 @@ import torch
 
 from tbmalt import Geometry, Basis
 from tbmalt.ml.module import Calculator
-from tbmalt.physics.xtb.feeds import (
-    Gfn1HamiltonianFeed,
-    Gfn1OverlapFeed,
-    Gfn1OccupationFeed,
-)
 from tbmalt.physics.dftb import Dftb1, Dftb2
 from tbmalt.physics.dftb.feeds import HubbardFeed
 from tbmalt.common.batch import pack
 
-from external.dxtb.origin.dxtb.param import GFN1_XTB, get_elem_angular
+try:
+    from tbmalt.physics.xtb.feeds import (
+        Gfn1HamiltonianFeed,
+        Gfn1OverlapFeed,
+        Gfn1OccupationFeed,
+    )
+
+    import external.dxtb.origin.dxtb as dxtb
+
+    GFN1_XTB = dxtb.param.GFN1_XTB
+    get_elem_angular = dxtb.param.get_elem_angular
+except ModuleNotFoundError:
+    dxtb = None
+
 
 # fixture
 from tests.test_utils import skf_file
@@ -191,33 +199,12 @@ def load_from_npz(
     return torch.from_numpy(npzfile[name]).type(dtype).to(device)
 
 
-def combinations(x: torch.Tensor, r: int = 2) -> torch.Tensor:
-    """
-    Generate all combinations of matrix elements.
-
-    This is required for the comparision of overlap and Hmailtonian for
-    larger systems because these matrices do not coincide with tblite.
-    This is possibly due to switched indices, which were introduced in
-    the initial Fortran-to-Python port.
-
-    Parameters
-    ----------
-    x : Tensor
-        Matrix to generate combinations from.
-
-    Returns
-    -------
-    Tensor
-        Matrix of combinations (n, 2).
-    """
-    return torch.combinations(torch.sort(x.flatten())[0], r)
-
-
 ##############
 # TEST FEEDS #
 ##############
 
 
+@pytest.mark.skipif(dxtb is None, reason="dxtb not yet available")
 @pytest.mark.parametrize("name", sample_list)
 def test_feed_single(device: torch.device, name: str) -> None:
     dtype = torch.get_default_dtype()
@@ -234,16 +221,16 @@ def test_feed_single(device: torch.device, name: str) -> None:
     ref_h = load_from_npz(ref_h0, name, dtype, device)
 
     # create integral feed and get matrix
-    h_feed = Gfn1HamiltonianFeed(GFN1_XTB, dtype, device)
-    h = h_feed.matrix(geometry)
     s_feed = Gfn1OverlapFeed(GFN1_XTB, dtype, device)
     s = s_feed.matrix(geometry)
+    h_feed = Gfn1HamiltonianFeed(GFN1_XTB, dtype, device)
+    h = h_feed.matrix(geometry, s)
 
     assert torch.allclose(s, s.mT, atol=tol)
-    assert torch.allclose(combinations(s), combinations(ref_s), atol=tol)
+    assert torch.allclose(s, ref_s, atol=tol)
 
     assert torch.allclose(h, h.mT, atol=tol)
-    assert torch.allclose(combinations(h), combinations(ref_h), atol=tol)
+    assert torch.allclose(h, ref_h, atol=tol)
 
 
 ###################
@@ -288,6 +275,7 @@ def dftb_checker(
         assert False
 
 
+@pytest.mark.skipif(dxtb is None, reason="dxtb not yet available")
 @pytest.mark.parametrize("name", sample_list)
 def test_dftb1_single(device: torch.device, name: str, skf_file) -> None:
     dtype = torch.get_default_dtype()
@@ -313,6 +301,7 @@ def test_dftb1_single(device: torch.device, name: str, skf_file) -> None:
     dftb_checker(calc_dftb1, [name], [sample], dtype, device)
 
 
+@pytest.mark.skipif(dxtb is None, reason="dxtb not yet available")
 @pytest.mark.parametrize("name1", sample_list)
 @pytest.mark.parametrize("name2", sample_list)
 def test_dftb1_batch(device: torch.device, name1: str, name2: str, skf_file) -> None:
@@ -339,6 +328,7 @@ def test_dftb1_batch(device: torch.device, name1: str, name2: str, skf_file) -> 
     dftb_checker(calc_dftb1, [name1, name2], [s1, s2], dtype, device)
 
 
+@pytest.mark.skipif(dxtb is None, reason="dxtb not yet available")
 @pytest.mark.parametrize("name", sample_list)
 def test_dftb2_single(device: torch.device, name: str, skf_file) -> None:
     dtype = torch.get_default_dtype()
@@ -366,6 +356,7 @@ def test_dftb2_single(device: torch.device, name: str, skf_file) -> None:
     dftb_checker(calc_dftb2, [name], [sample], dtype, device)
 
 
+@pytest.mark.skipif(dxtb is None, reason="dxtb not yet available")
 @pytest.mark.parametrize("name1", sample_list)
 @pytest.mark.parametrize("name2", sample_list)
 def test_dftb2_batch(device: torch.device, name1: str, name2: str, skf_file) -> None:
