@@ -1,140 +1,307 @@
 # -*- coding: utf-8 -*-
-from typing import Dict, List, Union
-import random
+"""Containers to hold data associated the training and testing process."""
 
-from h5py import Group
+from os.path import join
+from functools import reduce
+import operator
+from typing import Union, Dict, Any, Optional, List
+import h5py
 import torch
-from torch.utils.data import DataLoader as Loader
-from torch import Tensor
 
-from tbmalt.common.batch import pack
+import numpy as np
 
 
-class Dataloader(Loader):
-    """A class to read and load data.
+from h5py import Group, File
+from tbmalt import Geometry
+from tbmalt.common.batch import pack, merge
 
-    This class will use given targets to read and load data samples from
-    h5py files. The '__getitem__()' function, which is inherited from object
-    'torch.utils.data.Dataset', supports fetching data with specified indices.
-    The indices are from random numbers with defined seeds.
+Tensor = torch.Tensor
 
-    Arguments:
-        dataset: An dictionary which stores all the data.
-        labels: A list of label for each sample.
-        targets: Names of machine learned targets.
-        pbc: Whether read cells.
-        seed: Seed to generate random numbers, this will be used to
-            generate indices when loading samples.
 
-    """
+class DataSet:
+    pass
 
-    def __init__(self, dataset: Dict, labels: List[str], targets, pbc, seed):
-        self.targets = targets
-        self.dataset = dataset
-        self.labels = labels
-        self.pbc = pbc
 
-        size = len(dataset['atomic_numbers'])
-        random.seed(seed)
-        self.random_idx = random.sample(range(size), size)
+class DataSetIM(DataSet):
+    def __init__(
+            self, geometry: Geometry, data: Dict[str, Tensor],
+            labels: Optional[List[str]] = None,
+            meta: Optional[Dict[str, Any]] = None):
+        """In-memory dataset management class.
 
-    def __getitem__(self, idx: Tensor) -> Dict:
-        """Get data values according to input indices."""
-        atomic_numbers = self.dataset['atomic_numbers']
-        positions = self.dataset['positions']
-        if self.pbc:
-            cells = self.dataset['cells']
-
-        # Select different properties
-        data = {target: pack([self.dataset[target][ii] for ii in idx])
-                for target in self.targets}
-
-        # Select data with index
-        data['atomic_numbers'] = pack([atomic_numbers[ii] for ii in idx])
-        data['positions'] = pack([positions[ii] for ii in idx])
-        if self.pbc:
-            data['cells'] = pack([cells[ii] for ii in idx])
-
-        return data
-
-    @classmethod
-    def load_reference(cls, groups: Union[Group, List[Group]],
-                       targets: List[str],
-                       sizes: Union[List[int], int] = None,
-                       pbc: bool = False, rand: bool = True, seed: int = 1):
-        """Load reference from h5py type data.
+        A container designed to store the data necessary to perform a training
+        or testing operation. Datasets are only intended to hold structural
+        information and any required reference data. The `tbmalt.DataSet`
+        entities do not inherit from, and are not compatible with, the
+        `torch.Dataset` and `torch.DataLoader` objects as they do not support
+        the custom objects required by TBMaLT; namely the geometry. Dataset
+        objects are designed for more for convenience and as such are not
+        strictly necessary.
 
         Arguments:
-            groups: The groups in h5py binary files. The input groups
-                can be a single group or a list of groups.
-            targets: Loading targets, such as dipole, charge, etc.
-            sizes: Loading size of each group.
-            pbc: Whether read cells.
-            rand: whether using random index to read geometries.
-            seed: Seed to generate random numbers, this will be used to
-                generate indices when loading samples.
+            geometry: a single batched geometry object representing the
+                systems contained within the dataset.
+            data: a dictionary keyed by strings specifying various data-points
+                that are to be used during training and/or testing. Values are
+                assumed to be torch tensors batched along the first dimension.
+                When a dataset is sliced via `dataset[0:3]` then only the
+                corresponding subset of each tensor is returned.
+            labels: an optional list specifying a label for each system
+                present in the dataset. These labels are used only as a visual
+                reference point for the user, and as such need not be unique.
+                The only restriction is that there must be one label for each
+                data-point. These are useful in helping users to quickly and
+                visually identify the contents of randomly selected subsets.
+            meta: a dictionary that may contain any arbitrary data that the
+                user supplies. Data present within the `meta` dictionary is
+                assumed to be global and is not sliced like `data`.
+
+        Notes:
+            The `meta` attribute is currently in the developmental stage and
+            is thus subject to change.
+
+            Support will be added in the future for PyTorch sampling objects
+            and for loading meta-data from files.
 
         """
-        data = {target: [] for target in targets}
-        positions, numbers, labels = [], [], []
-        if pbc:
-            cells = []
+        self.geometry = geometry
+        self.data = data
+        self.labels = labels
+        self.meta = meta if meta is not None else None
 
-        def single_loader(g, size):
-            g_size = g.attrs['size']
-            this_size = min(g_size, size) if size is not None else g_size
+        # If labels have been provided, then ensure that the correct number
+        # were specified.
+        if self.labels is not None and len(self.labels) != len(self):
+            raise ValueError(
+                'If labels are provided then the number of labels '
+                f'({len(self.labels)}) must match the number of systems'
+                f'({len(self)})')
 
-            if rand:
-                random.seed(seed)
-                ind = random.sample(torch.arange(g_size).tolist(), this_size)
-            else:
-                ind = torch.arange(g_size)
-            labels.extend(g.attrs['label'])
+        # Confirm that all values in `data` are tensors of correct size
+        # Ensure the contents of `data` conform to requirements.
+        for k, v in self.data.items():
+            # All values within `data` should be torch.Tensors
+            check_1 = isinstance(v, Tensor)
+            assert check_1, f'data entry "{k}" must be a torch.tensor'
 
-            # loop for each property
-            for target in targets:
-                idata = g[target][()][ind]
-                if g_size != 1:
-                    data[target].append(torch.from_numpy(idata))
-                else:
-                    data[target].append(torch.from_numpy(idata).unsqueeze(0))
+            # The tensor is expected to be a batch of data, with one entry per
+            # system, batched along the first dimension.
+            check_2 = v.shape[0] == len(self)
+            assert check_2, 'The length of the first dimension of the tensor ' \
+                            f'"{k}" (v.shape[0]) does not match the number of ' \
+                            f'systems ({len(self)})'
 
-            if g_size != 1:
-                positions.append(torch.from_numpy(g['positions'][()][ind]))
-                numbers.append(torch.from_numpy(g['atomic_numbers'][()][ind]))
-            else:
-                positions.append(torch.from_numpy(g['positions'][()][ind]
-                                                  ).unsqueeze(0))
-                numbers.append(torch.from_numpy(g['atomic_numbers'][()][ind]
-                                                ).unsqueeze(0))
+    def __len__(self):
+        """Number of systems present in the dataset"""
+        return self.geometry.atomic_numbers.shape[0]
 
-            if pbc:
-                if g_size != 1:
-                    cells.append(torch.from_numpy(g['cells'][()][ind]))
-                else:
-                    cells.append(torch.from_numpy(g['cells'][()][ind]
-                                                  ).unsqueeze(0))
+    def __getitem__(self, idx):
+        """Permit the dataset to be indexed.
 
-        # Read data from specified groups
-        if isinstance(groups, list):
+        It should be noted that this will fail if the `self.data` attribute
+        holds anything that cannot be sliced.
+        """
 
-            if sizes is not None:
-                assert len(groups) == len(sizes),\
-                    'len(size) should be equal to len(groups)'
+        # Attempting to index with a single integer will cause a single
+        # datapoint to be returned. While this is normally desired behaviour
+        # it is problematic here. Such situations should be treated as
+        # a batch of size 1. Thus a single index `i` is treated as `i:i+1` to
+        # prevent accidentally deflating the dimensions of the data.
+        if isinstance(idx, int):
+            idx = slice(idx, idx+1)
 
-            for ii, g in enumerate(groups):
-                size = None if sizes is None else sizes[ii]
-                single_loader(g, size)
+        # The `labels` attribute need only be sliced if it is specified.
+        if self.labels is None:
+            labels = None
         else:
-            single_loader(groups, sizes)
+            # To make life easier it is converted to a numpy array for the
+            # duration of the slicing operation.
+            labels = list(np.asarray(self.labels)[idx])
 
-        data['atomic_numbers'] = pack(numbers).flatten(0, 1)
-        data['positions'] = pack(positions).flatten(0, 1)
-        if pbc:
-            data['cells'] = pack(cells).flatten(0, 1)
+        return self.__class__(
+            self.geometry[idx],
+            {k: v[idx, ...] for k, v in self.data.items()},
+            labels=labels, meta=self.meta)
 
-        # loop for each property and pack target values
-        for target in targets:
-            data[target] = pack(data[target]).flatten(0, 1)
+    def __add__(self, other: 'DataSetIM'):
+        """Permit datasets to be combined"""
+        # Ensure that the two datasets are compatible
+        if self.data.keys() != other.data.keys():
+            raise KeyError('Cannot combine datasets with differing data')
 
-        return cls(data, labels, targets, pbc, seed)
+        if not isinstance(other.labels, type(self.labels)):
+            raise ValueError('Labels must be either be defined for both '
+                             'datasets or neither.')
+
+        if self.meta != other.meta:
+            raise ValueError('Datasets with differing metadata cannot be '
+                             'merged')
+
+        if self.labels is None:
+            labels = None
+        else:
+            labels = self.labels + other.labels
+
+        return self.__class__(
+            self.geometry + other.geometry,
+            {k: merge([self.data[k], other.data[k]])
+                for k in self.data.keys()},
+            labels=labels,
+            meta=self.meta
+        )
+
+    @classmethod
+    def load_data(
+            cls, path: str, sources: List[str],
+            targets: Union[List[str], Dict[str, str]],
+            device: Optional[torch.device] = None) -> 'DataSetIM':
+        """Load a collection of data-points into a dataset instance.
+
+        Arguments:
+            path: path to the database.
+            sources: a list of paths specifying the groups from which data
+                should be loaded; one for each system.
+            targets: paths relative to `source` specifying the HDF5 datasets
+                to load. Results are loaded from each source group, packed
+                together and then placed in the class's `data` attribute.
+                The key under which the data is stored can be specified using
+                a dictionary of the form `{name: path/to/dataset}`, if a list
+                is provided then the path is used as the key.
+            device: Device on which to create any new tensors. [DEFAULT=None]
+
+        Returns:
+            dataset: a dataset object holding the requested data.
+
+        Notes:
+            Structural information must be present in the group specified by
+            `source`. Specifically, an attempt will be made to instantiate
+            a `Geometry` instance from a sub-group of the name "geometry",
+            failing this it will be assumed that the required date is present
+            in the main group itself, i.e. `source`.
+
+        """
+        # If `targets` is a list then treat it as a dictionary where the keys
+        # & values are the same. Prevents having a list/dict conditional later
+        if isinstance(targets, list):
+            targets = {i: i for i in targets}
+
+        with h5py.File(path) as database:
+            # Load in and combine the geometry objects from all of the
+            # source systems.
+            geometry = reduce(
+                operator.add,
+                [_load_structure(database[source], device=device)
+                 for source in sources])
+
+            # Load and pack the requested target datasets from each system.
+            data = {
+                target_name: pack([
+                    torch.tensor(database[join(source, target)],
+                                 device=device)
+                    for source in sources]
+                ) for target_name, target in targets.items()}
+
+            if 'label' in database[sources[0]].attrs:
+                labels = [database[source].attrs['label']
+                          for source in sources]
+            else:
+                labels = None
+
+            return cls(geometry, data, labels=labels)
+
+    @classmethod
+    def load_data_batch(
+            cls, path: str, source: str,
+            targets: Union[List[str], Dict[str, str]],
+            device: Optional[torch.device] = None) -> 'DataSetIM':
+        """Load a batch of data from an HDF5 database into a dataset instance.
+
+        Unlike `load_data`, this method assumes that the data stored within
+        the database at the location specified by `source` is pre-batched.
+
+        Arguments:
+            path: path to the HDF5 database.
+            source: path specifying the group within the database from which
+                data should be loaded.
+            targets: paths relative to `source` specifying the HDF5 datasets
+                to load. Results are placed in the class's `data` attribute.
+                The key under which the data is stored can be specified using
+                a dictionary of the form `{name: path/to/dataset}`, if a list
+                is provided then the path is used as the key.
+            device: Device on which to create any new tensors. [DEFAULT=None]
+
+        Returns:
+            dataset: a dataset object holding the requested data.
+
+        Notes:
+            Structural information must be present in the group specified by
+            `source`. Specifically, an attempt will be made to instantiate
+            a `Geometry` instance from a sub-group of the name "geometry",
+            failing this it will be assumed that the required date is present
+            in the main group itself, i.e. `source`.
+
+            Each of the datasets loaded is assumed to be a packed array with
+            with a data-point for each entry in the batch. That is to say if
+            there are 100 molecules there should be 100 sets of, for example,
+            charges. Furthermore, datasets are assumed to batched along the
+            the first dimension.
+
+        """
+        # If `targets` is a list then treat it as a dictionary where the keys
+        # & values are the same. Prevents having a list/dict conditional later
+        if isinstance(targets, list):
+            targets = {i: i for i in targets}
+
+        with h5py.File(path) as database:
+
+            # Parse geometry data from the database into a `Geometry` instance
+            geometry = _load_structure(database[source], device=device)
+
+            # Load in the target data, convert it to a torch tensor and
+            # add it to the `data` dictionary.
+            data = {
+                target_name: torch.tensor(
+                    database[join(source, target_path)][()], device=device)
+                for target_name, target_path in targets.items()}
+
+            # If a `labels` attribute exists, load it, if not then check for
+            # `label`. Otherwise assume that it is not present.
+            attrs = database[source].attrs
+            labels = attrs.get('labels', attrs.get('label', None))
+
+            # If labels where provided then convert to a list; this is needed
+            # because h5py loads it as a numpy array.
+            if isinstance(labels, np.ndarray):
+                labels = list(labels)
+
+            if labels is not None:
+                # Ensure the number of labels matches the number of systems
+                assert len(labels) == geometry.atomic_numbers.shape[0]
+
+            # Finally, construct and return the dataset object
+            return cls(geometry, data, labels)
+
+    def __repr__(self):
+        data = ", ".join(sorted(self.data.keys()))
+        return f'{self.__class__.__name__}(n={len(self)}, data=[{data}])'
+
+    def __str__(self):
+        return repr(self)
+
+
+def _load_structure(group: Union[Group, File], **kwargs):
+    # Check to see if the geometry information is stored in a subgroup called
+    # "geometry".
+    if 'geometry' in group:
+        return Geometry.from_hdf5(group['geometry'], **kwargs)
+    # If not then perhaps the geometry information is stored in datapoint's
+    # root directory.
+    elif 'atomic_numbers' in group and 'positions' in group:
+        return Geometry.from_hdf5(group, **kwargs)
+    # If neither is true, then throw an error.
+    else:
+        raise NameError(f'Could not load geometry information from the group '
+                        f'{group}. Could not find either i) a subgroup named '
+                        '"geometry" or the ii) datasets "atomic_numbers" and '
+                        '"positions".')
+
