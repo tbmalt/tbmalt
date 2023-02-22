@@ -153,7 +153,7 @@ class DataSetIM(DataSet):
     @classmethod
     def load_data(
             cls, path: str, sources: List[str],
-            targets: Union[List[str], Dict[str, str]],
+            targets: Union[List[str], Dict[str, str]], pbc: bool = False,
             device: Optional[torch.device] = None) -> 'DataSetIM':
         """Load a collection of data-points into a dataset instance.
 
@@ -167,6 +167,7 @@ class DataSetIM(DataSet):
                 The key under which the data is stored can be specified using
                 a dictionary of the form `{name: path/to/dataset}`, if a list
                 is provided then the path is used as the key.
+            pbc: Whether read cells.
             device: Device on which to create any new tensors. [DEFAULT=None]
 
         Returns:
@@ -190,7 +191,7 @@ class DataSetIM(DataSet):
             # source systems.
             geometry = reduce(
                 operator.add,
-                [_load_structure(database[source], device=device)
+                [_load_structure(database[source], pbc=pbc, device=device)
                  for source in sources])
 
             # Load and pack the requested target datasets from each system.
@@ -212,7 +213,7 @@ class DataSetIM(DataSet):
     @classmethod
     def load_data_batch(
             cls, path: str, source: str,
-            targets: Union[List[str], Dict[str, str]],
+            targets: Union[List[str], Dict[str, str]], pbc: bool = False,
             device: Optional[torch.device] = None) -> 'DataSetIM':
         """Load a batch of data from an HDF5 database into a dataset instance.
 
@@ -228,6 +229,7 @@ class DataSetIM(DataSet):
                 The key under which the data is stored can be specified using
                 a dictionary of the form `{name: path/to/dataset}`, if a list
                 is provided then the path is used as the key.
+            pbc: Whether read cells.
             device: Device on which to create any new tensors. [DEFAULT=None]
 
         Returns:
@@ -255,7 +257,7 @@ class DataSetIM(DataSet):
         with h5py.File(path) as database:
 
             # Parse geometry data from the database into a `Geometry` instance
-            geometry = _load_structure(database[source], device=device)
+            geometry = _load_structure(database[source], pbc=pbc, device=device)
 
             # Load in the target data, convert it to a torch tensor and
             # add it to the `data` dictionary.
@@ -289,19 +291,23 @@ class DataSetIM(DataSet):
         return repr(self)
 
 
-def _load_structure(group: Union[Group, File], **kwargs):
+def _load_structure(group: Union[Group, File], pbc, **kwargs):
     # Check to see if the geometry information is stored in a subgroup called
     # "geometry".
     if 'geometry' in group:
         return Geometry.from_hdf5(group['geometry'], **kwargs)
     # If not then perhaps the geometry information is stored in datapoint's
     # root directory.
-    elif 'atomic_numbers' in group and 'positions' in group:
+    elif 'atomic_numbers' in group and 'positions' in group and not pbc:
+        return Geometry.from_hdf5(group, **kwargs)
+    # With pbc.
+    elif 'atomic_numbers' in group and 'positions' in group \
+        and 'cells' in group and pbc:
         return Geometry.from_hdf5(group, **kwargs)
     # If neither is true, then throw an error.
     else:
         raise NameError(f'Could not load geometry information from the group '
                         f'{group}. Could not find either i) a subgroup named '
                         '"geometry" or the ii) datasets "atomic_numbers" and '
-                        '"positions".')
+                        '"positions" and/or "cells".')
 

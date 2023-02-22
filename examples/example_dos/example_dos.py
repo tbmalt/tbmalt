@@ -6,12 +6,12 @@ import torch
 import numpy as np
 import h5py
 
-from tbmalt import Geometry, Basis, Periodic
+from tbmalt import Geometry, Basis
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.maths.interpolation import CubicSpline
-from tbmalt.io.dataset import Dataloader
+from tbmalt.io.dataset import DataSetIM
 from tbmalt.physics.dftb.properties import dos
 import tbmalt.common.maths as tb_math
 from tbmalt.common.batch import pack
@@ -129,11 +129,16 @@ def load_target_data(path: str, group1: str, group2: str, properties: List,
     # Data could be loaded from a json file or an hdf5 file; use your own
     # discretion here. A dictionary might be the best object in which to store
     # the target data.
-    with h5py.File(path, 'r') as f:
-        groups = f[group1][group2]
-        return Dataloader.load_reference(groups, properties, size, pbc=True,
-                                         rand=False)
 
+    # To adjust the new dataloader
+    with h5py.File(path, 'a') as f:
+        attrs = f[group1][group2].attrs
+        labels = attrs.get('labels', attrs.get('label', None))
+        if labels is not None:
+            attrs.__delitem__('label')
+
+    return DataSetIM.load_data_batch(path, group1 + '/' + group2, properties,
+                                     pbc=True)
 
 # 2.2 prepare training and testing data
 class SiliconDataset(Dataset):
@@ -176,24 +181,24 @@ def prepare_data(run):
     data_train = dataloder_train[indice[: training_size]]
     data_test = dataloder_test[indice[: testing_size]]
 
-    numbers_train, positions_train, cells_train = (data_train['atomic_numbers'],
-                                                   data_train['positions'],
-                                                   data_train['cells'])
+    numbers_train, positions_train, cells_train = (data_train.geometry.atomic_numbers,
+                                                   data_train.geometry.positions,
+                                                   data_train.geometry.cells)
 
-    numbers_test, positions_test, cells_test = (data_test['atomic_numbers'],
-                                                data_test['positions'],
-                                                data_test['cells'])
+    numbers_test, positions_test, cells_test = (data_test.geometry.atomic_numbers,
+                                                data_test.geometry.positions,
+                                                data_test.geometry.cells)
     # Build datasets
     dataset_train = SiliconDataset(numbers_train, positions_train, cells_train,
-                                   data_train['homo_lumos'],
-                                   data_train['eigenvalues'])
+                                   data_train.data['homo_lumos'],
+                                   data_train.data['eigenvalues'])
     dataset_test = SiliconDataset(numbers_test, positions_test, cells_test,
-                                  data_test['homo_lumos'],
-                                  data_test['eigenvalues'])
+                                  data_test.data['homo_lumos'],
+                                  data_test.data['eigenvalues'])
 
     # Calculate reference dos and implement sampling
-    ref_ev = data_train['eigenvalues']
-    fermi_train = data_train['homo_lumos'].mean(dim=-1)
+    ref_ev = data_train.data['eigenvalues']
+    fermi_train = data_train.data['homo_lumos'].mean(dim=-1)
     energies_train = fermi_train.unsqueeze(-1) + points.unsqueeze(0).repeat_interleave(
             training_size, 0)
     dos_ref = dos((ref_ev), energies_train, 0.09)
