@@ -303,11 +303,10 @@ class DFTB_DDP(torch.nn.Module):
         return dos_dftb
 
 
-def main(rank, world_size):
+def main(rank, world_size, dataset_train, dataset_test, data_train_dos):
     """ML training to optimize DFTB H and S matrix."""
     # Initial the model
     setup(rank, world_size)
-    dataset_train, dataset_test, data_train_dos = prepare_data(target_run)
     train_data = data_split(rank, world_size, dataset_train, batch_size=n_batch)
     device = torch.device("cpu")
     model = DFTB_DDP()
@@ -461,6 +460,9 @@ if __name__ == '__main__':
     # The number of processes to spawn.
     world_size = 6
 
+    # Read dataset
+    dataset_train, dataset_test, data_train_dos = prepare_data(target_run)
+
     # Spawning subprocesses
-    mp.spawn(main, args=(world_size,),
+    mp.spawn(main, args=(world_size, dataset_train, dataset_test, data_train_dos),
              nprocs=world_size)
