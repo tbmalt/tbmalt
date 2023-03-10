@@ -98,11 +98,14 @@ def H2(device):
     return geometry, basis, results, kwargs
 
 
-def H2_scc(device):
+def H2_scc(device, **kwargs):
+
+    shell_resolved = kwargs.get('shell_resolved', False)
 
     geometry = Geometry.from_ase_atoms(molecule('H2'), device=device)
 
-    basis = Basis(geometry.atomic_numbers, {1: [0]})
+    basis = Basis(geometry.atomic_numbers, {1: [0]},
+                  shell_resolved=shell_resolved)
 
     results = {
         'q_final_atomic': torch.tensor([
@@ -166,11 +169,14 @@ def H2O(device):
     return geometry, basis, results, kwargs
 
 
-def H2O_scc(device):
+def H2O_scc(device, **kwargs):
+
+    shell_resolved = kwargs.get('shell_resolved', False)
 
     geometry = Geometry.from_ase_atoms(molecule('H2O'), device=device)
 
-    basis = Basis(geometry.atomic_numbers, {1: [0], 8: [0, 1]})
+    basis = Basis(geometry.atomic_numbers, {1: [0], 8: [0, 1]},
+                  shell_resolved=shell_resolved)
 
     results = {
         'q_final_atomic': torch.tensor([
@@ -241,11 +247,14 @@ def CH4(device):
     return geometry, basis, results, kwargs
 
 
-def CH4_scc(device):
+def CH4_scc(device, **kwargs):
+
+    shell_resolved = kwargs.get('shell_resolved', False)
 
     geometry = Geometry.from_ase_atoms(molecule('CH4'), device=device)
 
-    basis = Basis(geometry.atomic_numbers, {1: [0], 6: [0, 1]})
+    basis = Basis(geometry.atomic_numbers, {1: [0], 6: [0, 1]},
+                  shell_resolved=shell_resolved)
 
     results = {
         'q_final_atomic': torch.tensor([
@@ -323,11 +332,14 @@ def CH3O(device):
     return geometry, basis, results, kwargs
 
 
-def CH3O_scc(device):
+def CH3O_scc(device, **kwargs):
+
+    shell_resolved = kwargs.get('shell_resolved', False)
 
     geometry = Geometry.from_ase_atoms(molecule('CH3O'), device=device)
 
-    basis = Basis(geometry.atomic_numbers, {1: [0], 6: [0, 1], 8:[0, 1]})
+    basis = Basis(geometry.atomic_numbers, {1: [0], 6: [0, 1], 8:[0, 1]},
+                  shell_resolved=shell_resolved)
 
     results = {
         'q_final_atomic': torch.tensor([
@@ -340,8 +352,9 @@ def CH3O_scc(device):
     return geometry, basis, results, kwargs
 
 
-def C_wire_scc(device):
+def C_wire_scc(device, **kwargs):
     """This test mainly tests polynomial to zero part."""
+    shell_resolved = kwargs.get('shell_resolved', False)
     geometry = Geometry(
         torch.tensor([6, 6, 6, 6, 6, 6, 6, 6], device=device),
         torch.tensor([
@@ -349,7 +362,8 @@ def C_wire_scc(device):
             [0.0, 0.0, 3.2], [0.0, 0.0, 4.0], [0.0, 0.0, 4.8], [0.0, 0.0, 5.6]],
             device=device), units='a')
 
-    basis = Basis(geometry.atomic_numbers, {6: [0, 1]})
+    basis = Basis(geometry.atomic_numbers, {6: [0, 1]},
+                  shell_resolved=shell_resolved)
 
     results = {
         'q_final_atomic': torch.tensor([
@@ -622,6 +636,31 @@ def merge_systems(device, *systems):
     return geometry, basis, results, kwargs
 
 
+def merge_systems_shell_resolved(device, *systems):
+    """Combine multiple test systems into a batch."""
+
+    geometry, basis, results, kwargs = systems[0](device, shell_resolved=True)
+
+    results = {k: [v] for k, v in results.items()}
+
+    for system in systems[1:]:
+        t_geometry, t_basis, t_results, t_kwargs = system(device,
+                                                          shell_resolved=True)
+
+        assert t_kwargs == kwargs, 'Test systems with different settings ' \
+                                   'cannot be used together'
+
+        geometry += t_geometry
+        basis += t_basis
+
+        for k, v in t_results.items():
+            results[k].append(t_results[k])
+
+    results = {k: pack(v) for k, v in results.items()}
+
+    return geometry, basis, results, kwargs
+
+
 def test_dftb1_general(device, shell_resolved_feeds):
     h_feed, s_feed, o_feed = shell_resolved_feeds
     geometry, basis, results, kwargs = CH3O(device)
@@ -803,6 +842,35 @@ def test_dftb2_batch(device, shell_resolved_feeds_scc):
 
     for batch in batches:
         geometry, basis, results, kwargs = merge_systems(device, *batch)
+
+        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
+        assert calculator.device == device, 'Calculator is on the wrong device'
+
+        dftb2_helper(calculator, geometry, basis, results)
+
+
+def test_dftb2_single_shell_resolved(device, shell_resolved_feeds_scc):
+    h_feed, s_feed, o_feed, u_feed = shell_resolved_feeds_scc
+
+    systems = [H2_scc, H2O_scc, CH4_scc, CH3O_scc, C_wire_scc]
+
+    for system in systems:
+        geometry, basis, results, kwargs = system(device, shell_resolved=True)
+
+        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
+
+        dftb2_helper(calculator, geometry, basis, results)
+
+
+def test_dftb2_batch_shell_resolved(device, shell_resolved_feeds_scc):
+    h_feed, s_feed, o_feed, u_feed = shell_resolved_feeds_scc
+
+    batches = [[H2_scc], [H2_scc, CH3O_scc, C_wire_scc],
+               [H2_scc, H2O_scc, CH4_scc, CH3O_scc, C_wire_scc]]
+
+    for batch in batches:
+        geometry, basis, results, kwargs = merge_systems_shell_resolved(device,
+                                                                        *batch)
 
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'

@@ -54,6 +54,19 @@ def gamma_exponential(geometry: Geometry, basis: Basis, hubbard_Us: Tensor):
     # diagonal values is so called chemical hardness Hubbard
     gamma_tr[..., ut[0] == ut[1]] = -U
 
+    # off-diagonal values of on-site part for shell resolved calc
+    if basis.shell_resolved:
+        mask_shell = (ut[0] != ut[1]).to(device) * distance_tr.eq(0)
+        ua, ub = U[..., ut[0]][mask_shell], U[..., ut[1]][mask_shell]
+        mask_diff = (ua - ub).abs() < 1E-8
+        gamma_shell = torch.zeros_like(ua, dtype=dtype, device=device)
+        gamma_shell[mask_diff] = -0.5 * (ua[mask_diff] + ub[mask_diff])
+        if torch.any(~mask_diff):
+            ta, tb = 3.2 * ua[~mask_diff], 3.2 * ub[~mask_diff]
+            gamma_shell[~mask_diff] = -0.5 * ((ta * tb) / (ta + tb) +
+                                              (ta * tb) ** 2 / (ta + tb) ** 3)
+        gamma_tr[mask_shell] = gamma_shell
+
     mask_homo = (an1 == an2) * distance_tr.ne(0)
     mask_hetero = (an1 != an2) * distance_tr.ne(0)
     alpha, beta = U[..., ut[0]] * 3.2, U[..., ut[1]] * 3.2
@@ -162,6 +175,9 @@ def gamma_gaussian(geometry: Geometry, basis: Basis, hubbard_Us: Tensor
     fwhm[mask] = fwhm[mask] / hubbard_Us[mask]
 
     r = geometry.distances  # Get the distance matrix,
+
+    dtype, device = r.dtype, r.device
+
     if basis.shell_resolved:  # and expand it if this is shell resolved calc.
         def dri(t, ind):  # Abstraction of lengthy double interleave operation
             return t.repeat_interleave(ind, -1).repeat_interleave(ind, -2)
@@ -179,6 +195,22 @@ def gamma_gaussian(geometry: Geometry, basis: Basis, hubbard_Us: Tensor
     gamma = torch.erf(c * r)  # <──(eq. 26)──┐
     gamma[mask] = gamma[mask] / r[mask]  # <─┘
     gamma.diagonal(0, -2, -1)[:] = hubbard_Us[:]  # (eq. 31)
+
+    # off-diagonal values of on-site part for shell resolved calc
+    if basis.shell_resolved:
+        mask_shell = torch.ones_like(gamma, dtype=dtype, device=device).bool()
+        mask_shell.diagonal(0, -2, -1)[:] = False
+        mask_shell = mask_shell * r.eq(0)
+        ua, ub = hubbard_Us[..., mask_shell.nonzero()[..., 0]], \
+            hubbard_Us[..., mask_shell.nonzero()[..., 1]]
+        mask_diff = (ua - ub).abs() < 1E-8
+        gamma_shell = torch.zeros_like(ua, dtype=dtype, device=device)
+        gamma_shell[mask_diff] = 0.5 * (ua[mask_diff] + ub[mask_diff])
+        if torch.any(~mask_diff):
+            ta, tb = 3.2 * ua[~mask_diff], 3.2 * ub[~mask_diff]
+            gamma_shell[~mask_diff] = 0.5 * ((ta * tb) / (ta + tb) +
+                                              (ta * tb) ** 2 / (ta + tb) ** 3)
+        gamma[mask_shell] = gamma_shell
 
     return gamma
 
