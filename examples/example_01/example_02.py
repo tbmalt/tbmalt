@@ -11,7 +11,7 @@ from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.maths.interpolation import CubicSpline
-from tbmalt.io.dataset import Dataloader
+from tbmalt.io.dataset import DataSetIM
 
 from ase.build import molecule
 
@@ -75,7 +75,7 @@ def load_target_data(path: str, properties: List, groups) -> Any:
     # Data could be loaded from a json file or an hdf5 file; use your own
     # discretion here. A dictionary might be the best object in which to store
     # the target data.
-    return Dataloader.load_reference(groups, properties)
+    return DataSetIM.load_reference(groups, properties)
 
 
 def init_model():

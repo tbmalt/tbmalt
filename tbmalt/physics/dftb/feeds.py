@@ -353,8 +353,6 @@ class SkFeed(IntegralFeed):
             the interactions, & valued by Scipy `CubicSpline` entities. Note
             that z₁ must be less than or equal to z₂, see the notes section
             for further information.
-        to_cpu: If use interpolation from numpy or scipy, `cuda` type data
-            should be transferred to `cpu`.
         device: Device on which the feed object and its contents resides.
         dtype: dtype used by feed object.
 
@@ -384,7 +382,6 @@ class SkFeed(IntegralFeed):
     def __init__(self, on_sites: Dict[int, Tensor],
                  off_sites: Dict[Tuple[int, int, int, int], CubicSpline],
                  interpolation: Literal[CSpline, PolyInterpU, BicubInterp],
-                 to_cpu: bool, block: bool,
                  dtype: Optional[torch.dtype] = None,
                  device: Optional[torch.device] = None):
 
@@ -402,8 +399,6 @@ class SkFeed(IntegralFeed):
                          temp.device if device is None else device)
 
         self.interpolation = interpolation
-        self.to_cpu = to_cpu
-        self.block = block
         self.on_sites = on_sites
         self.off_sites = off_sites
 
@@ -554,7 +549,6 @@ class SkFeed(IntegralFeed):
             target: Literal['hamiltonian', 'overlap'],
             interpolation: Literal[CSpline, PolyInterpU, BicubInterp] = PolyInterpU,
             requires_grad: bool = False,
-            block: bool = False,
             dtype: Optional[torch.dtype] = None,
             device: Optional[torch.device] = None) -> 'SkFeed':
         r"""Instantiate instance from an HDF5 database of Slater-Koster files.
@@ -610,7 +604,6 @@ class SkFeed(IntegralFeed):
 
         on_sites, off_sites = {}, {}
         params = {'extrapolate': False} if interpolation is CubicSpline else {}
-        to_cpu = True if interpolation is CubicSpline else False
 
         # The species list must be sorted to ensure that the lowest atomic
         # number comes first in the species pair.
@@ -661,7 +654,7 @@ class SkFeed(IntegralFeed):
 
                 on_sites[pair[0]] = on_sites_vals
 
-        return cls(on_sites, off_sites, interpolation, to_cpu, block, dtype, device)
+        return cls(on_sites, off_sites, interpolation, dtype, device)
 
     def __str__(self):
         elements = ', '.join([

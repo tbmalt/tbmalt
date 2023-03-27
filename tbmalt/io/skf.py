@@ -802,8 +802,6 @@ class VCRSkf(Skf):
                 if pair in current:  # Skip it if it has been parsed before
                     print('SKIPPING (previously parsed)')
                     continue
-                else:  # If not then parse it
-                    print('PARSING')
 
                 VCRSkf.single_csv(path, pair, all_files, target)
         else:
@@ -992,9 +990,6 @@ class VCRSkf(Skf):
             if pair in current:  # Skip it if it has been parsed before
                 print('SKIPPING (previously parsed)')
                 continue
-            else:  # If not then parse it
-                print('PARSING')
-
 
 
 #########################
