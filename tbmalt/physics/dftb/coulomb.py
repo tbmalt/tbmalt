@@ -16,59 +16,47 @@ Tensor = torch.Tensor
 _euler = 0.5772156649
 
 
-class Coulomb:
-    """Class to assist the calculation of coulomb interaction by ABC 'Ewald'.
-
-    The 'Coulomb' class checks the type of periodic boundary condition and
-    decides which subclass of ewald summation to use.
+def build_coulomb_matrix(geometry: Geometry, **kwargs):
+    """Construct the 1/R matrix for the periodic geometry.
 
     Arguments:
         geometry: Object for calculation, storing the data of input geometry.
-        periodic: Object for calculation, storing the data of translation
-            vectors and neighbour list for periodic boundary conditoin.
 
     Keyword Arguments:
         tol_ewald: EWald tolerance.
         method: Method to obtain parameters of alpha and cutoff.
         nsearchiter: Maximum of iteration for searching alpha, maxg and maxr.
 
-    Attributes:
-        invrmat: 1/R matrix for the periodic geometry.
-
     Examples:
-        >>> from tbmalt import Geometry, Periodic, Coulomb
+        >>> from tbmalt import Geometry
+        >>> from tbmalt.physics.dftb.coulomb import build_coulomb_matrix
         >>> import torch
         >>> cell = torch.tensor([[2., 0., 0.], [0., 4., 0.], [0., 0., 2.]])
         >>> pos = torch.tensor([[0., 0., 0.], [0., 2., 0.]])
         >>> num = torch.tensor([1, 1])
         >>> cutoff = torch.tensor([9.98])
-        >>> system = Geometry(num, pos, cell, units='a')
-        >>> periodic = Periodic(system, system.cells, cutoff=cutoff)
-        >>> coulomb = Coulomb(system, periodic, method='search')
-        >>> print(coulomb.invrmat)
+        >>> system = Geometry(num, pos, cell, units='a', cutoff=cutoff)
+        >>> invrmat = build_coulomb_matrix(system, method='search')
+        >>> print(invrmat)
         tensor([[-0.4778, -0.2729],
                 [-0.2729, -0.4778]])
 
     """
 
-    def __init__(self, geometry: Geometry, periodic: Periodic, **kwargs):
-        self.geometry: Geometry = geometry
-        self.periodic: Periodic = periodic
+    # Check the type of pbc and choose corresponding subclass
+    if geometry.pbc.ndim == 1:  # -> Single
+        _sum_dim = geometry.pbc.sum(dim=-1)
+    else:  # -> Batch
+        _sum_dim = geometry.pbc[0].sum(dim=-1)
 
-        # Check the type of pbc and choose corresponding subclass
-        if self.geometry.pbc.ndim == 1:  # -> Single
-            _sum_dim = self.geometry.pbc.sum(dim=-1)
-        else:  # -> Batch
-            _sum_dim = self.geometry.pbc[0].sum(dim=-1)
+    if _sum_dim == 1:  # -> 1D pbc
+        coulomb = Ewald1d(geometry, geometry.periodic, **kwargs)
+    elif _sum_dim == 2:  # -> 2D pbc
+        coulomb = Ewald2d(geometry, geometry.periodic, **kwargs)
+    elif _sum_dim == 3:  # -> 3D pbc
+        coulomb = Ewald3d(geometry, geometry.periodic, **kwargs)
 
-        if _sum_dim == 1:  # -> 1D pbc
-            coulomb = Ewald1d(self.geometry, self.periodic, **kwargs)
-        elif _sum_dim == 2:  # -> 2D pbc
-            coulomb = Ewald2d(self.geometry, self.periodic, **kwargs)
-        elif _sum_dim == 3:  # -> 3D pbc
-            coulomb = Ewald3d(self.geometry, self.periodic, **kwargs)
-
-        self.invrmat: Tensor = coulomb.invrmat
+    return coulomb.invrmat
 
 
 class Ewald(ABC):
@@ -148,7 +136,7 @@ class Ewald(ABC):
                                       dtype=self._dtype))
 
         # Method to obtain parameters for calculation
-        self.method: str = kwargs.get('method', 'default')
+        self.method: str = kwargs.get('method', 'experience')
 
         # Maximun number of iteration when searching alpha
         self.nsearchiter: int = kwargs.get('nsearchiter', 30)
@@ -157,7 +145,7 @@ class Ewald(ABC):
         self._max_natoms: Tensor = torch.max(self.natom)
 
         # Default method to obtain parameters by empirical formulas
-        if self.method == 'default':
+        if self.method == 'experience':
 
             # Splitting parameter
             self.alpha: Tensor = self._default_alpha()
@@ -192,7 +180,8 @@ class Ewald(ABC):
 
     def _update_latvec(self) -> Tuple[Tensor, Tensor]:
         """Update the lattice points for reciprocal Ewald summation."""
-        update = Periodic(self.geometry, self.recvec, cutoff=self.maxg,
+        update = Periodic(self.geometry.positions, self.geometry.n_atoms,
+                          self.recvec, cutoff=self.maxg,
                           distance_extention=0, positive_extention=0,
                           negative_extention=0)
 
@@ -200,7 +189,8 @@ class Ewald(ABC):
 
     def _update_neighbour(self) -> Tuple[Tensor, Tensor]:
         """Update the neighbour lists for real Ewald summation."""
-        update = Periodic(self.geometry, self.latvec, cutoff=self.maxr,
+        update = Periodic(self.geometry.positions, self.geometry.n_atoms,
+                          self.latvec, cutoff=self.maxr,
                           distance_extention=0)
 
         return update.periodic_distances, update.neighbour

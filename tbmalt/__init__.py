@@ -10,4 +10,3 @@ from tbmalt.common.exceptions import *
 from tbmalt.structures.geometry import Geometry
 from tbmalt.structures.basis import Basis
 from tbmalt.structures.periodic import Periodic
-from tbmalt.physics.dftb.coulomb import Coulomb
