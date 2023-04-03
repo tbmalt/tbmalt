@@ -234,6 +234,7 @@ def update_model(calculator: Calculator):
 
 
 def single_fit(dftb_calculator, dataloder, n_batch, global_r):
+    random.seed = 0
     random_idx = random.sample(torch.arange(len(dataloder)).tolist(), len(dataloder))
     indice = torch.split(torch.tensor(random_idx), n_batch)
 

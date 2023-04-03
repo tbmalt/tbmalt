@@ -14,21 +14,29 @@ class Acsf:
     """Construct Atom-centered symmetry functions (Acsf).
 
     This class is designed for batch calculations. Single geometry will be
-    transfered to batch in the beginning. If `geometry` is in `__call__`,
+    transferred to batch in the beginning. If `geometry` is in `__call__`,
     the code will update all initial information related to `geometry`.
 
     Arguments:
         geometry: Geometry instance.
         basis: Object with orbital information.
         shell_dict: Dictionary with calculated orbital quantum number.
-        g1_params: Cutoff of acsf functions.
-        g2_params: Radical geometric parameters.
+        g1_params: Parameters for G1 function.
+        g2_params: Parameters for G2 function.
+        g3_params: Parameters for G3 function.
+        g4_params: Parameters for G4 function.
+        g5_params: Parameters for G5 function.
         unit: Unit of input G parameters.
         element_resolve: If return element resolved G or sum of G value over
             all neighbouring atoms.
         atom_like: If True, return G values with the first dimension loop over
             all atoms, else return G values with the first dimension loop over
             all geometries.
+
+    References:
+        .. [ACSF] Jörg Behler. Atom-centered symmetry functions for constructing
+                  high-dimensional neural network potentials. J. Chem. Phys.,
+                  134(7):074106, 2011.
 
     """
 
@@ -314,7 +322,6 @@ class Acsf:
         fc = fc * self.fc.unsqueeze(-3) if jk else fc
 
         ang = 0.5 * (2**(1 - zeta) * (1 + lamb * cos)**zeta * exp * fc).sum(-1)
-        # g4 = self._element_wise(ang * self.fc)
 
         _g = ang.sum(-1)[self.atomic_numbers.ne(0)].unsqueeze(-1)
         if self.element_resolve:

@@ -489,8 +489,12 @@ class SkFeed(IntegralFeed):
             the interactions, & valued by Scipy `CubicSpline` entities. Note
             that z₁ must be less than or equal to z₂, see the notes section
             for further information.
+        interpolation: interpolation type.
         device: Device on which the feed object and its contents resides.
         dtype: dtype used by feed object.
+        vcr: Compression radii in DFTB basis.
+        is_local_onsite: `is_local_onsite` allows for constructing chemical
+            environment dependent on-site energies.
 
     Notes:
         The splines contained within the ``off_sites`` argument must return
@@ -535,9 +539,12 @@ class SkFeed(IntegralFeed):
         super().__init__(temp.dtype if dtype is None else dtype,
                          temp.device if device is None else device)
 
-        self.interpolation = interpolation
         self.on_sites = on_sites
         self.off_sites = off_sites
+        self.interpolation = interpolation
+
+        self._vcr = None
+        self.is_local_onsite = False
 
     def _off_site_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
                          geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
@@ -928,6 +935,19 @@ class SkFeed(IntegralFeed):
                 on_sites[pair[0]] = on_sites_vals
 
         return cls(on_sites, off_sites, interpolation, dtype, device)
+
+    @property
+    def vcr(self):
+        """The various compression radii."""
+        return self._vcr
+
+    @vcr.setter
+    def vcr(self, value):
+        self._vcr = value
+
+    def local_onsite(self, value: Tensor):
+        """Only when is_local_onsite is True local_onsite will return Tensor."""
+        return value if self.is_local_onsite else None
 
     def __str__(self):
         elements = ', '.join([
