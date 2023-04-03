@@ -12,9 +12,12 @@ from tbmalt.physics.dftb.feeds import Feed, SkfOccupationFeed
 from tbmalt.physics.filling import (
     fermi_search, fermi_smearing, gaussian_smearing, entropy_term, aufbau_filling)
 from tbmalt.common.maths import eighb
+from tbmalt.physics.dftb.coulomb import build_coulomb_matrix
 from tbmalt.physics.dftb.gamma import build_gamma_matrix
+from tbmalt.physics.dftb.properties import dos
 from tbmalt.common.batch import prepeat_interleave
 from tbmalt.common.maths.mixers import Simple, Anderson, _Mixer
+from tbmalt.data.units import energy_units
 from tbmalt import ConvergenceError
 
 from torch import Tensor
@@ -315,6 +318,47 @@ class Dftb1(Calculator):
         """Mermin free energy; i.e. E_total-TS"""
         return self.band_free_energy + self.repulsive_energy
 
+    @property
+    def eigenvalue(self):
+        """Eigenvalue in unit eV"""
+        return self.eig_values / energy_units['ev']
+
+    @property
+    def homo_lumo(self):
+        """Highest occupied and lowest unoccupied energy level in unit eV"""
+        # Number of occupied states
+        _nocc = (~(self.occupancy - 0 < 1E-10)).long().sum(-1)
+
+        # Mask of HOMO and LUMO
+        _mask = torch.zeros_like(
+            self.occupancy, device=self.device, dtype=self.dtype).scatter_(
+            -1, _nocc.unsqueeze(-1), 1).scatter_(
+                -1, _nocc.unsqueeze(-1) - 1, 1).bool()
+        homo_lumo = self.eigenvalue[_mask] if self.occupancy.ndim == 1 else\
+            self.eigenvalue[_mask].view(self.occupancy.size(0), -1)
+
+        return homo_lumo
+
+    @property
+    def dos_energy(self, ext=1, grid=1000):
+        """Energy distribution of (p)DOS in unit eV"""
+        e_min = torch.min(self.eigenvalue.detach(), dim=-1).values - ext
+        e_max = torch.max(self.eigenvalue.detach(), dim=-1).values + ext
+        dos_energy = torch.linspace(
+            e_min, e_max, grid, device=self.device, dtype=self.dtype) if\
+            self.occupancy.ndim == 1 else torch.stack([torch.linspace(
+                imin, imax, grid, device=self.device, dtype=self.dtype
+                ) for imin, imax in zip(e_min, e_max)])
+
+        return dos_energy
+
+    @property
+    def dos(self):
+        """Electronic density of states"""
+        # Mask to remove padding values.
+        _mask = torch.where(self.eigenvalue == 0, False, True)
+        return dos(self.eigenvalue, self.dos_energy, sigma=0.1, mask=_mask)
+
     def reset(self):
         """Reset all attributes and cached properties."""
         self._overlap = None
@@ -371,6 +415,8 @@ class Dftb2(Dftb1):
             may also be provided directly.
         gamma_scheme: scheme used to construct the gamma matrix. This may be
             either "exponential" or "gaussian". [DEFAULT="exponential"]
+        coulomb_scheme: scheme used to construct the coulomb matrix. This may
+            be either "search" or "experience". [DEFAULT="search"]
         max_scc_iter: maximum permitted number of SCC iterations. If one or
             more system fail to converge within ``max_scc_iter`` cycles then a
             convergence error will be raise; unless the ``suppress_SCF_error``
@@ -388,6 +434,7 @@ class Dftb2(Dftb1):
             `h_feed` entity.
         gamma: the gamma matrix, this is constructed via the specified scheme
             and uses the Hubbard-U values produced by the `u_feed`
+        invr: the 1/R matrix.
         hamiltonian: second order Hamiltonian matrix as produced via the SCC
             cycle.
         converged: a tensor of booleans indicating which systems have and
@@ -416,12 +463,14 @@ class Dftb2(Dftb1):
 
         self._core_hamiltonian: Optional[Tensor] = None
         self._gamma: Optional[Tensor] = None
+        self._invr: Optional[Tensor] = None
         self.converged: Optional[Tensor] = None
 
         # Calculator Settings
         self.max_scc_iter = max_scc_iter
         self.suppress_SCF_error = kwargs.get('supress_SCF_error', False)
         self._gamma_scheme = kwargs.get('gamma_scheme', 'exponential')
+        self._coulomb_scheme = kwargs.get('coulomb_scheme', 'search')
 
         # If no pre-initialised was provided then construct one.
         if isinstance(mixer, str):
@@ -458,12 +507,30 @@ class Dftb2(Dftb1):
         self._core_hamiltonian = value
 
     @property
+    def invr(self):
+        """1/R matrix"""
+        if self._invr is None:
+            if self.geometry.periodic is not None:
+                self._invr = build_coulomb_matrix(self.geometry,
+                                                  method=self._coulomb_scheme)
+            else:
+                _r = self.geometry.distances
+                _r[_r != 0.0] = 1.0 / _r[_r != 0.0]
+                self._invr = _r
+
+        return self._invr
+
+    @invr.setter
+    def invr(self, value):
+        self._invr = value
+
+    @property
     def gamma(self):
         """Gamma matrix"""
         if self._gamma is None:
             self._gamma = build_gamma_matrix(
-                self.geometry, self.basis, self.u_feed(self.basis),
-                self._gamma_scheme)
+                self.geometry, self.basis, self.invr,
+                self.u_feed(self.basis), self._gamma_scheme)
         return self._gamma
 
     @gamma.setter
@@ -510,7 +577,7 @@ class Dftb2(Dftb1):
 
         # Calls are made to the various cached properties to ensure that they
         # are constructed within the purview of the graph.
-        self.overlap, self.core_hamiltonian, self.gamma
+        self.overlap, self.core_hamiltonian, self.invr, self.gamma
 
         # Step 2: Preliminary SCC cycle
         # A preliminary SCC cycle is performed outside of the gradient and acts
@@ -521,6 +588,103 @@ class Dftb2(Dftb1):
 
         else:
             q_converged = self.scc(q_current, q_converged)
+
+            # Non-batch systems are treated separately for the sake of clarity
+            # as special treatment is required for the batch case.
+            if not self.is_batch:
+                # Begin the SCC cycle
+                for step in range(1, self.max_scc_iter + 1):
+
+                    # Perform a single SCC step and apply the mixing algorithm.
+                    q_current = self.mixer(self._scc_cycle(q_current), q_current)
+
+                    # If the system has converged then assign the `q_converged`
+                    # values and break out of the SCC cycle.
+                    if self.mixer.converged:
+                        q_converged[:] = q_current[:]
+                        self.converged = torch.tensor(True)
+                        break
+
+                # If the maximum permitted number of iterations is exceeded then
+                # then raise an exception; unless explicitly instructed not to.
+                else:
+                    self.converged = torch.tensor(False)
+                    if not self.suppress_SCF_error:
+                        raise ConvergenceError(
+                            "SCC cycle failed to converge; "
+                            "iteration limit reached")
+
+            else:
+                # For the batch case, systems will be culled as and when they
+                # converge. This process involves modifying attributes such as
+                # `geometry`, `basis`, `overlap`, etc. Doing so allows all the
+                # existing code within the methods and properties to be used.
+                # However, this requires that copies of the original objects
+                # are saved and restored at the end of the batch SCC cycle.
+                # Note that a copy of the second order hamiltonian matrix is not
+                # required as it is regenerated in full in the second SCC cycle.
+                c_geometry, c_basis = self.geometry, self.basis
+                c_overlap, c_gamma = self.overlap, self.gamma
+                c_invr, c_hamiltonian_copy = self.invr, self.core_hamiltonian
+
+                # Todo:
+                #  Implement a method that can identify which properties do and
+                #  do not need to be fully destroyed by __restore.
+
+                # `system_indices` provides the indices of each system and is
+                # culled along with the other arrays so that one can identify
+                # which systems remain.
+                system_indices = torch.arange(self.geometry._n_batch)
+
+                # Used to help the user track which systems have converged.
+                self.converged = torch.full(system_indices.shape, False)
+
+                for step in range(1, self.max_scc_iter + 1):
+                    q_current = self.mixer(self._scc_cycle(q_current), q_current)
+
+                    if (c_mask := self.mixer.converged).any():
+
+                        idxs = system_indices[c_mask]
+                        q_converged[idxs, :q_current.shape[-1]] = q_current[c_mask, :]
+                        self.converged[idxs] = True
+
+                        # If all systems have converged then the end of the SCC
+                        # cycle has been reached.
+                        if torch.all(c_mask):
+                            break
+                        # Otherwise there are still systems left to converge. Thus
+                        # the converged systems will now be culled to avoid over-
+                        # converging them.
+                        else:
+                            # The order in which things are done here matters
+                            # Cull calculator attributes
+                            self.__cull(c_mask)
+                            # Cull local variables
+                            n_res = self.basis.res_matrix_shape[-1]
+                            system_indices = system_indices[~c_mask]
+                            q_current = q_current[~c_mask, :n_res]
+                            # Cull mixer
+                            self.mixer.cull(c_mask, new_size=[n_res])
+
+                else:
+                    self.converged = torch.tensor(False)
+                    if not self.suppress_SCF_error:
+                        # Here a restore is performed before the error being
+                        # raised to help with debugging.
+                        self._geometry, self._basis = c_geometry, c_basis
+                        self.overlap, self.gamma = c_overlap, c_gamma
+                        self.invr, self.core_hamiltonian = c_invr, c_hamiltonian_copy
+
+                        raise ConvergenceError(
+                            "SCC cycle failed to converge; "
+                            "iteration limit reached", self.converged)
+
+                # Restore the calculator back to its state prior to culling.
+                # Properties like `rho` and `eig_values` are not reset as it is
+                # assumed that they will be overridden in the next stage.
+                self._geometry, self._basis = c_geometry, c_basis
+                self.overlap, self.gamma = c_overlap, c_gamma
+                self.invr, self.core_hamiltonian = c_invr, c_hamiltonian_copy
 
         # Step 3: Final SCC cycle
         # A single shot SCC cycle is now performed using the converged charges
@@ -658,6 +822,7 @@ class Dftb2(Dftb1):
         self._overlap = self._overlap[~mask, :n_orbs, :n_orbs]
         self._core_hamiltonian = self._core_hamiltonian[~mask, :n_orbs, :n_orbs]
         self._gamma = self._gamma[~mask, :n_res, :n_res]
+        self._invr = self._invr[~mask, :n_res, :n_res]
 
     def _scc_cycle(self, q_in: Tensor) -> Tensor:
         """Perform a single self-consistent charge cycle.
@@ -714,6 +879,7 @@ class Dftb2(Dftb1):
         self._core_hamiltonian = None
         self._hamiltonian = None
         self._gamma = None
+        self._invr = None
         self.converged = None
 
         self.rho = None

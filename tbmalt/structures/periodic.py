@@ -8,7 +8,6 @@ will be constrcuted.
 import torch
 import numpy as np
 from typing import Union, Tuple, Optional
-from tbmalt import Geometry
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
 Tensor = torch.Tensor
@@ -19,7 +18,8 @@ class Periodic:
     periodic boundary condition.
 
     Arguments:
-        geometry: Object for calculation, storing the data of input geometry.
+        position: Coordinates of the atoms in the central cell.
+        natom: Number of atoms in the central cell.
         latvec: Lattice vector, with Bohr as default unit.
         cutoff: Interaction cutoff distance for reading SK table, with Bohr
             as default unit.
@@ -45,9 +45,10 @@ class Periodic:
 
     """
 
-    def __init__(self, geometry: Geometry, latvec: Tensor,
+    def __init__(self, position: Tensor, natom: Tensor, latvec: Tensor,
                  cutoff: Union[Tensor, float], **kwargs):
-        self.geometry: Geometry = geometry
+        self.position: Tensor = position
+        self.n_atom: Tensor = natom
         self.latvec, self.cutoff = self._check(latvec, cutoff, **kwargs)
 
         self._device = self.latvec.device
@@ -68,8 +69,6 @@ class Periodic:
         # Position vectors and distance matrix
         self.positions_vec, self.periodic_distances = (
             self._get_periodic_distance())
-
-
 
     def _check(self, latvec, cutoff, **kwargs) -> Tuple[Tensor, Tensor]:
         """Check dimension, type of lattice vector and cutoff."""
@@ -166,21 +165,21 @@ class Periodic:
         """Get position vectors and distance matirx between central cell and
         neighbouring cells."""
         # Number of atoms in central cell
-        natom = self.geometry.n_atoms
+        natom = self.n_atom
 
         # Positions of atoms in all images
         positions = (self.rcellvec.unsqueeze(-2) +
-                     self.geometry.positions.unsqueeze(-3))
+                     self.position.unsqueeze(-3))
 
         # Position vectors
         positions_vec = (positions.unsqueeze(-3) -
-                         self.geometry.positions.unsqueeze(-3).unsqueeze(-2))
+                         self.position.unsqueeze(-3).unsqueeze(-2))
 
         # Distance matrix, large values will be padded for batch systems
         if not self._n_batch:  # -> single
             distance = torch.sqrt(
                 ((positions.repeat(1, natom, 1) - torch.repeat_interleave(
-                    self.geometry.positions, natom, 0)) ** 2).sum(-1).reshape(
+                    self.position, natom, 0)) ** 2).sum(-1).reshape(
                         -1, natom, natom))
 
         else:  # -> batch
@@ -188,7 +187,7 @@ class Periodic:
                                           icp[:inat].repeat_interleave(inat, 0)
                                           ) ** 2).sum(-1)).reshape(-1, inat, inat)
                              for ipos, icp, inat in zip(
-                                     positions, self.geometry.positions, natom)
+                                     positions, self.position, natom)
                              ], value=1e3)
 
         return positions_vec, distance

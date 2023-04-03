@@ -11,7 +11,7 @@ from typing import List, Literal, Optional, Dict, Tuple
 from scipy.interpolate import CubicSpline
 import torch
 
-from tbmalt import Geometry, Basis
+from tbmalt import Geometry, Basis, Periodic
 from tbmalt.ml.integralfeeds import IntegralFeed
 from tbmalt.io.skf import Skf, VCRSkf
 from tbmalt.physics.dftb.slaterkoster import sub_block_rot
@@ -79,6 +79,7 @@ class ScipySkFeed(IntegralFeed):
         instances will identify and set all NaNs to zero.
 
     """
+
     def __init__(self, on_sites: Dict[int, Tensor],
                  off_sites: Dict[Tuple[int, int, int, int], CubicSpline],
                  dtype: Optional[torch.dtype] = None,
@@ -168,6 +169,126 @@ class ScipySkFeed(IntegralFeed):
 
         return blks
 
+    def _pe_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
+                   geometry: Geometry, basis: Basis,
+                   periodic: Periodic, **kwargs) -> Tensor:
+        """Compute atomic interaction blocks (on-site and off-site) with pbc.
+
+        Constructs the on-site and off-site atomic blocks using Slater-Koster
+        integral tables for periodic systems.
+
+        Arguments:
+              atomic_idx_1: Indices of the 1'st atom associated with each
+                desired interaction block.
+              atomic_idx_2: Indices of the 2'nd atom associated with each
+                  desired interaction block.
+              geometry: The systems to which the atomic indices relate.
+              basis: Orbital information associated with said systems.
+              periodic: Distance matrix and position vectors including periodic
+                  images.
+
+          Returns:
+              blocks: Requested atomic interaction sub-blocks.
+        """
+
+        # Check whether on-site block
+        onsite = kwargs.get('onsite', False)
+
+        # Check whether batch
+        n_batch = (len(periodic.neighbour_vector)
+                   if periodic.neighbour_vector.ndim == 5 else None)
+
+        # Identify atomic numbers associated with the interaction
+        z_1 = int(geometry.atomic_numbers[atomic_idx_1[0:1].T])
+        z_2 = int(geometry.atomic_numbers[atomic_idx_2[0:1].T])
+
+        # Get the species' shell lists (basically a list of azimuthal numbers)
+        shells_1, shells_2 = basis.shell_dict[z_1], basis.shell_dict[z_2]
+
+        # Inter-atomic distance and distance vector calculator.
+        if n_batch is None:  # -> single
+            dist_vec = periodic.neighbour_vector[:, atomic_idx_1, atomic_idx_2]
+        else:  # -> batch
+            # Split the atomic index due to batch
+            sys_idx, idx = np.unique(atomic_idx_1[:, 0], return_index=True)
+            _idx_1_split = np.split(atomic_idx_1[:, 1], idx[1:])
+            _idx_2_split = np.split(atomic_idx_2[:, 1], idx[1:])
+
+            # Distance vectors are packed for batch
+            dist_vec, mask_pack = pack([
+                    periodic.neighbour_vector[
+                        sys_idx[ibatch]][:, _idx_1_split[ibatch], _idx_2_split[
+                            ibatch]]
+                    for ibatch in range(sys_idx.size)],
+                        value=1e3, return_mask=True)
+
+            # Reduce the dimension of batch
+            dist_vec = dist_vec.flatten(-4, -3)
+
+            # Mask to select items before padding with correct size
+            mask_pack = mask_pack[..., 0][:, 0]
+
+        # Number of images
+        ncell = periodic.neighbour_vector.size(-4)
+
+        # Distance matrix
+        dist = torch.linalg.norm(dist_vec, dim=-1)
+
+        # Mask for zero-distance terms in on-site block
+        dist[dist == 0] = 99
+
+        # Reduce the dimension of image
+        dist_vec = dist_vec.flatten(-3, -2)
+        dist = dist.flatten(-2, -1)
+        u_vec = (dist_vec.T / dist).T
+
+        # Work out the width of each sub-block then use it to get the row and
+        # column index slicers for placing sub-blocks into their atom-blocks.
+        rws, cws = np.array(shells_1) * 2 + 1, np.array(shells_2) * 2 + 1
+        rows = [slice(i - j, i) for i, j in zip(rws.cumsum(), rws)]
+        cols = [slice(i - j, i) for i, j in zip(cws.cumsum(), cws)]
+
+        # Tensor to hold the resulting atomic-blocks.
+        blks = torch.zeros(atomic_idx_1.shape[0], rws.sum(), cws.sum(),
+                           dtype=self.dtype, device=self.device)
+
+        # Loop over the 1st species' shells; where i & l_1 are the shell's index
+        # & azimuthal numbers respectively. Then over the 2nd species' shells,
+        # but ignore sub-blocks in the lower triangle of homo-atomic blocks as
+        # they can be constructed via symmetrisation.
+        for i, l_1 in enumerate(shells_1):
+            o = i if z_1 == z_2 else 0
+            for j, l_2 in enumerate(shells_2[o:], start=o):
+                # Retrieve/interpolate the integral spline, remove any NaNs
+                # due to extrapolation then convert to a torch tensor.
+                inte = self.off_sites[(z_1, z_2, i, j)](dist.detach().cpu())
+                inte[inte != inte] = 0.0
+                inte = torch.tensor(inte, dtype=self.dtype, device=self.device)
+
+                # Apply the Slater-Koster transformation
+                inte = sub_block_rot(torch.tensor([l_1, l_2]), u_vec, inte)
+
+                # Reshape the integral for images and sum together
+                if n_batch is None:
+                    _inte = inte.view(ncell, -1, inte.size(-2),
+                                      inte.size(-1)).sum(-4)
+                else:
+                    _inte = inte.view(sys_idx.size, ncell, -1, inte.size(-2),
+                                      inte.size(-1)).sum(-4)[mask_pack]
+
+                # Add the sub-blocks into their associated atom-blocks
+                blks[:, rows[i], cols[j]] = _inte
+
+                # Add symmetrically equivalent sub-blocks (homo-atomic only)
+                if z_1 == z_2 and i != j:
+                    if onsite:
+                        blks.transpose(-1, -2)[:, rows[i], cols[j]] = _inte
+                    else:
+                        sign = (-1) ** (l_1 + l_2)
+                        blks.transpose(-1, -2)[:, rows[i], cols[j]] = _inte * sign
+
+        return blks
+
     def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
                geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
         r"""Compute atomic interaction blocks using SK-integral tables.
@@ -233,9 +354,23 @@ class ScipySkFeed(IntegralFeed):
         if any(on_site):  # Construct the on-site blocks (if any are present)
             blks[on_site] = torch.diag(self.on_sites[int(z_1)])
 
+            # Interactions between images need to be considered for on-site
+            # blocks with pbc.
+            if geometry.periodic is not None:
+                _on_site = self._pe_blocks(
+                    atomic_idx_1[on_site], atomic_idx_2[on_site],
+                    geometry, basis, geometry.periodic, onsite=True)
+                blks[on_site] = blks[on_site] + _on_site
+
         if any(~on_site):  # Then the off-site blocks
-            blks[~on_site] = self._off_site_blocks(
-                atomic_idx_1[~on_site], atomic_idx_2[~on_site], geometry, basis)
+            if geometry.periodic is None:
+                blks[~on_site] = self._off_site_blocks(
+                    atomic_idx_1[~on_site], atomic_idx_2[~on_site],
+                    geometry, basis)
+            else:
+                blks[~on_site] = self._pe_blocks(
+                    atomic_idx_1[~on_site], atomic_idx_2[~on_site],
+                    geometry, basis, geometry.periodic)
 
         if flip:  # If the atoms were switched, then a transpose is required.
             blks = blks.transpose(-1, -2)
@@ -379,6 +514,7 @@ class SkFeed(IntegralFeed):
         instances will identify and set all NaNs to zero.
 
     """
+
     def __init__(self, on_sites: Dict[int, Tensor],
                  off_sites: Dict[Tuple[int, int, int, int], CubicSpline],
                  interpolation: Literal[CSpline, PolyInterpU, BicubInterp],
@@ -470,6 +606,125 @@ class SkFeed(IntegralFeed):
 
         return blks
 
+    def _pe_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
+                   geometry: Geometry, basis: Basis,
+                   periodic: Periodic, **kwargs) -> Tensor:
+        """Compute atomic interaction blocks (on-site and off-site) with pbc.
+
+        Constructs the on-site and off-site atomic blocks using Slater-Koster
+        integral tables for periodic systems.
+
+        Arguments:
+              atomic_idx_1: Indices of the 1'st atom associated with each
+                desired interaction block.
+              atomic_idx_2: Indices of the 2'nd atom associated with each
+                  desired interaction block.
+              geometry: The systems to which the atomic indices relate.
+              basis: Orbital information associated with said systems.
+              periodic: Distance matrix and position vectors including periodic
+                  images.
+
+          Returns:
+              blocks: Requested atomic interaction sub-blocks.
+        """
+
+        # Check whether on-site block
+        onsite = kwargs.get('onsite', False)
+
+        # Check whether batch
+        n_batch = (len(periodic.neighbour_vector)
+                   if periodic.neighbour_vector.ndim == 5 else None)
+
+        # Identify atomic numbers associated with the interaction
+        z_1 = int(geometry.atomic_numbers[atomic_idx_1[0:1].T])
+        z_2 = int(geometry.atomic_numbers[atomic_idx_2[0:1].T])
+
+        # Get the species' shell lists (basically a list of azimuthal numbers)
+        shells_1, shells_2 = basis.shell_dict[z_1], basis.shell_dict[z_2]
+
+        # Inter-atomic distance and distance vector calculator.
+        if n_batch is None:  # -> single
+            dist_vec = periodic.neighbour_vector[:, atomic_idx_1, atomic_idx_2]
+        else:  # -> batch
+            # Split the atomic index due to batch
+            sys_idx, idx = np.unique(atomic_idx_1[:, 0], return_index=True)
+            _idx_1_split = np.split(atomic_idx_1[:, 1], idx[1:])
+            _idx_2_split = np.split(atomic_idx_2[:, 1], idx[1:])
+
+            # Distance vectors are packed for batch
+            dist_vec, mask_pack = pack([
+                    periodic.neighbour_vector[
+                        sys_idx[ibatch]][:, _idx_1_split[ibatch], _idx_2_split[
+                            ibatch]]
+                    for ibatch in range(sys_idx.size)],
+                        value=1e3, return_mask=True)
+
+            # Reduce the dimension of batch
+            dist_vec = dist_vec.flatten(-4, -3)
+
+            # Mask to select items before padding with correct size
+            mask_pack = mask_pack[..., 0][:, 0]
+
+        # Number of images
+        ncell = periodic.neighbour_vector.size(-4)
+
+        # Distance matrix
+        dist = torch.linalg.norm(dist_vec, dim=-1)
+
+        # Mask for zero-distance terms in on-site block
+        dist[dist == 0] = 99
+
+        # Reduce the dimension of image
+        dist_vec = dist_vec.flatten(-3, -2)
+        dist = dist.flatten(-2, -1)
+        u_vec = (dist_vec.T / dist).T
+
+        # Work out the width of each sub-block then use it to get the row and
+        # column index slicers for placing sub-blocks into their atom-blocks.
+        rws, cws = np.array(shells_1) * 2 + 1, np.array(shells_2) * 2 + 1
+        rows = [slice(i - j, i) for i, j in zip(rws.cumsum(), rws)]
+        cols = [slice(i - j, i) for i, j in zip(cws.cumsum(), cws)]
+
+        # Tensor to hold the resulting atomic-blocks.
+        blks = torch.zeros(atomic_idx_1.shape[0], rws.sum(), cws.sum(),
+                           dtype=self.dtype, device=self.device)
+
+        # Loop over the 1st species' shells; where i & l_1 are the shell's index
+        # & azimuthal numbers respectively. Then over the 2nd species' shells,
+        # but ignore sub-blocks in the lower triangle of homo-atomic blocks as
+        # they can be constructed via symmetrisation.
+        for i, l_1 in enumerate(shells_1):
+            o = i if z_1 == z_2 else 0
+            for j, l_2 in enumerate(shells_2[o:], start=o):
+                # Retrieve/interpolate the integral spline, remove any NaNs
+                # due to extrapolation then convert to a torch tensor.
+                inte = self.off_sites[(z_1, z_2, i, j)](dist)
+                inte[inte != inte] = 0.0
+
+                # Apply the Slater-Koster transformation
+                inte = sub_block_rot(torch.tensor([l_1, l_2]), u_vec, inte)
+
+                # Reshape the integral for images and sum together
+                if n_batch is None:
+                    _inte = inte.view(ncell, -1, inte.size(-2),
+                                      inte.size(-1)).sum(-4)
+                else:
+                    _inte = inte.view(sys_idx.size, ncell, -1, inte.size(-2),
+                                      inte.size(-1)).sum(-4)[mask_pack]
+
+                # Add the sub-blocks into their associated atom-blocks
+                blks[:, rows[i], cols[j]] = _inte
+
+                # Add symmetrically equivalent sub-blocks (homo-atomic only)
+                if z_1 == z_2 and i != j:
+                    if onsite:
+                        blks.transpose(-1, -2)[:, rows[i], cols[j]] = _inte
+                    else:
+                        sign = (-1) ** (l_1 + l_2)
+                        blks.transpose(-1, -2)[:, rows[i], cols[j]] = _inte * sign
+
+        return blks
+
     def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
                geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
         r"""Compute atomic interaction blocks using SK-integral tables.
@@ -527,16 +782,30 @@ class SkFeed(IntegralFeed):
         on_site = self._partition_blocks(atomic_idx_1, atomic_idx_2)
 
         # Construct the on-site blocks (if any are present)
-        if any(on_site) and not self.is_local_onsite:
-            blks[on_site] = torch.diag(self.on_sites[int(z_1)])
-        elif any(on_site) and self.is_local_onsite:
-            blks[on_site] = torch.diag_embed(
-                self.on_sites[int(z_1)], dim1=-2, dim2=-1)
+        if any(on_site):
+            if not self.is_local_onsite:
+                blks[on_site] = torch.diag(self.on_sites[int(z_1)])
+            elif self.is_local_onsite:
+                blks[on_site] = torch.diag_embed(
+                    self.on_sites[int(z_1)], dim1=-2, dim2=-1)
+
+            # Interactions between images need to be considered for on-site
+            # blocks with pbc.
+            if geometry.periodic is not None:
+                _on_site = self._pe_blocks(
+                    atomic_idx_1[on_site], atomic_idx_2[on_site],
+                    geometry, basis, geometry.periodic, onsite=True)
+                blks[on_site] = blks[on_site] + _on_site
 
         if any(~on_site):  # Then the off-site blocks
-            blks[~on_site] = self._off_site_blocks(
-                atomic_idx_1[~on_site], atomic_idx_2[~on_site],
-                geometry, basis, **kwargs)
+            if geometry.periodic is None:
+                blks[~on_site] = self._off_site_blocks(
+                    atomic_idx_1[~on_site], atomic_idx_2[~on_site],
+                    geometry, basis)
+            else:
+                blks[~on_site] = self._pe_blocks(
+                    atomic_idx_1[~on_site], atomic_idx_2[~on_site],
+                    geometry, basis, geometry.periodic)
 
         if flip:  # If the atoms were switched, then a transpose is required.
             blks = blks.transpose(-1, -2)
@@ -614,6 +883,8 @@ class SkFeed(IntegralFeed):
 
             # Loop over the off-site interactions & construct the splines.
             for key, value in skf.__getattribute__(target).items():
+                off_sites[pair + key] = interpolation(
+                    *clip(skf.grid.to(device), value.to(device)), **params)
 
                 if interpolation is BicubInterp:
                     off_sites[pair + key] = interpolation(
@@ -633,7 +904,7 @@ class SkFeed(IntegralFeed):
                 for key, value in skf_2.__getattribute__(target).items():
                     if key[0] < key[1]:
                         off_sites[pair + (*reversed(key),)] = interpolation(
-                            *clip(skf_2.grid, value), **params)
+                            *clip(skf_2.grid.to(device), value.to(device)), **params)
 
                         # Add variables for spline training
                         if interpolation is CSpline and requires_grad:

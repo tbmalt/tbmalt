@@ -128,7 +128,7 @@ class _Mixer(ABC):
         assert self._delta is not None, 'Nothing has been mixed'
 
         if not self._is_batch:  # If not in batch mode
-            return torch.tensor(self._delta.abs().max() < self.tolerance)
+            return self._delta.abs().max() < self.tolerance
         else:  # If operating in batch mode
             if self._delta.dim() == 1:
                 # Catch needed when operating on a batch of scalars.
@@ -295,7 +295,7 @@ class Simple(_Mixer):
         self._x_old = x_mix
 
         # Update the delta
-        self._delta = (x_mix - x_old)
+        self._delta = (x_new - x_old)
 
         # Return the newly mixed system
         return x_mix
@@ -345,8 +345,8 @@ class Simple(_Mixer):
 class Anderson(_Mixer):
     """Accelerated Anderson mixing algorithm.
 
-    Anderson acceleration, also known as Pulay mixing & DIIS, is a method for
-    accelerating convergence. Upon instantiation a callable instance will be
+    Anderson acceleration is a method for accelerating convergence of fixed
+    point iterations. Upon instantiation, a callable instance will be
     returned. Calls to this instance will take, as its arguments, two input
     systems and will return a single mixed system.
 
@@ -362,10 +362,14 @@ class Anderson(_Mixer):
             to `None` then rescaling will be disabled. [DEFAULT=0.01]
         init_mix_param: Mixing parameter to use during the initial simple
             mixing steps. [DEFAULT=0.01]
+        soft_start: If enabled, then simple mixing will be used for the first
+            ``generations`` number of steps, otherwise only for the first.
+            [DEFAULT=False]
 
     Notes:
-        Note that simple mixing will be used for the first ``generations``
-        number of steps
+        Note that simple mixing will always be used for the first step. If
+        ``soft_start`` is enabled then the simple mixer will also be used for
+        the following ``generations``-1 steps.
 
         The Anderson mixing functions primarily follow the equations set out
         by Eyert [Eyert]_. However, this code borrows heavily from the DFTB+
@@ -394,8 +398,9 @@ class Anderson(_Mixer):
 
     """
     def __init__(self, is_batch: bool, mix_param: Real = 0.05,
-                 generations: int = 6, diagonal_offset=0.01,
-                 init_mix_param: Real = 0.01, tolerance: Real = 1E-6):
+                 generations: int = 4, diagonal_offset=0.01,
+                 init_mix_param: Real = 0.01, tolerance: Real = 1E-6,
+                 soft_start: bool = False):
 
         super().__init__(is_batch, tolerance)
 
@@ -403,6 +408,7 @@ class Anderson(_Mixer):
         self.generations = generations
         self.init_mix_param = init_mix_param
         self.diagonal_offset = diagonal_offset
+        self.soft_start = soft_start
 
         # Holds "x" history and "x" delta history
         self._x_hist: Optional[Tensor] = None
@@ -432,6 +438,7 @@ class Anderson(_Mixer):
             self._shape_in = list(torch.flatten(x_new).shape)
 
         # Instantiate the x history (x_hist) and the delta history 'd_hist'
+        # The current step is also stored hence "self.generations + 1".
         size = (self.generations + 1, *self._shape_in)
         self._x_hist = torch.zeros(size, dtype=dtype, device=device)
         self._f = torch.zeros(size, dtype=dtype, device=device)
@@ -486,13 +493,17 @@ class Anderson(_Mixer):
         self._f[0] = x_new - x_old
 
         # If a sufficient history has been built up then use Anderson mixing
-        if self._step_number > self.generations:
+        # if self._step_number > self.generations:
+        if (self._step_number > self.generations
+                or self.step_number > 1 and not self.soft_start):
+
+            n = min(self.step_number-1, self.generations)
             # Setup and solve the linear equation system, as described in
             # equation 4.3 (Eyert), to get the coefficients "thetas":
             #   a(i,j) =  <F(l) - F(l-i)|F(l) - F(l-j)>
             #   b(i)   =  <F(l) - F(l-i)|F(l)>
             # here dF = <F(l) - F(l-i)|
-            df = self._f[0] - self._f[1:]
+            df = self._f[0] - self._f[1:n+1]
             a = torch.einsum('i...v,j...v->...ij', df, df)
             b = torch.einsum('h...v,...v->...h', df, self._f[0])
 
@@ -500,12 +511,15 @@ class Anderson(_Mixer):
             # vectors by adding 1 + offset^2 to the diagonals of "a", see
             # equation 8.2 (Eyert)
             if self.diagonal_offset is not None:
-                a += a * (torch.eye(a.shape[-1], device=x_new.device)
-                      * (self.diagonal_offset ** 2))
+                a_scaled_diag = (a.diagonal(dim1=-2, dim2=-1)
+                                 * (1 + self.diagonal_offset ** 2))
+
+                a.diagonal(dim1=-2, dim2=-1)[...] = a_scaled_diag
 
             # Solve for the coefficients. As torch.solve cannot solve for 1D
             # tensors a blank dimension must be added
-            thetas = torch.squeeze(torch.linalg.solve(a, torch.unsqueeze(b, -1)))
+            thetas = torch.atleast_1d(
+                torch.squeeze(torch.linalg.solve(a, torch.unsqueeze(b, -1))))
 
             # Construct the 2'nd terms of eq 4.1 & 4.2 (Eyert). These are
             # the "averaged" histories of x and F respectively:
@@ -514,20 +528,10 @@ class Anderson(_Mixer):
             # These are not the x_bar & F_var values of eq. 4.1 & 4.2 (Eyert)
             # yet as they are still missing the 1st terms.
             x_bar = torch.einsum('...h,h...v->...v', thetas,
-                                 (self._x_hist[1:] - self._x_hist[0]))
+                                   (self._x_hist[1:n+1] - self._x_hist[0]))
             f_bar = torch.einsum('...h,h...v->...v', thetas, -df)
 
-            # The first terms of equations 4.1 & 4.2 (Eyert):
-            #   4.1: |x(l)> and & 4.2: |F(l)>
-            # Have been replaced by:
-            #   ϑ_0(l) * |x(j)> and ϑ_0(l) * |x(j)>
-            # respectively, where "ϑ_0(l)" is the coefficient for the current
-            # step and is defined as (Anderson):
-            #   ϑ_0(l) = 1 - sum(j=1 -> m) ϑ_j(l)
-            # Code deviates from DFTB+ here to prevent "stability issues"
-            # theta_0 = 1 - torch.sum(thetas)
-            # x_bar += theta_0 * self._x_hist[0]  # <- DFTB+
-            # f_bar += theta_0 * self._f[0]  # <- DFTB+
+            # Add in the first term
             x_bar += self._x_hist[0]
             f_bar += self._f[0]
 
