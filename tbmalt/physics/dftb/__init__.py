@@ -97,8 +97,8 @@ def _mulliken(
 
     return q
 
-
 class Dftb1(Calculator):
+
     """
 
     Developers Notes:
@@ -235,7 +235,7 @@ class Dftb1(Calculator):
     def dipole(self) -> Tensor:
         """Return dipole moments."""
         return torch.sum(
-            -self.q_delta_atomic.unsqueeze(-1) * self.geometry.positions, -2
+            self.q_delta_atomic.unsqueeze(-1) * self.geometry.positions, -2
         )
 
     @property
@@ -494,11 +494,9 @@ class Dftb2(Dftb1):
         """Core Hamiltonian matrix"""
         if self._core_hamiltonian is None:
             if requires_args(self.h_feed.matrix):
-                self._core_hamiltonian = call_with_required_args(
-                    self.h_feed.matrix, self)
+                self._core_hamiltonian = call_with_required_args(self.h_feed.matrix, self)
             else:
-                self._core_hamiltonian = self.h_feed.matrix(
-                    self.geometry, self.basis)
+                self._core_hamiltonian = self.h_feed.matrix(self.geometry, self.basis)
 
         return self._core_hamiltonian
 
@@ -561,7 +559,6 @@ class Dftb2(Dftb1):
         # from context.
         self.mixer.reset()
         self.mixer._is_batch = self.is_batch
-        scc_grad = kwargs.get('scc_grad', True)
 
         # Set the initial starting guess for the charges.
         q_current = self.q_zero_res
@@ -582,12 +579,7 @@ class Dftb2(Dftb1):
         # Step 2: Preliminary SCC cycle
         # A preliminary SCC cycle is performed outside of the gradient and acts
         # only to get the converged charges to be used in the second cycle.
-        if not scc_grad:
-            with torch.no_grad():
-                q_converged = self.scc(q_current, q_converged)
-
-        else:
-            q_converged = self.scc(q_current, q_converged)
+        with torch.no_grad():
 
             # Non-batch systems are treated separately for the sake of clarity
             # as special treatment is required for the batch case.
@@ -697,106 +689,6 @@ class Dftb2(Dftb1):
         # Calculate and return the total system energy, taking into account
         # the entropy term as and when necessary.
         return self.mermin_energy
-
-    def scc(self, q_current, q_converged):
-        # Non-batch systems are treated separately for the sake of clarity
-        # as special treatment is required for the batch case.
-        if not self.is_batch:
-            # Begin the SCC cycle
-            for step in range(1, self.max_scc_iter + 1):
-
-                # Perform a single SCC step and apply the mixing algorithm.
-                q_current = self.mixer(self._scc_cycle(q_current), q_current)
-
-                # If the system has converged then assign the `q_converged`
-                # values and break out of the SCC cycle.
-                if self.mixer.converged:
-                    q_converged[:] = q_current[:]
-                    self.converged = torch.tensor(True)
-                    break
-
-            # If the maximum permitted number of iterations is exceeded then
-            # then raise an exception; unless explicitly instructed not to.
-            else:
-                self.converged = torch.tensor(False)
-                if not self.suppress_SCF_error:
-                    raise ConvergenceError(
-                        "SCC cycle failed to converge; "
-                        "iteration limit reached")
-
-        else:
-            # For the batch case, systems will be culled as and when they
-            # converge. This process involves modifying attributes such as
-            # `geometry`, `basis`, `overlap`, etc. Doing so allows all the
-            # existing code within the methods and properties to be used.
-            # However, this requires that copies of the original objects
-            # are saved and restored at the end of the batch SCC cycle.
-            # Note that a copy of the second order hamiltonian matrix is not
-            # required as it is regenerated in full in the second SCC cycle.
-            c_geometry, c_basis = self.geometry, self.basis
-            c_overlap, c_gamma = self.overlap, self.gamma
-            c_hamiltonian_copy = self.core_hamiltonian
-
-            # Todo:
-            #  Implement a method that can identify which properties do and
-            #  do not need to be fully destroyed by __restore.
-
-            # `system_indices` provides the indices of each system and is
-            # culled along with the other arrays so that one can identify
-            # which systems remain.
-            system_indices = torch.arange(self.geometry._n_batch)
-
-            # Used to help the user track which systems have converged.
-            self.converged = torch.full(system_indices.shape, False)
-
-            for step in range(1, self.max_scc_iter + 1):
-                q_current = self.mixer(self._scc_cycle(q_current), q_current)
-
-                if (c_mask := self.mixer.converged).any():
-
-                    idxs = system_indices[c_mask]
-                    q_converged[idxs, :q_current.shape[-1]] = q_current[c_mask, :]
-                    self.converged[idxs] = True
-
-                    # If all systems have converged then the end of the SCC
-                    # cycle has been reached.
-                    if torch.all(c_mask):
-                        break
-                    # Otherwise there are still systems left to converge. Thus
-                    # the converged systems will now be culled to avoid over-
-                    # converging them.
-                    else:
-                        # The order in which things are done here matters
-                        # Cull calculator attributes
-                        self.__cull(c_mask)
-                        # Cull local variables
-                        n_res = self.basis.res_matrix_shape[-1]
-                        system_indices = system_indices[~c_mask]
-                        q_current = q_current[~c_mask, :n_res]
-                        # Cull mixer
-                        self.mixer.cull(c_mask, new_size=[n_res])
-
-            else:
-                self.converged = torch.tensor(False)
-                if not self.suppress_SCF_error:
-                    # Here a restore is performed before the error being
-                    # raised to help with debugging.
-                    self._geometry, self._basis = c_geometry, c_basis
-                    self.overlap, self.gamma = c_overlap, c_gamma
-                    self.core_hamiltonian = c_hamiltonian_copy
-
-                    raise ConvergenceError(
-                        "SCC cycle failed to converge; "
-                        "iteration limit reached", self.converged)
-
-            # Restore the calculator back to its state prior to culling.
-            # Properties like `rho` and `eig_values` are not reset as it is
-            # assumed that they will be overridden in the next stage.
-            self._geometry, self._basis = c_geometry, c_basis
-            self.overlap, self.gamma = c_overlap, c_gamma
-            self.core_hamiltonian = c_hamiltonian_copy
-
-        return q_converged
 
     def __cull(self, mask: Tensor):
         """Cull converged systems from the calculator instance.
@@ -917,7 +809,6 @@ if __name__ == '__main__':
     ch4 = torch.tensor([4.30537894059011, 0.92365526485247, 0.92365526485247,
                         0.92365526485247, 0.92365526485247])
     h2o = torch.tensor([6.58558984371061, 0.70720507814469, 0.70720507814469])
-
 
     geos = Geometry.from_ase_atoms(molecule('CH3O'))
     geob = Geometry.from_ase_atoms([

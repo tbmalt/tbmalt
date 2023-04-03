@@ -43,7 +43,7 @@ def skf_file(output_path: str):
                      for ic in compr for jc in compr]
 
         # for skf_file in skf_files:
-        VCRSkf.from_dir(join(tmpdir, 'compr_wav'), output_path)#.write(output_path)
+        VCRSkf.from_dir(join(tmpdir, 'compr_wav'), output_path)
 
 
 # STEP 1: Inputs

@@ -202,8 +202,8 @@ class PolyInterpU:
 
         """
         n_grid_point = len(self.xx)  # -> number of grid points
-        r_max = (n_grid_point - 1) * self.grid_step + self.tail
-        ind = torch.round((rr - self.xx[0]) / self.grid_step).to(self._device)
+
+        ind = torch.searchsorted(self.xx_ext, rr).to(self._device)
         result = (
             torch.zeros(rr.shape, device=self._device)
             if self.yy.dim() == 1
@@ -228,8 +228,8 @@ class PolyInterpU:
             result[_mask] = poly_interp(xa, yb, rr[_mask])
 
         # Beyond the grid => extrapolation with polynomial of 5th order
-        # max_ind = n_grid_point - 1 + int(self.tail / self.grid_step)
-        is_tail = rr.gt(self.xx[-1]) * rr.lt(self.xx[-1] + self.tail)
+        max_ind = n_grid_point - 1 + int(self.tail / self.grid_step)
+        is_tail = ind.masked_fill(ind.ge(n_grid_point) * ind.le(max_ind), -1).eq(-1)
         if is_tail.any():
             r_max = self.xx[-2] + self.tail
             dr = rr[is_tail] - r_max
@@ -249,7 +249,6 @@ class PolyInterpU:
             y1 = self.yy[ilast - 2]
             y1p = (y2 - y0) / (2.0 * self.delta_r)
             y1pp = (y2 + y0 - 2.0 * y1) / (self.delta_r * self.delta_r)
-            dr = dr.repeat(self.yy.shape[1], 1).T if self.yy.dim() == 2 else dr
 
             result[is_tail] = poly_to_zero(
                 dr, -1.0 * self.tail, -1.0 / self.tail, y1, y1p, y1pp)

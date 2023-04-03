@@ -8,7 +8,6 @@ from tbmalt import Geometry, Basis
 from tbmalt.physics.dftb import Dftb1, Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.batch import pack
-from tbmalt.common.maths.interpolation import CubicSpline as CSpline
 
 from tests.test_utils import skf_file
 
@@ -45,9 +44,9 @@ def shell_resolved_feeds_scc(device, skf_file):
 def shell_resolved_feeds_scc_spline(device, skf_file):
     species = [1, 6, 8]
     h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian',
-                                  interpolation=CSpline, device=device)
+                                  interpolation='spline', device=device)
     s_feed = SkFeed.from_database(skf_file, species, 'overlap',
-                                  interpolation=CSpline, device=device)
+                                  interpolation='spline', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file, species, device=device)
 

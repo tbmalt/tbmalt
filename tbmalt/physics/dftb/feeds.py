@@ -23,7 +23,8 @@ from tbmalt.common.maths.interpolation import CubicSpline as CSpline
 
 Tensor = torch.Tensor
 Array = np.ndarray
-
+interp_dict = {'polynomial': PolyInterpU, 'spline': CSpline,
+               'bicubic': BicubInterp}
 
 def _enforce_numpy(v):
     """Helper function to ensure entity is a numpy array."""
@@ -816,7 +817,7 @@ class SkFeed(IntegralFeed):
     def from_database(
             cls, path: str, species: List[int],
             target: Literal['hamiltonian', 'overlap'],
-            interpolation: Literal[CSpline, PolyInterpU, BicubInterp] = PolyInterpU,
+            interpolation: str = 'polynomial',
             requires_grad: bool = False,
             dtype: Optional[torch.dtype] = None,
             device: Optional[torch.device] = None) -> 'SkFeed':
@@ -872,6 +873,7 @@ class SkFeed(IntegralFeed):
                        'options are "hamiltonian" or "overlap"')
 
         on_sites, off_sites = {}, {}
+        interpolation = interp_dict[interpolation]
         params = {'extrapolate': False} if interpolation is CubicSpline else {}
 
         # The species list must be sorted to ensure that the lowest atomic

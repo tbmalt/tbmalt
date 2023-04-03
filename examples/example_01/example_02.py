@@ -1,19 +1,16 @@
-"""Training on small molecules from data set."""
-import pickle
 from os.path import exists
 from typing import Any, List
-
+import random
 import torch
 import h5py
 
-from tbmalt import Geometry, Basis
+from tbmalt import Basis
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.maths.interpolation import CubicSpline
 from tbmalt.io.dataset import DataSetIM
 
-from ase.build import molecule
 
 Tensor = torch.Tensor
 
@@ -28,6 +25,8 @@ torch.set_default_dtype(torch.float64)
 # --------------------
 
 # Provide a list of moecules upon which TBMaLT is to be run
+size = [1000]
+sources = ['run1/train', 'run2/train', 'run3/train']
 targets = ['dipole']
 
 # Provide information about the orbitals on each atom; this is keyed by atomic
@@ -42,16 +41,11 @@ parameter_db_path = 'example_dftb_parameters.h5'
 
 # Should fitting be performed here?
 fit_model = True
-test_model = True
 
 # Number of fitting cycles, number of batch size each cycle
-number_of_epochs = 120
-n_batch = [1000, 1000, 1000]  # Batch size of three fitting run
-lr = 0.003
-onsite_lr = 3e-4
-tolerance = 1e-6
-criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
-shell_resolved = False
+number_of_epochs = 10
+n_batch = 300
+
 # Location of a file storing the properties that will be fit to.
 target_path = './dataset.h5'
 
@@ -61,12 +55,15 @@ target_path = './dataset.h5'
 # ============= #
 
 # load data set
-def load_target_data(path: str, properties: List, groups) -> Any:
+def load_target_data(path: str, sources: List[str], targets: List[str]) -> Any:
     """Load fitting target data.
 
     Arguments:
-        molecules: Molecules for which fitting targets should be returned.
         path: path to a database in which the fitting data can be found.
+        sources: a list of paths specifying the groups from which data
+            should be loaded; one for each system.
+        targets: paths relative to `source` specifying the HDF5 datasets
+                to load.
 
     Returns:
         targets: returns an <OBJECT> storing the data to which the model is to
@@ -75,7 +72,11 @@ def load_target_data(path: str, properties: List, groups) -> Any:
     # Data could be loaded from a json file or an hdf5 file; use your own
     # discretion here. A dictionary might be the best object in which to store
     # the target data.
-    return DataSetIM.load_reference(groups, properties)
+    with h5py.File(path, 'r') as f:
+        _sources = []
+        for sou in sources:
+            _sources.extend([sou + '/' + i for i in (f[sou].keys())])
+        return DataSetIM.load_data(path, _sources, targets)
 
 
 def init_model():
@@ -84,12 +85,10 @@ def init_model():
 
 # 2.1: Target system specific objects
 # -----------------------------------
-if fit_model or test_model:
-    with h5py.File(target_path, 'r') as f:
-        dataloder_fit = [load_target_data(target_path, targets, g) for g in
-                         [f['run1']['train'], f['run2']['train'], f['run3']['train']]]
-        dataloder_test = [load_target_data(target_path, targets, g) for g in
-                          [f['run1']['test'], f['run2']['test'], f['run3']['test']]]
+if fit_model:
+    dataloder = load_target_data(target_path, sources, targets)
+else:
+    raise NotImplementedError()
 
 
 # 2.2: Loading of the DFTB parameters into their associated feed objects
@@ -115,11 +114,11 @@ species = species[species != 0].tolist()
 
 # Load the Hamiltonian feed model
 h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation=CubicSpline)
+                              interpolation='spline', requires_grad=True)
 
 # Load the overlap feed model
 s_feed = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation=CubicSpline)
+                              interpolation='spline', requires_grad=True)
 
 # Load the occupation feed object
 o_feed = SkfOccupationFeed.from_database(parameter_db_path, species)
@@ -131,33 +130,15 @@ u_feed = HubbardFeed.from_database(parameter_db_path, species)
 # ---------------------------------------------
 # As this is a minimal working example, no optional settings are provided to the
 # calculator object.
-dftb_calculator_init = Dftb2(h_feed, s_feed, o_feed, u_feed)
-
+dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed)
 
 # Construct machine learning object
-def build_optim(dftb_calculator):
-    h_var, s_var = [], []
+lr = 0.003
+criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
+h_var = [val.abcd for key, val in h_feed.off_sites.items()]
+s_var = [val.abcd for key, val in s_feed.off_sites.items()]
+optimizer = getattr(torch.optim, 'Adam')(h_var + s_var, lr=lr)
 
-    for key in dftb_calculator.h_feed.off_sites.keys():
-
-        # Collect spline parameters and add to optimizer
-        dftb_calculator.h_feed.off_sites[key].abcd.requires_grad_(True)
-        dftb_calculator.s_feed.off_sites[key].abcd.requires_grad_(True)
-        h_var.append({'params': dftb_calculator.h_feed.off_sites[key].abcd, 'lr': lr})
-        s_var.append({'params': dftb_calculator.s_feed.off_sites[key].abcd, 'lr': lr})
-
-    ml_onsite, onsite_dict = [], {}
-    for key, val in dftb_calculator.h_feed.on_sites.items():
-        for l in shell_dict[key]:
-            onsite_dict.update({(key, l): val[int(l ** 2)].requires_grad_(True)})
-            ml_onsite.append({'params': onsite_dict[(key, l)], 'lr': onsite_lr})
-
-    optimizer = getattr(torch.optim, 'Adam')(h_var + s_var + ml_onsite, lr=lr)
-    return optimizer, onsite_dict
-
-
-with open('dftb_calculator_init.pkl', 'wb') as w:
-    pickle.dump(dftb_calculator_init, w)
 
 # ================= #
 # STEP 3: Execution #
@@ -178,7 +159,7 @@ def calculate_losses(calculator: Calculator, data: Any) -> Tensor:
 
     for key in targets:
         key = 'q_final_atomic' if key == 'charge' else key
-        loss += criterion(calculator.__getattribute__(key), data[key])
+        loss += criterion(calculator.__getattribute__(key), data.data[key])
 
     return loss
 
@@ -193,30 +174,21 @@ def update_model(calculator: Calculator):
     raise NotImplementedError()
 
 
-def single_fit(dftb_calculator, dataloder, size):
-    indice = torch.split(torch.tensor(dataloder.random_idx), size)
-    optimizer, onsite_dict = build_optim(dftb_calculator)
-    loss_old = 0
+if fit_model:
+    random_idx = random.sample(torch.arange(len(dataloder)).tolist(), len(dataloder))
+    indice = torch.split(torch.tensor(random_idx), n_batch)
 
     for epoch in range(number_of_epochs):
 
         data = dataloder[indice[epoch % len(indice)]]
-
-        geometry = Geometry(data['atomic_numbers'], data['positions'], units='a')
-        basis = Basis(geometry.atomic_numbers, shell_dict, shell_resolved=False)
-
-        if not shell_resolved:
-            dftb_calculator.h_feed.on_sites = {
-                iatm: torch.cat([onsite_dict[(iatm, l)].repeat(2 * l + 1).T
-                                 for l in shell_dict[iatm]], -1)
-                for iatm in geometry.unique_atomic_numbers().tolist()}
+        basis = Basis(data.geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
         # Perform the forwards operation
-        dftb_calculator(geometry, basis)
+        dftb_calculator(data.geometry, basis)
 
         # Calculate the loss
         loss = calculate_losses(dftb_calculator, data)
-        print(epoch, loss)
+        print(loss)
 
         optimizer.zero_grad()
 
@@ -225,53 +197,6 @@ def single_fit(dftb_calculator, dataloder, size):
 
         # Update the model
         optimizer.step()
-
-        if torch.abs(loss_old - loss.detach()).lt(tolerance):
-            break
-        loss_old = loss.detach().clone()
-
-        # Reset the calculator
-        # dftb_calculator.reset()
-
-    return dftb_calculator
-
-
-def single_test(dftb_calculator, dftb_calculator_init, dataloder):
-
-    geometry = Geometry(dataloder.dataset['atomic_numbers'],
-                        dataloder.dataset['positions'], units='a')
-    basis = Basis(geometry.atomic_numbers, shell_dict, shell_resolved=False)
-
-    # Perform DFTB calculations
-    dftb_calculator_init(geometry, basis)
-    dftb_calculator(geometry, basis)
-
-
-# STEP 3.1: Execution fitting
-if fit_model:
-    for ii, dataloder in enumerate(dataloder_fit):
-        assert len(n_batch) == len(dataloder_fit), 'size and Nr. fit run inconsistent'
-
-        with open('dftb_calculator_init.pkl', 'rb') as r:
-            dftb_calculator_init = pickle.load(r)
-
-        dftb_calculator = single_fit(dftb_calculator_init, dataloder, n_batch[ii])
-
-        with open(f'dftb_calculator_{ii}.pkl', 'wb') as w:
-            pickle.dump(dftb_calculator, w)
-
-
-# STEP 3.2: Execution testing
-if test_model:
-    for ii, dataloder in enumerate(dataloder_test):
-        assert len(n_batch) == len(dataloder_test), 'size and Nr. fit run inconsistent'
-
-        with open('dftb_calculator_init.pkl', 'rb') as r:
-            dftb_calculator_init = pickle.load(r)
-
-        with open(f'dftb_calculator_{ii}.pkl', 'rb') as r:
-            dftb_calculator = pickle.load(r)
-
-        single_test(dftb_calculator, dftb_calculator_init, dataloder)
-
-# spl: [0.1331, 0.1340, 0.1356], [0.0175, 0.0170, 0.0172]
+else:
+    # Run the DFTB calculation
+    raise NotImplementedError()

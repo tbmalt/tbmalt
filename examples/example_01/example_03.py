@@ -1,18 +1,16 @@
 import pickle
 from os.path import exists
 from typing import Any, List
-
+import random
 import torch
 import h5py
-from h5py import Group
 from sklearn.ensemble import RandomForestRegressor
 
 from tbmalt import Geometry, Basis
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
-from tbmalt.common.maths.interpolation import BicubInterp, PolyInterpU
-from tbmalt.io.dataset import Dataloader
+from tbmalt.io.dataset import DataSetIM
 from tbmalt.ml.acsf import Acsf
 from tbmalt.common.batch import pack
 
@@ -31,6 +29,8 @@ device = torch.device('cpu')
 
 # Provide a list of moecules upon which TBMaLT is to be run
 targets = ['dipole']
+sources_train = ['run1/train', 'run2/train', 'run3/train']
+sources_test = ['run1/test', 'run2/test', 'run3/test']
 
 # Provide information about the orbitals on each atom; this is keyed by atomic
 # numbers and valued by azimuthal quantum numbers like so:
@@ -72,12 +72,15 @@ target_path = './dataset.h5'
 # ============= #
 
 # load data set
-def load_target_data(properties: List, groups: Group) -> Any:
+def load_target_data(path: str, sources: List[str], targets: List[str]) -> Any:
     """Load fitting target data.
 
     Arguments:
-        properties: Target properties should be returned.
-        groups: Names of groups.
+        path: path to a database in which the fitting data can be found.
+        sources: a list of paths specifying the groups from which data
+            should be loaded; one for each system.
+        targets: paths relative to `source` specifying the HDF5 datasets
+                to load.
 
     Returns:
         targets: returns an <OBJECT> storing the data to which the model is to
@@ -86,17 +89,20 @@ def load_target_data(properties: List, groups: Group) -> Any:
     # Data could be loaded from a json file or an hdf5 file; use your own
     # discretion here. A dictionary might be the best object in which to store
     # the target data.
-    return Dataloader.load_reference(groups, properties)
+    with h5py.File(path, 'r') as f:
+        _sources = []
+        for sou in sources:
+            _sources.extend([sou + '/' + i for i in (f[sou].keys())])
+    return DataSetIM.load_data(path, _sources, targets)
 
 
 # 2.1: Target system specific objects
 # -----------------------------------
 if fit_model or pred_model:
-    with h5py.File(target_path, 'r') as f:
-        dataloder_fit = [load_target_data(targets, g) for g in
-                         [f['run1']['train'], f['run2']['train'], f['run3']['train']]]
-        dataloder_test = [load_target_data(targets, g) for g in
-                          [f['run1']['test'], f['run2']['test'], f['run3']['test']]]
+    dataloder_fit, dataloder_test = [], []
+    for s_fit, s_test in zip(sources_train, sources_test):
+        dataloder_fit.append(load_target_data(target_path, sources_train, targets))
+        dataloder_test.append(load_target_data(target_path, sources_test, targets))
 
 
 # 2.2: Loading of the DFTB parameters into their associated feed objects
@@ -119,19 +125,19 @@ species = species[species != 0].tolist()
 
 # Load the Hamiltonian feed model
 h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation=BicubInterp)
+                              interpolation='bicubic')
 h_feed_std = SkFeed.from_database(
     parameter_db_path_std, species, 'hamiltonian')
 
 # Load the overlap feed model
 s_feed = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation=BicubInterp)
+                              interpolation='bicubic')
 s_feed_std = SkFeed.from_database(
     parameter_db_path_std, species, 'overlap')
 
 # Load the occupation feed object
 o_feed = SkfOccupationFeed.from_database(parameter_db_path, species)
-o_feed_std= SkfOccupationFeed.from_database(parameter_db_path_std, species)
+o_feed_std = SkfOccupationFeed.from_database(parameter_db_path_std, species)
 
 # Load the Hubbard-U feed object
 u_feed = HubbardFeed.from_database(parameter_db_path, species)
@@ -153,7 +159,7 @@ with open('dftb_calculator_vcr_init_std.pkl', 'wb') as w:
 # 2.4: Construct machine learning object
 def build_optim(dftb_calculator, dataloder, global_r):
     """Build optimizer for VCR training."""
-    comp_r = torch.ones(dataloder.dataset['atomic_numbers'].shape) * 3.5
+    comp_r = torch.ones(dataloder.geometry.atomic_numbers.shape) * 3.5
     assert shell_resolved is False, 'do not support shell_resolved is True'
 
     if not global_r:
@@ -212,7 +218,7 @@ def calculate_losses(calculator: Calculator, data: Any) -> Tensor:
 
     for key in targets:
         key = 'q_final_atomic' if key == 'charge' else key
-        loss += criterion(calculator.__getattribute__(key), data[key])
+        loss += criterion(calculator.__getattribute__(key), data.data[key])
 
     return loss
 
@@ -228,7 +234,8 @@ def update_model(calculator: Calculator):
 
 
 def single_fit(dftb_calculator, dataloder, n_batch, global_r):
-    indice = torch.split(torch.tensor(dataloder.random_idx), n_batch)
+    random_idx = random.sample(torch.arange(len(dataloder)).tolist(), len(dataloder))
+    indice = torch.split(torch.tensor(random_idx), n_batch)
 
     if not global_r:
         comp_r, onsite_dict, optimizer = build_optim(
@@ -242,9 +249,7 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
     for epoch in range(number_of_epochs):
 
         data = dataloder[indice[epoch % len(indice)]]
-
-        geometry = Geometry(data['atomic_numbers'], data['positions'], units='a')
-        basis = Basis(geometry.atomic_numbers, shell_dict,
+        basis = Basis(data.geometry.atomic_numbers, shell_dict,
                       shell_resolved=shell_resolved)
 
         if not global_r:
@@ -253,22 +258,22 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
                 dftb_calculator.h_feed.on_sites = {
                     iatm: torch.cat([onsite_dict[(iatm, l)].repeat(2 * l + 1, 1).T
                                      for l in shell_dict[iatm]], -1)
-                    for iatm in geometry.unique_atomic_numbers().tolist()}
+                    for iatm in data.geometry.unique_atomic_numbers().tolist()}
         else:
-            this_cr = torch.ones(geometry.atomic_numbers.shape)
-            for ii, iatm in enumerate(geometry.unique_atomic_numbers()):
-                this_cr[iatm == geometry.atomic_numbers] = comp_r[ii]
+            this_cr = torch.ones(data.geometry.atomic_numbers.shape)
+            for ii, iatm in enumerate(data.geometry.unique_atomic_numbers()):
+                this_cr[iatm == data.geometry.atomic_numbers] = comp_r[ii]
 
             if not shell_resolved:
                 dftb_calculator.h_feed.on_sites = {
                     iatm: torch.cat([onsite_dict[(iatm, l)].repeat(2 * l + 1).T
                                      for l in shell_dict[iatm]], -1)
-                    for iatm in geometry.unique_atomic_numbers().tolist()}
+                    for iatm in data.geometry.unique_atomic_numbers().tolist()}
 
         # Perform the forwards operation
         dftb_calculator.h_feed.vcr = this_cr
         dftb_calculator.s_feed.vcr = this_cr
-        dftb_calculator(geometry, basis)
+        dftb_calculator(data.geometry, basis)
 
         # Calculate the loss
         loss = calculate_losses(dftb_calculator, data)
@@ -341,10 +346,9 @@ def single_test(dftb_calculator: Dftb2,
 
     # There is random seed when choosing data, make sure the order is correct
     geometry_fit = dftb_calculator.geometry
+    geometry_test = dataloder_test.geometry
     basis_fit = dftb_calculator.basis
 
-    geometry_test = Geometry(dataloder_test.dataset['atomic_numbers'],
-                             dataloder_test.dataset['positions'], units='a')
     basis_test = Basis(geometry_test.atomic_numbers, shell_dict,
                        shell_resolved=shell_resolved)
 
@@ -413,7 +417,6 @@ if fit_model:
             with open(f'dftb_calculator_vcr_{ii}_local.pkl', 'wb') as w:
                 pickle.dump(dftb_calculator, w)
 
-
 # STEP 3.2: Execution testing
 if pred_model:
 
@@ -434,6 +437,3 @@ if pred_model:
                 dftb_calculator = pickle.load(w)
 
             single_test(dftb_calculator, dftb_calculator_std, d_test, global_r)
-
-# global: [0.1331, 0.1340, 0.1356], [0.0259, 0.0259, 0.0254]
-# local: [0.1331, 0.1340, 0.1356], [0.0175, 0.0175, 0.0178]
