@@ -16,3 +16,4 @@ dependencies:
   - pytorch=1.11.0
   - scipy
   - tomli
+  - dscribe
