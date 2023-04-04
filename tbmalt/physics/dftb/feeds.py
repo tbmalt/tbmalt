@@ -892,15 +892,13 @@ class SkFeed(IntegralFeed):
 
             # Loop over the off-site interactions & construct the splines.
             for key, value in skf.__getattribute__(target).items():
-                off_sites[pair + key] = interpolation(
-                    *clip(skf.grid.to(device), value.to(device)), **params)
 
                 if interpolation is BicubInterp:
                     off_sites[pair + key] = interpolation(
                         skf.compression_radii, value.transpose(0, 1), skf.grid, **params)
                 else:
                     off_sites[pair + key] = interpolation(
-                        *clip(skf.grid, value), **params)
+                        *clip(skf.grid.to(device), value.to(device)), **params)
 
                     # Add variables for spline training
                     if interpolation is CSpline and requires_grad:
