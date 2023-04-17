@@ -13,17 +13,18 @@ import torch
 
 from tbmalt import Geometry, Basis, Periodic
 from tbmalt.ml.integralfeeds import IntegralFeed
-from tbmalt.io.skf import Skf
+from tbmalt.io.skf import Skf, VCRSkf
 from tbmalt.physics.dftb.slaterkoster import sub_block_rot
 from tbmalt.data.elements import chemical_symbols
 from tbmalt.ml import Feed
 from tbmalt.common.batch import pack, prepeat_interleave
-from tbmalt.common.maths.interpolation import PolyInterpU
+from tbmalt.common.maths.interpolation import PolyInterpU, BicubInterp
 from tbmalt.common.maths.interpolation import CubicSpline as CSpline
 
 Tensor = torch.Tensor
 Array = np.ndarray
-
+interp_dict = {'polynomial': PolyInterpU, 'spline': CSpline,
+               'bicubic': BicubInterp}
 
 def _enforce_numpy(v):
     """Helper function to ensure entity is a numpy array."""
@@ -415,7 +416,6 @@ class ScipySkFeed(IntegralFeed):
             >>> for file in [f'{i}-{j}.skf' for i in Zs for j in Zs]:
             >>>     Skf.read(file).write('my_skf.hdf5')
 
-
         """
         # As C-H & C-H interactions are the same only one needs to be loaded.
         # Thus only off-site interactions where z₁≤z₂ are generated. However,
@@ -489,10 +489,12 @@ class SkFeed(IntegralFeed):
             the interactions, & valued by Scipy `CubicSpline` entities. Note
             that z₁ must be less than or equal to z₂, see the notes section
             for further information.
-        to_cpu: If use interpolation from numpy or scipy, `cuda` type data
-            should be transferred to `cpu`.
+        interpolation: interpolation type.
         device: Device on which the feed object and its contents resides.
         dtype: dtype used by feed object.
+        vcr: Compression radii in DFTB basis.
+        is_local_onsite: `is_local_onsite` allows for constructing chemical
+            environment dependent on-site energies.
 
     Notes:
         The splines contained within the ``off_sites`` argument must return
@@ -520,7 +522,7 @@ class SkFeed(IntegralFeed):
 
     def __init__(self, on_sites: Dict[int, Tensor],
                  off_sites: Dict[Tuple[int, int, int, int], CubicSpline],
-                 to_cpu: bool, block: bool,
+                 interpolation: Literal[CSpline, PolyInterpU, BicubInterp],
                  dtype: Optional[torch.dtype] = None,
                  device: Optional[torch.device] = None):
 
@@ -537,13 +539,15 @@ class SkFeed(IntegralFeed):
         super().__init__(temp.dtype if dtype is None else dtype,
                          temp.device if device is None else device)
 
-        self.to_cpu = to_cpu
-        self.block = block
         self.on_sites = on_sites
         self.off_sites = off_sites
+        self.interpolation = interpolation
+
+        self._vcr = None
+        self.is_local_onsite = False
 
     def _off_site_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-                         geometry: Geometry, basis: Basis) -> Tensor:
+                         geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
         """Compute atomic interaction blocks (off-site only).
         Constructs the off-site atomic blocks using Slater-Koster integral
         tables.
@@ -570,6 +574,8 @@ class SkFeed(IntegralFeed):
                     - geometry.positions[atomic_idx_1.T])
         dist = torch.linalg.norm(dist_vec, dim=-1)
         u_vec = (dist_vec.T / dist).T
+        if self.interpolation is BicubInterp:
+            cr = torch.stack([self.vcr[atomic_idx_1.T], self.vcr[atomic_idx_2.T]]).T
 
         # Work out the width of each sub-block then use it to get the row and
         # column index slicers for placing sub-blocks into their atom-blocks.
@@ -590,7 +596,10 @@ class SkFeed(IntegralFeed):
             for j, l_2 in enumerate(shells_2[o:], start=o):
                 # Retrieve/interpolate the integral spline, remove any NaNs
                 # due to extrapolation then convert to a torch tensor.
-                inte = self.off_sites[(z_1, z_2, i, j)](dist)
+                if self.interpolation is BicubInterp:
+                    inte = self.off_sites[(z_1, z_2, i, j)](cr, dist)
+                else:
+                    inte = self.off_sites[(z_1, z_2, i, j)](dist)
 
                 # Apply the Slater-Koster transformation
                 inte = sub_block_rot(torch.tensor([l_1, l_2]), u_vec, inte)
@@ -780,8 +789,13 @@ class SkFeed(IntegralFeed):
         # Identify which are on-site blocks and which are off-site
         on_site = self._partition_blocks(atomic_idx_1, atomic_idx_2)
 
-        if any(on_site):  # Construct the on-site blocks (if any are present)
-            blks[on_site] = torch.diag(self.on_sites[int(z_1)])
+        # Construct the on-site blocks (if any are present)
+        if any(on_site):
+            if not self.is_local_onsite:
+                blks[on_site] = torch.diag(self.on_sites[int(z_1)])
+            elif self.is_local_onsite:
+                blks[on_site] = torch.diag_embed(
+                    self.on_sites[int(z_1)], dim1=-2, dim2=-1)
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
@@ -810,9 +824,8 @@ class SkFeed(IntegralFeed):
     def from_database(
             cls, path: str, species: List[int],
             target: Literal['hamiltonian', 'overlap'],
-            interpolation: Literal[CSpline, PolyInterpU] = PolyInterpU,
+            interpolation: str = 'polynomial',
             requires_grad: bool = False,
-            block: bool = False,
             dtype: Optional[torch.dtype] = None,
             device: Optional[torch.device] = None) -> 'SkFeed':
         r"""Instantiate instance from an HDF5 database of Slater-Koster files.
@@ -859,7 +872,7 @@ class SkFeed(IntegralFeed):
             # Removes leading zeros from the sk data which may cause errors
             # when fitting the CubicSpline.
             start = torch.nonzero(y.sum(0), as_tuple=True)[0][0]
-            return x[start:], y[:, start:].T  # Transpose here to save effort
+            return x[start:], y[:, start:].transpose(0, 1)
 
         # Ensure a valid target is selected
         if target not in ['hamiltonian', 'overlap']:
@@ -867,21 +880,29 @@ class SkFeed(IntegralFeed):
                        'options are "hamiltonian" or "overlap"')
 
         on_sites, off_sites = {}, {}
+        interpolation = interp_dict[interpolation]
         params = {'extrapolate': False} if interpolation is CubicSpline else {}
-        to_cpu = True if interpolation is CubicSpline else False
 
         # The species list must be sorted to ensure that the lowest atomic
         # number comes first in the species pair.
         for pair in combinations_with_replacement(sorted(species), 2):
-            skf = Skf.read(path, pair)
+
+            skf = Skf.read(path, pair) if interpolation is not BicubInterp else\
+                VCRSkf.read(path, pair)
+
             # Loop over the off-site interactions & construct the splines.
             for key, value in skf.__getattribute__(target).items():
-                off_sites[pair + key] = interpolation(
-                    *clip(skf.grid.to(device), value.to(device)), **params)
 
-                # Add variables for spline training
-                if interpolation is CSpline and requires_grad:
-                    off_sites[pair + key].abcd.requires_grad_(True)
+                if interpolation is BicubInterp:
+                    off_sites[pair + key] = interpolation(
+                        skf.compression_radii, value.transpose(0, 1), skf.grid, **params)
+                else:
+                    off_sites[pair + key] = interpolation(
+                        *clip(skf.grid.to(device), value.to(device)), **params)
+
+                    # Add variables for spline training
+                    if interpolation is CSpline and requires_grad:
+                        off_sites[pair + key].abcd.requires_grad_(True)
 
             # The X-Y.skf file may not contain all information. Thus some info
             # must be loaded from its Y-X counterpart.
@@ -891,6 +912,11 @@ class SkFeed(IntegralFeed):
                     if key[0] < key[1]:
                         off_sites[pair + (*reversed(key),)] = interpolation(
                             *clip(skf_2.grid.to(device), value.to(device)), **params)
+
+                        # Add variables for spline training
+                        if interpolation is CSpline and requires_grad:
+                            off_sites[pair + (*reversed(key),)
+                                      ].abcd.requires_grad_(True)
 
                 # Add variables for spline training
                 if interpolation is CSpline and requires_grad:
@@ -906,7 +932,20 @@ class SkFeed(IntegralFeed):
 
                 on_sites[pair[0]] = on_sites_vals
 
-        return cls(on_sites, off_sites, to_cpu, block, dtype, device)
+        return cls(on_sites, off_sites, interpolation, dtype, device)
+
+    @property
+    def vcr(self):
+        """The various compression radii."""
+        return self._vcr
+
+    @vcr.setter
+    def vcr(self, value):
+        self._vcr = value
+
+    def local_onsite(self, value: Tensor):
+        """Only when is_local_onsite is True local_onsite will return Tensor."""
+        return value if self.is_local_onsite else None
 
     def __str__(self):
         elements = ', '.join([

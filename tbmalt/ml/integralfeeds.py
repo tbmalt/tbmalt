@@ -38,7 +38,7 @@ def indices(dims, dtype=None, device=None):
 
 
 class IntegralFeed(ABC, Feed):
-    """ABC for Hamiltonian and overlap matrix constructors.
+    r"""ABC for Hamiltonian and overlap matrix constructors.
 
     Subclasses of this abstract base class are responsible for constructing
     the Hamiltonian and overlap matrices.
@@ -46,6 +46,7 @@ class IntegralFeed(ABC, Feed):
     Arguments:
         device: Device on which the feed object and its contents resides.
         dtype: Floating point dtype used by feed object.
+
     """
 
     def __init__(self, dtype, device):

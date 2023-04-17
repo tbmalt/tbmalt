@@ -820,4 +820,3 @@ if __name__ == '__main__':
     mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
     dftb2 = Dftb2(h_feed, s_feed, o_feed, u_feed, filling_temp=0.0036749324, mix_params=mix_params)
     dftb2(geos, basiss)
-

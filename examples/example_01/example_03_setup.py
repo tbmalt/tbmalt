@@ -3,7 +3,7 @@ import urllib, tempfile, tarfile
 
 import torch
 
-from tbmalt.io.skf import Skf
+from tbmalt.io.skf import VCRSkf
 torch.set_default_dtype(torch.float64)
 
 
@@ -22,28 +22,32 @@ def skf_file(output_path: str):
 
     """
     # Link to the auorg-1-1 parameter set
-    link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+    link = 'https://seafile.zfn.uni-bremen.de/f/82656301e2bb4d4a8d77/?dl=1'
 
     # Elements of interest
-    elements = ['H', 'C', 'N', 'O', 'S', 'Au']
+    elements = ['H', 'C', 'N', 'O']
+    compr = ['01.00', '01.50', '02.00', '02.50', '03.00', '03.50', '04.00',
+             '04.50', '05.00', '06.00', '08.00', '10.00']
 
     with tempfile.TemporaryDirectory() as tmpdir:
 
         # Download and extract the auorg parameter set to the temporary directory
-        urllib.request.urlretrieve(link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
-        with tarfile.open(path) as tar:
+        urllib.request.urlretrieve(link, path := join(tmpdir, 'compr_wav.tar.gz'))
+
+        with tarfile.open(path, 'r:gz') as tar:
             tar.extractall(tmpdir)
 
         # Select the relevant skf files and place them into an HDF5 database
-        skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-                     for i in elements for j in elements]
+        skf_files = [join(tmpdir, 'compr_wav', f'{i}-{j}.skf.{ic}.{jc}')
+                     for i in elements for j in elements
+                     for ic in compr for jc in compr]
 
-        for skf_file in skf_files:
-            Skf.read(skf_file).write(output_path)
+        # for skf_file in skf_files:
+        VCRSkf.from_dir(join(tmpdir, 'compr_wav'), output_path)
 
 
 # STEP 1: Inputs
-parameter_db_path = "example_dftb_parameters.h5"
+parameter_db_path = "example_dftb_vcr.h5"
 
 # STEP 2: Execution
 skf_file(parameter_db_path)

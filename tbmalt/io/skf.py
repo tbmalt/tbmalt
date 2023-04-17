@@ -17,6 +17,7 @@ from torch import Tensor
 
 from tbmalt.common.maths import triangular_root, tetrahedral_root
 from tbmalt.data import atomic_numbers, chemical_symbols
+from tbmalt.common.batch import pack
 
 OptTens = Optional[Tensor]
 SkDict = Dict[Tuple[int, int], Tensor]
@@ -724,7 +725,8 @@ class VCRSkf(Skf):
 
         When run against a `target` directory this method scans for map files
         which indicate the presence of data that can be used to build variable
-        compression radii slater koster files instance (`VCRSkf`).
+        compression radii slater koster files instance (`VCRSkf`). There are
+        two types of source, the first is 'csv' type, the second is 'skf' type.
 
         Arguments:
             source: director holding the skf and map files.
@@ -749,6 +751,14 @@ class VCRSkf(Skf):
             This map file example shows that there are two compression radii
             used for "X" and two for "Y", giving a total of four combinations.
             It is therefore expected that there are four sk-files.
+            If the source is 'skf' type, the code will loop over files like:
+
+                "{X}-{Y}-{i}-{j}.skf"
+                "H-H-02.00-04.50.skf"
+                "H-C-02.00-04.50.skf"
+            For homo files, you also need one homo files, such as "H-H.skf" to
+            offer homo properties, such as mass, on_sites or hubbard_us.
+
         """
         e = '[A-Z][a-z]'
 
@@ -767,8 +777,207 @@ class VCRSkf(Skf):
 
         # Locate any map files present the directory
         all_files = glob.glob(join(source, '*'))
-        re_s1 = re.compile(fr'(?<=skf_map_){e}?_{e}?(?=.csv)').search
-        map_files = {tuple(ele.group(0).split('_')): i for i in all_files
+        if is_csv := re.search('csv$', all_files[0]):
+            re_s1 = re.compile(fr'(?<=skf_map_){e}?_{e}?(?=.csv)').search
+            map_files = {tuple(ele.group(0).split('_')): i for i in all_files
+                         if (ele := re_s1(i))}
+        else:
+            re_s1 = re.compile(fr'(?<=\/){e}?-{e}?-\d+.\d+-\d+.\d+').search
+            map_files = {tuple(ele.group(0).split('-')): i for i in all_files
+                         if (ele := re_s1(i))}
+            map_keys = np.array(list(map_files.keys()))
+            atom_pair_names = np.unique(map_keys[..., :2], axis=0)
+            re_ho = re.compile(fr'(?<=\/){e}?-{e}?.skf').search
+            homo_files = {tuple(ele.group(0)[:-4].split('-')):
+                              i for i in all_files if (ele := re_ho(i))}
+
+        # Report systems found to the user [print header]
+        print(f'Map files found for {len(map_files)} system(s):\n'
+              '\tAtom 1\tAtom 2\tAction')
+
+        # Loop over each system
+        if is_csv:
+            for pair, path in map_files.items():
+                print(f'\t{pair[0]:6}\t{pair[1]:6}\t', end='')
+                if pair in current:  # Skip it if it has been parsed before
+                    print('SKIPPING (previously parsed)')
+                    continue
+
+                VCRSkf.single_csv(path, pair, all_files, target)
+        else:
+            for pair in atom_pair_names:
+                this_mask = (map_keys[..., :2] == pair).all(-1)
+                this_file_keys = sorted(map_keys[this_mask].tolist())
+                this_list = []
+                atom_pair = torch.tensor([atomic_numbers[i] for i in pair])
+                n_r = len(np.unique(np.array(this_file_keys)[..., 2:]))
+                assert len(this_file_keys) == n_r ** 2,\
+                    'square of compression r number should be equal to file number'
+
+                for key in this_file_keys:
+
+                    this_list.append(Skf.read(map_files[tuple(key)]))
+
+                h_data = {key: pack([isk.hamiltonian[key] for isk in this_list])
+                          for key in this_list[-1].hamiltonian.keys()}
+                h_data = {key: val.reshape(n_r, n_r, *val.shape[1:]).permute(
+                    -2, -1, 0, 1) for key, val in h_data.items()}
+                s_data = {key: pack([isk.overlap[key] for isk in this_list])
+                          for key in this_list[-1].overlap.keys()}
+                s_data = {key: val.reshape(n_r, n_r, *val.shape[1:]).permute(
+                    -2, -1, 0, 1) for key, val in s_data.items()}
+
+                # Grid points for distances and compression radii
+                grid = this_list[-1].grid
+                cr_grid = torch.from_numpy(
+                    np.unique(np.array(this_file_keys)[..., 2:].astype(dtype=np.float64)))
+
+                if atom_pair[0] == atom_pair[1]:
+                    # Load the file into an Skf instance to extract the data from
+                    skf_homo = Skf.read(homo_files[tuple(pair.tolist())])
+                    vcrskf = cls(
+                        atom_pair, h_data, s_data, grid, cr_grid, mass=skf_homo.mass,
+                        on_sites=skf_homo.on_sites, hubbard_us=skf_homo.hubbard_us,
+                        occupations=skf_homo.occupations)
+                else:
+                    vcrskf = cls(atom_pair, h_data, s_data, grid, cr_grid)
+
+                # Store data into the target database.
+                with h5py.File(target, 'a') as db:
+                    group = db.create_group(f'{pair[0]}-{pair[1]}')
+                    vcrskf.to_hdf5(group)
+
+    @classmethod
+    def single_csv(cls, path, pair, all_files, target):
+        # Open the map file and extract the compression radii pair list
+        radii = np.genfromtxt(path, delimiter=',')
+
+        # Number of unique radii for species 1 & 2
+        n_r1, n_r2 = [len(set(i)) for i in radii.T]
+
+        # Locate the skf files and order them correctly
+        re_s2 = re.compile(rf'{pair[0]}.*{pair[1]}.*\d+.skf').search
+        re_s3 = re.compile(r'\d+(?=.skf)').search
+        sk_files = np.array([*filter(re_s2, all_files)])
+        sk_numbers = np.array([int(re_s3(f).group(0)) for f in sk_files])
+
+        sorter = sk_numbers.argsort()
+        sk_files = sk_files[sorter]
+        sk_numbers = sk_numbers[sorter]
+
+        # Ensure the expected number of files are found and are sequential
+        if (n := len(sk_files)) != (m := len(radii)):
+            raise IndexError(f'Read {m} values from {splitext(path)} '
+                             f'but found only {n} skf files.')
+
+        if not np.allclose(np.diff(sk_numbers), 1):
+            raise IndexError('Non-sequential skf files found.')
+
+        # Work out which lines store the electronic integrals.
+        t = open(sk_files[0]).readlines()
+        o = int(t[0].startswith('@'))  # offset for comment if present
+        n_grid = int(t[o].split()[1])  # Number of lines to get
+        g_dist = float(t[o].split()[0])
+
+        # Electronic integrals will always start at line "2 + o" & "3 + o"
+        # for triatomic and homoatomic systems respectively.
+        s_hetro = slice(2 + o, 2 + o + n_grid)
+        s_homo = slice(3 + o, 3 + o + n_grid)
+
+        # When dealing with homoatomic systems only the files where the
+        # two atoms have the same compression radii will actually contain
+        # homoatomic data. Thus a list of slicers is created to take this
+        # into account when reading.
+        slicers = [s_homo if (r1 == r2 and pair[0] == pair[1])
+                   else s_hetro for r1, r2 in
+                   zip(radii[:, 0], radii[:, 1])]
+
+        # Read the electronic integrals from all files and place into a
+        # dictionary; method similar to that used in `Skf.from_skf`.
+        cat = ''.join
+        h_data, s_data = np.split(
+            np.fromstring(
+                cat([cat(open(i).readlines()[s])
+                     for i, s in zip(sk_files, slicers)]),
+                sep=' ', dtype=np.float64
+            ).reshape(len(sk_files), n_grid, -1),
+            2, -1)
+
+        l_max = int(tetrahedral_root(h_data.shape[-1]))
+        l_pairs = np.stack(np.triu_indices(l_max)).T
+        sort = cls._sorter if l_max == 3 else cls._sorter_e
+        splitter = np.cumsum(l_pairs[:, 0] + 1)[:-1]
+
+        shape = (-1, n_r1, n_r2, n_grid)  # Reshapes integrals to grid
+        h_data, s_data = [{
+            tuple(l_pair.tolist()): torch.tensor(i.reshape(shape))
+            for l_pair, i in
+            zip(l_pairs, np.split(i.transpose((2, 0, 1))[sort], splitter, 0))
+            if not (i == 0.).all()}
+            for i in [h_data, s_data]]
+
+        # Parse the data into a VCRSkf instance
+        atom_pair = torch.tensor([atomic_numbers[i] for i in pair])
+        grid = torch.arange(1, n_grid + 1) * g_dist
+        cr_grid = torch.stack(torch.meshgrid(
+            [torch.tensor(sorted(list(set(i)))) for i in radii.T]))
+
+        if pair[0] == pair[1]:  # Load homoatomic data if appropriate
+            # Load the file into an Skf instance to extract the data from
+            skf = Skf.from_skf(sk_files[0])
+            vcrskf = cls(
+                atom_pair, h_data, s_data, grid, cr_grid, mass=skf.mass,
+                on_sites=skf.on_sites, hubbard_us=skf.hubbard_us,
+                occupations=skf.occupations)
+        else:
+            vcrskf = cls(atom_pair, h_data, s_data, grid, cr_grid)
+
+        # Store data into the target database.
+        with h5py.File(target, 'a') as db:
+            group = db.create_group(f'{pair[0]}-{pair[1]}')
+            vcrskf.to_hdf5(group)
+
+    @classmethod
+    def from_dir_raw(cls, source: str, target: str):
+        """Parse multiple skf files into an hdf5 `VCRSkf` instance.
+
+        When run against a `target` directory this method scans for map files
+        which indicate the presence of data that can be used to build variable
+        compression radii slater koster files instance (`VCRSkf`).
+
+        Arguments:
+            source: director holding the skf and map files.
+            target: path to the hdf5 database in which the results should
+                be stored.
+
+        Notes:
+            Directories may contain multiple maps & their associated sk-files.
+            Map files must be skf formatted & named "{X}-{Y}-{Rx}-{Ry}.skf"
+            where "X" & "Y" are the elemental symbols of the two relevant
+            species. "Rx" and "Ry" are the corresponding compression radii.
+            An example file format: "H-H-03.00-03.00.skf".
+
+
+        """
+        e = '[A-Z][a-z]'
+
+        # Validate the path to the source directory
+        if not isdir(source):
+            raise NotADirectoryError(
+                    f'`source` must be a valid directory: ({source})')
+
+        # If the database exists; open it & identify what systems are present.
+        # This avoids trying to parse systems that have already been parsed.
+        current = []
+        if exists(target):
+            with h5py.File(target, 'a') as db:
+                current += [tuple(k.split('-')) for k in db
+                            if re.fullmatch(fr'{e}*-{e}*', k)]
+
+        # Locate any map files present the directory
+        all_files = glob.glob(join(source, '*'))
+        re_s1 = re.compile(fr'(?<=\/){e}?-{e}?-[0-9]?.[0-9]?-[0-9].[0-9].skf').search
+        map_files = {tuple(ele.group(0).split('-')): i for i in all_files
                      if (ele := re_s1(i))}
 
         # Report systems found to the user [print header]
@@ -781,95 +990,6 @@ class VCRSkf(Skf):
             if pair in current:  # Skip it if it has been parsed before
                 print('SKIPPING (previously parsed)')
                 continue
-            else:  # If not then parse it
-                print('PARSING')
-
-            # Open the map file and extract the compression radii pair list
-            radii = np.genfromtxt(path, delimiter=',')
-            # Number of unique radii for species 1 & 2
-            n_r1, n_r2 = [len(set(i)) for i in radii.T]
-
-            # Locate the skf files and order them correctly
-            re_s2 = re.compile(rf'{pair[0]}.*{pair[1]}.*\d+.skf').search
-            re_s3 = re.compile(r'\d+(?=.skf)').search
-            sk_files = np.array([*filter(re_s2, all_files)])
-            sk_numbers = np.array([int(re_s3(f).group(0)) for f in sk_files])
-
-            sorter = sk_numbers.argsort()
-            sk_files = sk_files[sorter]
-            sk_numbers = sk_numbers[sorter]
-
-            # Ensure the expected number of files are found and are sequential
-            if (n := len(sk_files)) != (m := len(radii)):
-                raise IndexError(f'Read {m} values from {splitext(path)} '
-                                 f'but found only {n} skf files.')
-
-            if not np.allclose(np.diff(sk_numbers), 1):
-                raise IndexError('Non-sequential skf files found.')
-
-            # Work out which lines store the electronic integrals.
-            t = open(sk_files[0]).readlines()
-            o = int(t[0].startswith('@'))  # offset for comment if present
-            n_grid = int(t[o].split()[1])  # Number of lines to get
-            g_dist = float(t[o].split()[0])
-
-            # Electronic integrals will always start at line "2 + o" & "3 + o"
-            # for triatomic and homoatomic systems respectively.
-            s_hetro = slice(2 + o, 2 + o + n_grid)
-            s_homo = slice(3 + o, 3 + o + n_grid)
-
-            # When dealing with homoatomic systems only the files where the
-            # two atoms have the same compression radii will actually contain
-            # homoatomic data. Thus a list of slicers is created to take this
-            # into account when reading.
-            slicers = [s_homo if (r1 == r2 and pair[0] == pair[1])
-                       else s_hetro for r1, r2 in
-                       zip(radii[:, 0], radii[:, 1])]
-
-            # Read the electronic integrals from all files and place into a
-            # dictionary; method similar to that used in `Skf.from_skf`.
-            cat = ''.join
-            h_data, s_data = np.split(
-                np.fromstring(
-                    cat([cat(open(i).readlines()[s])
-                         for i, s in zip(sk_files, slicers)]),
-                    sep=' ', dtype=np.float64
-                              ).reshape(len(sk_files), n_grid, -1),
-                2, -1)
-
-            l_max = int(tetrahedral_root(h_data.shape[-1]))
-            l_pairs = np.stack(np.triu_indices(l_max)).T
-            sort = cls._sorter if l_max == 3 else cls._sorter_e
-            splitter = np.cumsum(l_pairs[:, 0] + 1)[:-1]
-
-            shape = (-1, n_r1, n_r2, n_grid)  # Reshapes integrals to grid
-            h_data, s_data = [{
-                tuple(l_pair.tolist()): torch.tensor(i.reshape(shape))
-                for l_pair, i in
-                zip(l_pairs, np.split(i.transpose((2, 0, 1))[sort], splitter, 0))
-                if not (i == 0.).all()}
-                for i in [h_data, s_data]]
-
-            # Parse the data into a VCRSkf instance
-            atom_pair = torch.tensor([atomic_numbers[i] for i in pair])
-            grid = torch.arange(1, n_grid + 1) * g_dist
-            cr_grid = torch.stack(torch.meshgrid(
-                [torch.tensor(sorted(list(set(i)))) for i in radii.T]))
-
-            if pair[0] == pair[1]:  # Load homoatomic data if appropriate
-                # Load the file into an Skf instance to extract the data from
-                skf = Skf.from_skf(sk_files[0])
-                vcrskf = cls(
-                    atom_pair, h_data, s_data, grid, cr_grid, mass=skf.mass,
-                    on_sites=skf.on_sites, hubbard_us=skf.hubbard_us,
-                    occupations=skf.occupations)
-            else:
-                vcrskf = cls(atom_pair, h_data, s_data, grid, cr_grid)
-
-            # Store data into the target database.
-            with h5py.File(target, 'a') as db:
-                group = db.create_group(f'{pair[0]}-{pair[1]}')
-                vcrskf.to_hdf5(group)
 
 
 #########################
