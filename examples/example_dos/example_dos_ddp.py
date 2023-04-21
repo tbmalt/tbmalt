@@ -3,6 +3,7 @@ from os.path import exists
 from typing import Any, List
 
 import torch
+import torch.nn as nn
 import numpy as np
 import h5py
 
@@ -89,11 +90,11 @@ points = torch.linspace(-3.3, 1.6, 491)
 
 # Load the Hamiltonian feed model
 h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation=CubicSpline, requires_grad=True)
+                              interpolation='spline', requires_grad=True)
 
 # Load the overlap feed model
 s_feed = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation=CubicSpline, requires_grad=True)
+                              interpolation='spline', requires_grad=True)
 
 # Load the occupation feed object
 o_feed = SkfOccupationFeed.from_database(parameter_db_path, species)
@@ -221,6 +222,16 @@ def data_split(rank, world_size, dataset, batch_size, pin_memory=False,
 # ================= #
 # STEP 3: Execution #
 # ================= #
+class HellingerLoss(nn.Module):
+    """Use the Hellinger distance as a loss function for training."""
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, p, q):
+        return tb_math.hellinger(p, q).sum(0)
+
+
 def loss_fn(results, ref_dos, ibatch):
     """Calculate loss during training."""
     loss = 0.
@@ -228,7 +239,7 @@ def loss_fn(results, ref_dos, ibatch):
     if loss_function == 'MSELoss':
         criterion = torch.nn.MSELoss(reduction='mean')
     elif loss_function == 'Hellinger':
-        criterion = tb_math.HellingerLoss()
+        criterion = HellingerLoss()
 
     # Calculate the loss
     ref = ref_dos[..., 1][ibatch] if ref_dos.ndim == 3 else ref_dos[..., 1]
@@ -278,9 +289,9 @@ class DFTB_DDP(torch.nn.Module):
 
     def forward(self, data):
         h_feed_p = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation=CubicSpline, requires_grad=True)
+                              interpolation='spline', requires_grad=True)
         s_feed_p = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation=CubicSpline, requires_grad=True)
+                              interpolation='spline', requires_grad=True)
         var = list(self.parameters())
         h_var_u = var[:len(var)//2]
         s_var_u = var[len(var)//2:]
@@ -343,9 +354,9 @@ def main(rank, world_size, dataset_train, dataset_test, data_train_dos):
         print(update_para, file=open('./result/abcd.txt', "w"))
         if test:
             h_feed_p = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation=CubicSpline, requires_grad=True)
+                              interpolation='spline', requires_grad=True)
             s_feed_p = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                                  interpolation=CubicSpline, requires_grad=True)
+                                  interpolation='spline', requires_grad=True)
             var = list(model.parameters())
             h_var_u = var[:len(var)//2]
             s_var_u = var[len(var)//2:]
@@ -415,9 +426,9 @@ def test(rank, world_size, test_dataset, h_feed_p, s_feed_p):
     # DFTB
     # Build new feeds
     h_feed_o = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                                    interpolation=CubicSpline)
+                                    interpolation='spline')
     s_feed_o = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                                    interpolation=CubicSpline)
+                                    interpolation='spline')
     for ibatch, data in enumerate(test_data):
         scc_dftb = dftb_results(data['number'], data['position'],
                                 data['latvec'], h_feed_o, s_feed_o)
