@@ -162,6 +162,7 @@ class BicubInterp:
         return (fy00, fy01, fy10, fy11, fx00, fx01, fx10, fx11, fxy00,
                 fxy01, fxy10, fxy11)
 
+
 class PolyInterpU:
     """Polynomial interpolation method with uniform grid points.
 
@@ -191,6 +192,17 @@ class PolyInterpU:
         interpolated and their associated grid points respectively. The tail
         end of the spline is smoothed to zero, meaning that extrapolated
         points will rapidly, but smoothly, decay to zero.
+
+    Examples:
+        >>> import matplotlib.pyplot as plt
+        >>> x = torch.linspace(0, 2. * torch.pi, 100)
+        >>> y = torch.sin(x)
+        >>> poly = PolyInterpU(x, y, n_interp=8, n_interp_r=4)
+        >>> new_x = torch.rand(10) * 2. * torch.pi
+        >>> new_y = poly(new_x)
+        >>> plt.plot(x, y, 'k-')
+        >>> plt.plot(new_x, new_y, 'rx')
+        >>> plt.show()
 
     """
 
@@ -252,7 +264,8 @@ class PolyInterpU:
 
             # gather xx and yy for both single and batch
             xa = self.xx[0] + (ind_last.unsqueeze(1) - self.n_interp - 1 +
-                  torch.arange(self.n_interp, device=self._device)) * self.grid_step
+                               torch.arange(self.n_interp, device=self._device)
+                               ) * self.grid_step
             yb = torch.stack([self.yy[ii - self.n_interp - 1: ii - 1]
                               for ii in ind_last]).to(self._device)
 
@@ -394,6 +407,7 @@ class CubicSpline(torch.nn.Module):
 
     References:
         .. [wiki] https://en.wikipedia.org/wiki/Spline_(mathematics)
+
     Examples:
         >>> import tbmalt.common.maths.interpolation as interp
         >>> import torch
@@ -404,6 +418,7 @@ class CubicSpline(torch.nn.Module):
         >>> tensor([-0.3526])
         >>> torch.sin(torch.tensor([3.5]))
         >>> tensor([-0.3508])
+
     """
 
     def __init__(self, xx: Tensor, yy: Tensor, tail: Real = 1.0,

@@ -188,3 +188,4 @@ def test_cubic_spline_grad(device):
     grad_is_safe = gradcheck(fit, xi, raise_exception=False)
 
     assert grad_is_safe, 'Gradient stability test'
+
