@@ -3,7 +3,8 @@ import torch
 from torch.autograd import gradcheck
 import pytest
 import numpy as np
-from tbmalt.common.batch import pack, unpack, merge, deflate, psort, pargsort
+from tbmalt.common.batch import pack, unpack, merge, deflate, psort, \
+    pargsort, prepeat_interleave
 from tests.test_utils import fix_seed
 
 
@@ -232,3 +233,20 @@ def test_unpack(device):
     # Check 3: device persistence check.
     check_3 = all(i.device == device for i in unpack(a))
     assert check_3, 'Device persistence check failed'
+
+
+def test_prepeat_interleave(device):
+    array = torch.tensor([[1.1, 0], [2.2, 3.3]], device=device)
+    repeats = torch.tensor([[1, 0], [2, 3]], device=device)
+    repeated = prepeat_interleave(array, repeats, 0)
+    reference = torch.tensor([[1.1000, 0.0000, 0.0000, 0.0000, 0.0000],
+                              [2.2000, 2.2000, 3.3000, 3.3000, 3.3000]],
+                              device=device)
+
+    # Check 1: device persistence check.
+    check_1 = repeated.device == device
+    assert check_1, 'Device persistence check failed'
+
+    # Check 2: ensure results are correct
+    check_2 = torch.all(repeated == reference)
+    assert check_2, 'Failed to correctly repeat target tensor'
