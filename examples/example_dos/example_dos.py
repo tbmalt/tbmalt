@@ -3,6 +3,7 @@ from os.path import exists
 from typing import Any, List
 
 import torch
+import torch.nn as nn
 import numpy as np
 import h5py
 
@@ -83,11 +84,11 @@ points = torch.linspace(-3.3, 1.6, 491) if target_run != 'run_transfer' else\
 
 # Load the Hamiltonian feed model
 h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation=CubicSpline, requires_grad=True)
+                              interpolation='spline', requires_grad=True)
 
 # Load the overlap feed model
 s_feed = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation=CubicSpline, requires_grad=True)
+                              interpolation='spline', requires_grad=True)
 
 # Load the occupation feed object
 o_feed = SkfOccupationFeed.from_database(parameter_db_path, species)
@@ -223,6 +224,16 @@ def data_split(rank, world_size, dataset, batch_size, pin_memory=False,
 # ================= #
 # STEP 3: Execution #
 # ================= #
+class HellingerLoss(nn.Module):
+    """Use the Hellinger distance as a loss function for training."""
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, p, q):
+        return tb_math.hellinger(p, q).sum(0)
+
+
 def loss_fn(results, ref_dos, ibatch):
     """Calculate loss during training."""
     loss = 0.
@@ -230,7 +241,7 @@ def loss_fn(results, ref_dos, ibatch):
     if loss_function == 'MSELoss':
         criterion = torch.nn.MSELoss(reduction='mean')
     elif loss_function == 'Hellinger':
-        criterion = tb_math.HellingerLoss()
+        criterion = HellingerLoss()
 
     # Calculate the loss
     ref = ref_dos[..., 1][ibatch] if ref_dos.ndim == 3 else ref_dos[..., 1]
@@ -259,9 +270,9 @@ def dftb_results(numbers, positions, cells, **kwargs):
     else:
         # Build new feeds
         h_feed_o = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                                        interpolation=CubicSpline)
+                                        interpolation='spline')
         s_feed_o = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                                        interpolation=CubicSpline)
+                                        interpolation='spline')
         mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2,
               'generations': 3, 'tolerance': 1e-10}
         kwargs = {}

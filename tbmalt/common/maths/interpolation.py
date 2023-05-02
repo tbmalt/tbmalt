@@ -481,6 +481,7 @@ class CubicSpline(torch.nn.Module):
         if is_tail.any():
             self.__compute_tail_interpolation(xnew, is_tail, r_max, result)
 
+
         return result
 
     def __get_nearest_grid_point_indices(self, xnew: Tensor):
