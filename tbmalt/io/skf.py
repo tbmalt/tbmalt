@@ -583,27 +583,26 @@ class VCRSkf(Skf):
     two species, not just over distance.
 
     Arguments:
-         atom_pair: Atomic numbers of the elements associated with the
+        atom_pair: Atomic numbers of the elements associated with the
             interaction.
-         hamiltonian: Dictionary keyed by azimuthal-number-pairs (ℓ₁, ℓ₂) and
+        hamiltonian: Dictionary keyed by azimuthal-number-pairs (ℓ₁, ℓ₂) and
             valued by m×r1×r2×d Hamiltonian integral tensors; where r1/r2 are
             the compression radii of atoms one/two and m & d iterate over the
             bond-order (σ, π, etc.) and distances respectively.
-         overlap: Dictionary storing the overlap integrals in a manner akin to
+        overlap: Dictionary storing the overlap integrals in a manner akin to
             ``hamiltonian``.
-         grid: Distances at which the ``hamiltonian`` & ``overlap`` elements
+        grid: Distances at which the ``hamiltonian`` & ``overlap`` elements
             were evaluated.
         compression_radii: Mesh-grid tensor specifying the compression radii.
-         r_spline: A :class:`.RSpline` object detailing the repulsive
+        r_spline: A :class:`.RSpline` object detailing the repulsive
             spline. [DEFAULT=None]
-         r_poly: A :class:`.RPoly` object detailing the repulsive
+        r_poly: A :class:`.RPoly` object detailing the repulsive
             polynomial. [DEFAULT=None]
-         on_sites: On site terms, homo-atomic systems only. [DEFAULT=None]
-         hubbard_us: Hubbard U terms, homo-atomic systems only. [DEFAULT=None]
-         mass: Atomic mass, homo-atomic systems only. [DEFAULT=None]
-         occupations: Occupations of the orbitals, homo-atomic systems only.
+        on_sites: On site terms, homo-atomic systems only. [DEFAULT=None]
+        hubbard_us: Hubbard U terms, homo-atomic systems only. [DEFAULT=None]
+        mass: Atomic mass, homo-atomic systems only. [DEFAULT=None]
+        occupations: Occupations of the orbitals, homo-atomic systems only.
             [DEFAULT=None]
-
 
     Notes:
         Unlike their `Skf` parent class `VCRSkf` files cannot be stored as text
@@ -756,10 +755,12 @@ class VCRSkf(Skf):
                 "{X}-{Y}-{i}-{j}.skf"
                 "H-H-02.00-04.50.skf"
                 "H-C-02.00-04.50.skf"
+
             For homo files, you also need one homo files, such as "H-H.skf" to
             offer homo properties, such as mass, on_sites or hubbard_us.
 
         """
+
         e = '[A-Z][a-z]'
 
         # Validate the path to the source directory
