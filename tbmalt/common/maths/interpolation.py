@@ -8,14 +8,17 @@ Tensor = torch.Tensor
 
 class BicubInterp:
     """Bicubic interpolation method.
+
     The bicubic interpolation is designed to interpolate the integrals with
     given compression radii or distances.
+
     Arguments:
         compr: Grid points for interpolation, 1D Tensor.
         zmesh: 2D, 3D or 4D Tensor, 2D is for single integral with various
             compression radii, 3D is for multi integrals.
+
     References:
-        .. [wiki] https://en.wikipedia.org/wiki/Bicubic_interpolation
+        .. [bci_wiki] https://en.wikipedia.org/wiki/Bicubic_interpolation
     """
 
     def __init__(self, compr: Tensor, zmesh: Tensor, hs_grid=None):
@@ -33,6 +36,7 @@ class BicubInterp:
 
     def __call__(self, rr: Tensor, distances=None):
         """Calculate bicubic interpolation.
+
         Arguments:
             rr: The points to be interpolated for the first dimension and
                 second dimension.
@@ -362,7 +366,8 @@ class CubicSpline(torch.nn.Module):
         abcd: 0th, 1st, 2nd and 3rd order parameters in cubic spline.
 
     References:
-        .. [wiki] https://en.wikipedia.org/wiki/Spline_(mathematics)
+        .. [csi_wiki] https://en.wikipedia.org/wiki/Spline_(mathematics)
+
     Examples:
         >>> import tbmalt.common.maths.interpolation as interp
         >>> import torch

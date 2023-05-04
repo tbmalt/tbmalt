@@ -433,7 +433,7 @@ class Dftb2(Dftb1):
         core_hamiltonian: first order core Hamiltonian matrix as built by the
             `h_feed` entity.
         gamma: the gamma matrix, this is constructed via the specified scheme
-            and uses the Hubbard-U values produced by the `u_feed`
+            and uses the Hubbard-U values produced by the `u_feed`.
         invr: the 1/R matrix.
         hamiltonian: second order Hamiltonian matrix as produced via the SCC
             cycle.
@@ -482,7 +482,7 @@ class Dftb2(Dftb1):
 
     @property
     def hamiltonian(self):
-        """Second order Hamiltonian matrix"""
+        """Second order Hamiltonian matrix as produced via the SCC cycle"""
         return self._hamiltonian
 
     @hamiltonian.setter
@@ -491,7 +491,7 @@ class Dftb2(Dftb1):
 
     @property
     def core_hamiltonian(self):
-        """Core Hamiltonian matrix"""
+        """First order core Hamiltonian matrix as built by the `h_feed` entity"""
         if self._core_hamiltonian is None:
             if requires_args(self.h_feed.matrix):
                 self._core_hamiltonian = call_with_required_args(self.h_feed.matrix, self)
@@ -524,7 +524,7 @@ class Dftb2(Dftb1):
 
     @property
     def gamma(self):
-        """Gamma matrix"""
+        """Gamma matrix as constructed using the `u_feed`"""
         if self._gamma is None:
             self._gamma = build_gamma_matrix(
                 self.geometry, self.basis, self.invr,
@@ -542,9 +542,10 @@ class Dftb2(Dftb1):
         Invoking this will trigger the execution of the self-consistent-charge
         density functional tight binding theory calculation.
 
-        Args:
+        Arguments:
             cache: This stores any information which can be used to boot-strap
                 the calculation. Currently supported values are:
+
                     - "q_initial": initial starting guess for the SCC cycle.
 
         Returns:
@@ -777,46 +778,3 @@ class Dftb2(Dftb1):
         self.rho = None
         self.eig_values = None
         self.eig_vectors = None
-
-
-if __name__ == '__main__':
-    from tbmalt.physics.dftb.feeds import ScipySkFeed
-    from tbmalt import Basis, Geometry
-    torch.set_default_dtype(torch.float64)
-    torch.set_printoptions(15)
-    from ase.build import molecule
-
-    geom = Geometry.from_ase_atoms(molecule('CH4'))
-    basis = Basis(geom.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
-
-    path = '../../../examples/example_01/example_dftb_parameters.h5'
-    h_feed = ScipySkFeed.from_database(path, [1, 6, 8], 'hamiltonian')
-    s_feed = ScipySkFeed.from_database(path, [1, 6, 8], 'overlap')
-
-    o_feed = SkfOccupationFeed.from_database(path, [1, 6, 8])
-
-    dftb = Dftb1(h_feed, s_feed, o_feed, filling_temp=0.0036749324)
-    dftb(geom, basis)
-
-    # DFTB2
-    from tbmalt.physics.dftb.feeds import SkFeed, HubbardFeed
-    h_feed = SkFeed.from_database(path, [1, 6, 8], 'hamiltonian')
-    s_feed = SkFeed.from_database(path, [1, 6, 8], 'overlap')
-
-    o_feed = SkfOccupationFeed.from_database(path, [1, 6, 8])
-    u_feed = HubbardFeed.from_database(path, [1, 6, 8])
-
-    ch4 = torch.tensor([4.30537894059011, 0.92365526485247, 0.92365526485247,
-                        0.92365526485247, 0.92365526485247])
-    h2o = torch.tensor([6.58558984371061, 0.70720507814469, 0.70720507814469])
-
-    geos = Geometry.from_ase_atoms(molecule('CH3O'))
-    geob = Geometry.from_ase_atoms([
-        molecule('H2O'), molecule('CH4'), molecule('CH3O'), molecule('OCHCHO'),
-        molecule('CH3CHO'), molecule('CH3CH2OCH3'), molecule('bicyclobutane')])
-    basiss = Basis(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1], 8: [0, 1]})
-    basisb = Basis(geob.atomic_numbers, shell_dict={1: [0], 6: [0, 1], 8: [0, 1]})
-
-    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
-    dftb2 = Dftb2(h_feed, s_feed, o_feed, u_feed, filling_temp=0.0036749324, mix_params=mix_params)
-    dftb2(geos, basiss)

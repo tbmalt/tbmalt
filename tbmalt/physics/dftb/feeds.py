@@ -736,22 +736,26 @@ class SkFeed(IntegralFeed):
     def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
                geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
         r"""Compute atomic interaction blocks using SK-integral tables.
-          Returns the atomic blocks associated with the atoms in ``atomic_idx_1``
-          interacting with those in ``atomic_idx_2`` splines and Slater-Koster
-          transformations. This is the base method used in DFTB calculations.
-          Note that The № of interaction blocks returned will be equal to the
-          length of the two index lists; i.e. *not* one for every combination.
-          Arguments:
-              atomic_idx_1: Indices of the 1'st atom associated with each
+
+        Returns the atomic blocks associated with the atoms in ``atomic_idx_1``
+        interacting with those in ``atomic_idx_2`` splines and Slater-Koster
+        transformations. This is the base method used in DFTB calculations.
+        Note that The № of interaction blocks returned will be equal to the
+        length of the two index lists; i.e. *not* one for every combination.
+
+        Arguments:
+            atomic_idx_1: Indices of the 1'st atom associated with each
                 desired interaction block.
-              atomic_idx_2: Indices of the 2'nd atom associated with each
-                  desired interaction block.
-              geometry: The systems to which the atomic indices relate.
-              basis: Orbital information associated with said systems.
-          Returns:
-              blocks: Requested atomic interaction sub-blocks.
-          Warnings:
-              This is not backpropagatable.
+            atomic_idx_2: Indices of the 2'nd atom associated with each
+                desired interaction block.
+            geometry: The systems to which the atomic indices relate.
+            basis: Orbital information associated with said systems.
+
+        Returns:
+            blocks: Requested atomic interaction sub-blocks.
+
+        Warnings:
+            This is not backpropagatable.
         """
         # Atomic index arrays must be numpy arrays
         atomic_idx_1 = _enforce_numpy(atomic_idx_1)
