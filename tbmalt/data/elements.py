@@ -24,6 +24,11 @@ from typing import List, Dict
 import torch
 Tensor = torch.Tensor
 
+
+# Highest atomic number the project can deal with. Currently this is only used
+# by the `Basis` class.
+MAX_ATOMIC_NUMBER = 120
+
 # Chemical symbols of the elements. Neutronium is included to ensure the index
 # matches the atomic number and to assist with batching behaviour.
 chemical_symbols: List[str] = [
