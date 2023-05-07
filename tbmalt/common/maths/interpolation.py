@@ -17,9 +17,26 @@ class BicubInterp:
         compr: Grid points for interpolation, 1D Tensor.
         zmesh: 2D, 3D or 4D Tensor, 2D is for single integral with various
             compression radii, 3D is for multi integrals.
+        hs_grid: Distances at which the ``hamiltonian`` & ``overlap``
+            elements were evaluated.
+
+    Examples:
+        >>> import matplotlib.pyplot as plt
+        >>> import torch
+        >>> x = torch.arange(0., 5., 0.25)
+        >>> y = torch.arange(0., 5., 0.25)
+        >>> xx, yy = torch.meshgrid(x, y)
+        >>> z = torch.sin(xx) + torch.cos(yy)
+        >>> bi_interp = BicubInterp(x, z)
+        >>> xnew = torch.arange(0., 5., 1e-2)
+        >>> ynew = torch.arange(0., 5., 1e-2)
+        >>> znew = bi_interp(torch.stack([xnew, ynew]).T)
+        >>> plt.plot(x, z.diagonal(), 'ro-', xnew, znew, 'b-')
+        >>> plt.show()
 
     References:
         .. [wiki] https://en.wikipedia.org/wiki/Bicubic_interpolation
+
     """
 
     def __init__(self, compr: Tensor, zmesh: Tensor, hs_grid=None):
@@ -43,13 +60,18 @@ class BicubInterp:
     def __call__(self, rr: Tensor, distances=None):
         """Calculate bicubic interpolation.
 
+        If distances is not None, the polynomial interpolation will be
+        used to interpolate distances from ``hamiltonian`` & ``overlap``.
+        Then the bicubic interpolation will be used to interpolate rr
+        from the interpolated ``hamiltonian`` & ``overlap`` values.
+
         Arguments:
             rr: The points to be interpolated for the first dimension and
                 second dimension.
-            distances: interpolation points.
+            distances: Distances between atoms.
 
         Returns:
-            ???
+            znew: Interpolation values with given rr, or rr and distances.
 
         """
         if self.hs_grid is not None:
@@ -65,7 +87,7 @@ class BicubInterp:
 
             ski = PolyInterpU(self.hs_grid, self.zmesh)
             zmesh = ski(distances).permute(0, -2, -1, 1)
-        elif self.zmesh.dim() == 2:
+        elif self.zmesh.dim() == 2 or self.zmesh.dim() == 3:
             zmesh = self.zmesh.repeat(rr.shape[0], 1, 1)
         else:
             raise ValueError("Incompatible z-mesh dimension")
@@ -97,12 +119,12 @@ class BicubInterp:
         pdim = [2, 0, 1] if fmat.dim() == 3 else [2, 3, 0, 1]
         a_mat = torch.matmul(torch.matmul(coeff, fmat.permute(pdim)), coeff_)
 
-        return torch.stack([torch.matmul(torch.matmul(
+        znew = torch.stack([torch.matmul(torch.matmul(
             xmat[:, i, 0], a_mat[i]), xmat[:, i, 1]) for i in range(self.batch)])
+        return znew
 
     def _get_indices(self):
         """Get indices and repeat indices."""
-
         # Note that this function assigns to _nx0, _nind, _nx1, _nx_1, & _nx2
         self._nx0 = torch.searchsorted(self.compr, self.xi.detach()) - 1
 
