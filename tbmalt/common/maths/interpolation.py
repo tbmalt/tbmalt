@@ -57,6 +57,10 @@ class BicubInterp:
         self._nx0, self._nx1, self._nx2 = None, None, None
         self._nind, self._nx_1 = None, None
 
+        # Device type of the tensor in this class
+        self._device = compr.device
+
+
     def __call__(self, rr: Tensor, distances=None):
         """Calculate bicubic interpolation.
 
@@ -93,9 +97,11 @@ class BicubInterp:
             raise ValueError("Incompatible z-mesh dimension")
 
         coeff = torch.tensor([[1., 0., 0., 0.], [0., 0., 1., 0.],
-                              [-3., 3., -2., -1.], [2., -2., 1., 1.]])
+                              [-3., 3., -2., -1.], [2., -2., 1., 1.]],
+                              device=self._device)
         coeff_ = torch.tensor([[1., 0., -3., 2.], [0., 0., 3., -2.],
-                               [0., 1., -2., 1.], [0., 0., -1., 1.]])
+                               [0., 1., -2., 1.], [0., 0., -1., 1.]],
+                               device=self._device)
 
         # get the nearest grid points, 1st and second neighbour indices of xi
         self._get_indices()

@@ -89,7 +89,7 @@ def test_bicubinterp_single(device):
     # 1. choose the distance 7.0 Bohr
     bi_interp2 = BicubInterp(radii.to(device), bi_data[1].to(device))
     data21 = bi_interp2(torch.tensor([3.75, 3.75], device=device))
-    assert torch.abs(torch.tensor([-0.00164882038419])
+    assert torch.abs(torch.tensor([-0.00164882038419], device=device)
                      - data21).lt(1e-4), 'tolerance error'
 
     data22 = bi_interp2(torch.tensor([7.0, 7.0], device=device))
