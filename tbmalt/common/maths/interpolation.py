@@ -434,7 +434,7 @@ class CubicSpline(torch.nn.Module):
         abcd: 0th, 1st, 2nd and 3rd order parameters in cubic spline.
 
     References:
-        .. [wiki] https://en.wikipedia.org/wiki/Spline_(mathematics)
+        .. [csi_wiki] https://en.wikipedia.org/wiki/Spline_(mathematics)
 
     Examples:
         >>> import tbmalt.common.maths.interpolation as interp

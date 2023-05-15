@@ -58,14 +58,22 @@ templates_path = ['_templates']
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
-exclude_patterns = ['source/_autosummary/*test*']
+exclude_patterns = ['source/_autosummary/*test*', 'source/_autosummary/*xtb*']
 
 autodoc_mock_imports = [
-    'tbmalt.tests'
+    'tbmalt.tests',
+    'torch',
+    'pydantic',
+    'tbmalt.io.xtb',
+    'tbmalt.physics.xtb',
 ]
 
 autosummary_mock_imports = [
     'tbmalt.tests',
+    'torch',
+    'pydantic',
+    'tbmalt.io.xtb',
+    'tbmalt.physics.xtb',
 ]
 
 # ----------- Autosummary Setup ----------- #
