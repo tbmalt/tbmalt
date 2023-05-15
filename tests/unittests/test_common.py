@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests associated with `tbmalt.common.__init__`."""
 import numpy as np
+import pytest
 import torch
 from tests.test_utils import fix_seed
 from tbmalt.common import split_by_size
@@ -31,3 +32,12 @@ def test_split_by_size(device):
         check_1 = all([torch.allclose(i, j) for i, j in zip(prd, ref)])
 
         assert check_1, 'Tensor split operation failed'
+
+        # Check that the returns are on the correct device
+        check_2 = all([i.device == device for i in prd])
+
+        assert check_2, f'Device persistence check failed'
+
+    # Check 3: Ensure assert errors are raised for invalid chunk sizes
+    with pytest.raises(AssertionError, match='Sum of split sizes fails*'):
+        split_by_size(torch.tensor([1, 1, 1, 1]), [1])
