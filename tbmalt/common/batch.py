@@ -30,7 +30,7 @@ def pack(tensors: Sliceable, axis: int = 0,
             for the last axis, etc. This will be a new dimension. [DEFAULT=0]
         value: The value with which the tensor is to be padded. [DEFAULT=0]
         size: Size of each dimension to which tensors should be padded. This
-            to the largest size encountered along each dimension.
+            defaults to the largest size encountered along each dimension.
         return_mask: If True, a mask identifying the padding values is
             returned. [DEFAULT=False]
 
@@ -43,10 +43,10 @@ def pack(tensors: Sliceable, axis: int = 0,
     Notes:
         ``packed_tensors`` maintains the same order as ``tensors``. This
         is faster & more flexible than the internal pytorch pack & pad
-        functions (at this particularly task).
+        functions (at this particular task).
 
-        If a ``tensors`` is a `torch.tensor` it will be immedatly returned.
-        This helps with batch agnostic programming.
+        If ``tensors`` is a `torch.tensor` it will be immedatly returned. This
+        helps with batch agnostic programming.
 
     Examples:
         Multiple tensors can be packed into a single tensor like so:
@@ -136,7 +136,8 @@ def pargsort(tensor: Tensor, mask: Optional[bool_like] = None, dim: int = -1
 
     Returns the indices that sorts the elements of ``tensor`` along ``dim`` in
     ascending order by value while ensuring padding values are shuffled to the
-    end of the dimension.
+    end of the dimension. This is just a batch capable implementation of the
+    `torch.argsort` function.
 
     Arguments:
         tensor: the input tensor.
@@ -149,6 +150,34 @@ def pargsort(tensor: Tensor, mask: Optional[bool_like] = None, dim: int = -1
 
     Notes:
         This will redirect to `torch.argsort` if no ``mask`` is supplied.
+
+    Examples:
+
+        >>> # Packed array with a padding value of "99"
+        >>> array = torch.tensor([
+        >>>     [1, 99, 99, 99],
+        >>>     [3,  2, 99, 99],
+        >>>     [6,  5,  4, 99],
+        >>>     [10, 9,  8,  7]
+        >>>     ])
+        >>>
+        >>> # Create a mask that identifies real and padding values
+        >>> mask = array != 99
+        >>> # Get the sort indices
+        >>> sort_indices = pargsort(array, mask)
+        >>> print(sort_indices)
+        tensor([[0, 1, 2, 3],
+                [1, 0, 2, 3],
+                [2, 1, 0, 3],
+                [3, 2, 1, 0]])
+        >>>
+        >>> # Use them to sort the array
+        >>> array_sorted = array.gather(-1, sort_indices)
+        >>> print(array_sorted)
+        tensor([[ 1, 99, 99, 99],
+                [ 2,  3, 99, 99],
+                [ 4,  5,  6, 99],
+                [ 7,  8,  9, 10]])
     """
     if mask is None:
         return torch.argsort(tensor, dim=dim)
@@ -168,11 +197,12 @@ def psort(tensor: Tensor, mask: Optional[bool_like] = None, dim: int = -1
 
     Sorts the elements of ``tensor`` along ``dim`` in ascending order by value
     while ensuring padding values are shuffled to the end of the dimension.
+    This is just a batch compatible implimentaiton of the `torch.sort` method.
 
     Arguments:
         tensor: the input tensor.
         mask: a boolean tensor which is True & False for "real" & padding
-            values restively. [DEFAULT=None]
+            values respectively. [DEFAULT=None]
         dim: the dimension to sort along. [DEFAULT=-1]
 
     Returns:
@@ -182,6 +212,26 @@ def psort(tensor: Tensor, mask: Optional[bool_like] = None, dim: int = -1
 
     Notes:
         This will redirect to `torch.sort` if no ``mask`` is supplied.
+
+    Examples:
+
+        >>> # Packed array with a padding value of "99"
+        >>> array = torch.tensor([
+        >>>     [1, 99, 99, 99],
+        >>>     [3,  2, 99, 99],
+        >>>     [6,  5,  4, 99],
+        >>>     [10, 9,  8,  7]
+        >>>     ])
+        >>>
+        >>> # Create a mask that identifies real and padding values
+        >>> mask = array != 99
+        >>> # Sort the array
+        >>> array_sorted = psort(array, mask)
+        >>> print(array_sorted)
+        tensor([[ 1, 99, 99, 99],
+                [ 2,  3, 99, 99],
+                [ 4,  5,  6, 99],
+                [ 7,  8,  9, 10]])
     """
     if mask is None:
         return torch.sort(tensor, dim=dim)
@@ -194,7 +244,7 @@ def merge(tensors: Sliceable, value: Any = 0, axis: int = 0) -> Tensor:
     """Merge two or more packed tensors into a single packed tensor.
 
     Arguments:
-        tensors: Packed tensors which are to be merged.
+        tensors: Packed tensors that are to be merged.
         value: Value with which the tensor were/are to be padded. [DEFAULT=0]
         axis: Axis along which ``tensors`` are to be stacked. [DEFAULT=0]
 
@@ -204,7 +254,20 @@ def merge(tensors: Sliceable, value: Any = 0, axis: int = 0) -> Tensor:
     Warnings:
         Care must be taken to ensure the correct padding value is specified as
         erroneous behaviour may otherwise ensue. As the correct padding value
-        cannot be reliably detected in situ it defaults to zero.
+        cannot be reliably detected in situ it will default to zero.
+
+    Examples:
+        >>> # Create a pair of packed tensors
+        >>> array_1 = torch.tensor([[1, 99], [3, 2]])
+        >>> array_2 = torch.tensor([[6,  5,  4, 99], [10, 9,  8,  7]])
+        >>>
+        >>> # Merge them into a single array
+        >>> merged_array = merge([array_1, array_2], value=99)
+        >>> print(merged_array)
+        tensor([[ 1, 99, 99, 99],
+                [ 3,  2, 99, 99],
+                [ 6,  5,  4, 99],
+                [10,  9,  8,  7]])
     """
 
     # Merging is performed along the 0'th axis internally. If a non-zero axis
@@ -229,7 +292,7 @@ def merge(tensors: Sliceable, value: Any = 0, axis: int = 0) -> Tensor:
 
 def deflate(tensor: Tensor, value: Any = 0, axis: Optional[int] = None
             ) -> Tensor:
-    """Shrinks ``tensor`` to remove extraneous, trailing padding values.
+    """Shrinks ``tensor`` to remove extraneous trailing padding values.
 
     Returns a narrowed view of ``tensor`` containing no superfluous trailing
     padding values. For single systems this is equivalent to removing padding.
@@ -242,7 +305,7 @@ def deflate(tensor: Tensor, value: Any = 0, axis: Optional[int] = None
     Arguments:
         tensor: Tensor to be deflated.
         value: Identity of padding value. [DEFAULT=0]
-        axis: Specifies which, if any, an axis exempt from deflation.
+        axis: Specifies which, if any, axis is exempt from deflation.
             [DEFAULT=None]
 
     Returns:
@@ -282,8 +345,8 @@ def deflate(tensor: Tensor, value: Any = 0, axis: Optional[int] = None
 
     Warnings:
         Under certain circumstances "real" elements may be misidentified as
-        padding values if they are equivalent. However, such complication can
-        be mitigated though the selection of an appropriate padding value.
+        padding values if they are equivalent. However, such a complication
+        can be mitigated though the selection of an appropriate padding value.
 
     Raises:
          ValueError: If ``tensor`` is 0 dimensional, or 1 dimensional when
@@ -332,18 +395,53 @@ def unpack(tensor: Tensor, value: Any = 0, axis: int = 0) -> Tuple[Tensor]:
 
     Returns:
         tensors: Tuple of constituent tensors.
+
+    Examples:
+        
+        >>> # Example packed tensor (padded with "99")
+        >>> packed_array = torch.tensor([
+        >>>     [1, 99, 99, 99],
+        >>>     [3,  2, 99, 99],
+        >>>     [6,  5,  4, 99],
+        >>>     [10, 9,  8,  7]
+        >>> ])
+        >>> # Unpack the array into its component sub-arrays
+        >>> unpacked_arrays = unpack(packed_array, value=99)
+        >>> print(unpacked_arrays)
+        # (tensor([1]), tensor([3, 2]),
+        #  tensor([6, 5, 4]), tensor([10,  9,  8,  7]))
+
     """
     return tuple(deflate(i, value) for i in tensor.movedim(axis, 0))
 
 
-def prepeat_interleave(tensor, repeats, padding=0):
-    """Batch operable implementation of `torch.repeat_interleave`
+def prepeat_interleave(tensor: Tensor, repeats: Tensor, value=0):
+    """Batch operable implementation of `torch.repeat_interleave`.
 
-    Notes:
-        This is a work in progress and leaves much to be desired.
+    Repeats elements of a packed tensor.
+
+    Arguments:
+        tensor: the tensor whose elements are to be repeated.
+        repeats: integers specifying the number of time each element should be
+            repeated. This should be the same size as `tensor`.
+        value: the padding value used when packing the tensor.
+
+    Examples:
+
+        >>> # A packed array
+        >>> array = torch.tensor([[1.1, 0], [2.2, 3.3]])
+        >>> # Number of times each element should be repeated
+        >>> repeats = torch.tensor([[1, 0], [2, 3]])
+        >>> # Perform the repeat
+        >>> repeated = prepeat_interleave(array, repeats, 0)
+        >>> print(repeated)
+        # tensor([[1.1000, 0.0000, 0.0000, 0.0000, 0.0000],
+        #         [2.2000, 2.2000, 3.3000, 3.3000, 3.3000]])
+
     """
     if tensor.ndim <= 1:
         return tensor.repeat_interleave(repeats)
     else:
+        assert tensor.shape == repeats.shape
         return pack([i.repeat_interleave(j) for i, j in
-                     zip(tensor, repeats)], value=-padding)
+                     zip(tensor, repeats)], value=value)
