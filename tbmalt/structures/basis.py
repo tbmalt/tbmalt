@@ -12,7 +12,7 @@ import torch
 from torch import Tensor, Size, arange
 from tbmalt.common.batch import pack, merge, deflate
 from tbmalt.common import split_by_size
-from tbmalt.common.constants import MAX_ATOMIC_NUMBER
+from tbmalt.data.elements import MAX_ATOMIC_NUMBER
 
 
 Form = Literal['full', 'shell', 'atomic']

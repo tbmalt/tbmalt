@@ -20,7 +20,7 @@ class TbmaltError(Exception):
 
 
 class ConvergenceError(TbmaltError):
-    """Raised whenever an failure to converge is encountered.
+    """Raised whenever a failure to converge is encountered.
 
     This is raise wherever a failure to converge is encountered. Most commonly
     during the SCC/SCF cycles or the fermi-level search.
