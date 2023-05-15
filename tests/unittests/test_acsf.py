@@ -7,6 +7,8 @@ Created on Fri Jul  2 16:10:30 2021
 """
 from typing import Union, Optional, Literal
 import torch
+import pytest
+import pkg_resources
 from dscribe.descriptors import ACSF
 from ase.build import molecule
 from torch import Tensor
@@ -15,6 +17,12 @@ from tbmalt import Geometry, Basis
 from tbmalt.data.elements import chemical_symbols
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
+
+dscribe_version = pkg_resources.get_distribution('dscribe').version
+
+if dscribe_version == "1.2.2":
+    pytestmark = pytest.mark.skip(
+        "Skipping tests: Deprecated dscribe package detected")
 
 # Set some global parameters which only used here
 torch.set_default_dtype(torch.float64)
