@@ -3,11 +3,12 @@
 import warnings
 from typing import Union, Optional, Literal
 import torch
-from torch import Tensor
+from torch import Tensor, Size
 import numpy as np
-from tbmalt import Basis
+from tbmalt import Geometry
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
+from tbmalt.structures.basis import _rows_to_NxNx2
 
 
 class Acsf:
@@ -19,8 +20,7 @@ class Acsf:
 
     Arguments:
         geometry: Geometry instance.
-        basis: Object with orbital information.
-        shell_dict: Dictionary with calculated orbital quantum number.
+        n_atoms (Tensor): atoms count.
         g1_params: Parameters for G1 function.
         g2_params: Parameters for G2 function.
         g3_params: Parameters for G3 function.
@@ -33,6 +33,20 @@ class Acsf:
             all atoms, else return G values with the first dimension loop over
             all geometries.
 
+    Examples:
+        >>> import torch
+        >>> from tbmalt.ml.acsf import Acsf
+        >>> from tbmalt import Geometry
+        >>> from ase.build import molecule
+        >>> ch4 = molecule('CH4')
+        >>> rcut = 6.0
+        >>> geo = Geometry.from_ase_atoms(ch4)
+        >>> species = geo.chemical_symbols
+        >>> acsf = Acsf(geo, g1_params=rcut, g4_params=torch.tensor(
+        >>>    [[0.02, 1.0, -1.0]]), element_resolve=True, atom_like=False)
+        >>> g = acsf()
+
+
     References:
         .. [ACSF] Jörg Behler. Atom-centered symmetry functions for constructing
                   high-dimensional neural network potentials. J. Chem. Phys.,
@@ -40,8 +54,7 @@ class Acsf:
 
     """
 
-    def __init__(self, geometry: object,
-                 basis: Basis, shell_dict,
+    def __init__(self, geometry: Geometry,
                  g1_params: Union[float, Tensor] = None,
                  g2_params: Optional[Tensor] = None,
                  g3_params: Optional[Tensor] = None,
@@ -52,6 +65,7 @@ class Acsf:
                  atom_like: Optional[bool] = True):
         self.geometry = geometry
         self.unit = unit
+        self.n_atoms: Tensor = self.geometry.atomic_numbers.count_nonzero(-1)
 
         # ACSF parameters
         self.g1_params = g1_params * length_units[unit]  # in bohr
@@ -69,15 +83,12 @@ class Acsf:
             self.geometry.distances.unsqueeze(0)
         self.unique_atomic_numbers = geometry.unique_atomic_numbers()
 
-        # Check Basis
-        self.basis = basis if basis.atomic_numbers.dim() == 2 else Basis(
-            self.atomic_numbers, shell_dict)
-        self.shell_dict = shell_dict
+        # build atomic number pair
+        self.anp = self._atomic_number_matrix(form='atomic')
 
         # build orbital like atomic number matrix, expand size from
         # [n_batch, max_atom] to flatten [n_batch * max_atom, max_atom]
-        ano = self.basis.atomic_number_matrix(form='atomic')[..., 1]
-        self.ano = ano.view(-1, ano.shape[-1])
+        self.ano = self.anp[..., 1].view(-1, self.anp.shape[-2])
 
         # calculate G1, which is cutoff function
         self.fc, self.g1 = self.g1_func(self.g1_params)
@@ -87,44 +98,16 @@ class Acsf:
         self._d_vec = d_vect.unsqueeze(0) if d_vect.dim() == 3 else d_vect
         self._dist = self.distances / length_units['angstrom']
 
-    def _update_geo(self, geometry: object):
-        """Update geometric information if geometry object changes."""
-        self.geometry = geometry
-        an = self.geometry.atomic_numbers
-        _old_an = self.atomic_numbers.clone()
-        self.atomic_numbers = an if an.dim() == 2 else an.unsqueeze(0)
-        self.distances = self.geometry.distances if an.dim() == 2 else \
-            self.geometry.distances.unsqueeze(0)
+    def _atomic_number_matrix(self, form):
+        m1 = self.n_atoms.max()
+        n = Size([len(self.atomic_numbers)])
+        matrix_shape: Size = n + Size([m1, m1])
 
-        self.unique_atomic_numbers = geometry.unique_atomic_numbers()
+        return _rows_to_NxNx2(self.atomic_numbers, matrix_shape, 0)
 
-        if _old_an.shape != self.atomic_numbers.shape:
-            self.extra_params_matrix = self._build_extra_params_matrix()
-            self.basis = Basis(self.atomic_numbers, self.shell_dict)
-            ano = self.basis.atomic_number_matrix(form='atomic')[..., 1]
-            self.ano = ano.view(-1, ano.shape[-1])
-
-        elif not (_old_an == self.atomic_numbers).all():
-            self.extra_params_matrix = self._build_extra_params_matrix()
-            self.basis = Basis(self.atomic_numbers, self.shell_dict)
-            ano = self.basis.atomic_number_matrix(form='atomic')[..., 1]
-            self.ano = ano.view(-1, ano.shape[-1])
-
-        # calculate G1, which is cutoff function
-        self.fc, self.g1 = self.g1_func(self.g1_params)
-        if self.rcut_extra is not None:
-            self.fc_extra, _ = self.g1_func(self.rcut_extra)
-
-        # transfer all geometric parameters to angstrom unit
-        d_vect = self.geometry.distance_vectors / length_units[self.unit]
-        self._d_vec = d_vect.unsqueeze(0) if d_vect.dim() == 3 else d_vect
-        self._dist = self.distances / length_units[self.unit]
-
-    def __call__(self, geometry: object = None):
+    def __call__(self):
         """Calculate G values with input parameters."""
         assert self.g1_params is not None, 'g1_params parameter is None'
-        if geometry is not None:
-            self._update_geo(geometry)
 
         _g = self.g1.clone()
 
@@ -152,8 +135,8 @@ class Acsf:
         _g1, self.mask = self._fc(self.distances, g1_params)
         g1 = self._element_wise(_g1)
 
-        # oprions of return type, if element_resolve, each atom specie will be
-        # calculated seperatedly, else return the sum
+        # options of return type, if element_resolve, each atom specie will
+        # be calculated separately, else return the sum
         return (_g1, g1) if self.element_resolve else (_g1, g1.sum(-1))
 
     def g2_func(self, g, g2):
@@ -267,21 +250,23 @@ class Acsf:
             for j, jan in enumerate(self.unique_atomic_numbers[i:]):
                 _mask.append(torch.tensor([ian, jan]))
         uniq_atom_pair = pack(_mask)
-        anm = self.basis.atomic_number_matrix('atomic')
+        # anm = self.basis.atomic_number_matrix('atomic')
 
         g_res = []
         for iu in uniq_atom_pair:
             _ig = torch.zeros(*self.atomic_numbers.shape)
-            _im = torch.nonzero((anm == iu).all(dim=-1))
+            _im = torch.nonzero((self.anp == iu).all(dim=-1))
 
             # If atom pair is not homo, we have to consider inverse iu
             if iu[0] != iu[1]:
-                _im = torch.cat([_im, torch.nonzero((anm == iu.flip(0)).all(dim=-1))])
+                _im = torch.cat([_im, torch.nonzero(
+                    (self.anp == iu.flip(0)).all(dim=-1))])
                 _im = _im[_im[..., 0].sort()[1]]
 
             # Select last two dims which equals to atom-pairsin _im
             g_im = g[_im[..., 0], :, _im[..., 1], _im[..., 2]]
-            _imask, count = torch.unique_consecutive(_im[..., 0], return_counts=True)
+            _imask, count = torch.unique_consecutive(
+                _im[..., 0], return_counts=True)
 
             # If there is such atom pairs
             if count.shape[0] > 0:
