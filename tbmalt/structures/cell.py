@@ -1,26 +1,27 @@
 # -*- coding: utf-8 -*-
 """A container to hold data associated with periodic boundary conditions.
 
-This moudle provides the 'Cell' data structure class and its associated
-code. The 'Cell' class is intended to hold information of periodic
-boundary conditions. Along with 'Geometry' module, a periodic
+This module provides the `Cell` data structure class and its associated
+code. The `Cell` class is intended to hold information of periodic
+boundary conditions. Along with `Geometry` module, a periodic
 chemical system can be described.
 """
-import torch
+from abc import ABC
 from typing import Union, List, Optional, Type
+import torch
+import numpy as np
 from ase.lattice.bravais import Lattice
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
-from abc import ABC
-import numpy as np
+
 Tensor = torch.Tensor
 
 
 class Cell(ABC):
-    """"ABC for objects responsible for supplying geometric information
+    """ABC for objects responsible for supplying geometric information
     specially on periodic systems.
 
-    Subclasses of the abstrct base class provides lattice vectors to describe
+    Subclasses of the abstract base class provides lattice vectors to describe
     the periodic boundary condition. Properties of the lattice vectors, e.g.
     lengths and angles, can be returned. Both single and batch system(s) can
     be represented in this class.
@@ -118,7 +119,7 @@ class Pbc(Cell):
             # Type of pbc
             pbc = _dim_pe
         else:  # -> batch
-            # Mixing of different pbcs
+            # Mixing of different pbc
             if not torch.all(torch.tensor([isd == _sum_dim[0]
                                            for isd in _sum_dim])):
                 raise NotImplementedError(
@@ -135,6 +136,7 @@ class Pbc(Cell):
 
         return pbc
 
+    @staticmethod
     def frac_to_cartesian(cell: Tensor, positions: Tensor) -> Tensor:
         """Transfer fractional coordinates to cartesian coordinates."""
         # Whether fraction coordinates in the range [0, 1)
@@ -151,16 +153,19 @@ class Pbc(Cell):
 
         return positions
 
+    @staticmethod
     def cell_unit_transfer(cell: Tensor, units: str) -> Tensor:
         """Transfer the unit of lattice vectors to bohr."""
         return cell * length_units[units]
 
+    @staticmethod
     def get_cell_lengths(cell: Tensor) -> Tensor:
         """Get the length of each lattice vector."""
         return torch.linalg.norm(cell, dim=-1)
 
+    @staticmethod
     def get_cell_angles(cell: Tensor) -> Tensor:
-        """Get the angles alpha, beta and gamma of lattice vectors."""
+        """Get the angles' alpha, beta and gamma of lattice vectors."""
         _cos = torch.nn.CosineSimilarity(dim=-1)
         cosine = torch.stack([_cos(cell[..., 1], cell[..., 2]),
                               _cos(cell[..., 0], cell[..., 2]),

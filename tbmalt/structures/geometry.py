@@ -41,7 +41,7 @@ class Geometry:
 
     Attributes:
         atomic_numbers: Atomic numbers of the atoms.
-        positions : Coordinates of the atoms.
+        positions: Coordinates of the atoms.
         n_atoms: Number of atoms in the system.
         cells: Lattice vectors of the periodic systems.
         periodic: Periodic object to store related information.

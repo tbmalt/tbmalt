@@ -3,13 +3,14 @@
 
 This module implement cell translation for 1D & 2D & 3D periodic
 boundary conditions. Distance matrix and position vectors for pbc
-will be constrcuted.
+will be constructed.
 """
+from typing import Union, Tuple, Optional
 import torch
 import numpy as np
-from typing import Union, Tuple, Optional
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
+
 Tensor = torch.Tensor
 
 
@@ -18,23 +19,25 @@ class Periodic:
     periodic boundary condition.
 
     Arguments:
-        position: Coordinates of the atoms in the central cell.
-        natom: Number of atoms in the central cell.
+        positions: Coordinates of the atoms in the central cell.
+        n_atoms: Number of atoms in the central cell.
         latvec: Lattice vector, with Bohr as default unit.
         cutoff: Interaction cutoff distance for reading SK table, with Bohr
             as default unit.
 
     Keyword Arguments:
-        distance_extention: Extention of cutoff in SK tables to smooth tails.
-        positive_extention: Extension for the positive lattice vectors.
-        negative_extention: Extension for the negative lattice vectors.
+        distance_extension: Extension of cutoff in SK tables to smooth tails.
+        positive_extension: Extension for the positive lattice vectors.
+        negative_extension: Extension for the negative lattice vectors.
 
     Attributes:
+        positions: Coordinates of the atoms in the central cell.
+        n_atoms: Number of atoms in the central cell.
         latvec: Lattice vector.
         cutoff: Global cutoff for the diatomic interactions.
         cellvec: Cell translation vectors in relative coordinates.
         rcellvec: Cell translation vectors in absolute units.
-        ncell: Number of lattice cells.
+        n_cells: Number of lattice cells.
         positions_vec: Position vector matrix between atoms in different cells.
         periodic_distances: Distance matrix between atoms in different cells.
 
@@ -43,18 +46,26 @@ class Periodic:
         will be padded with large numbers. Mixing of periodic & non-periodic
         systems and mixing of different types of pbc is forbidden.
 
+    Examples:
+        >>> from tbmalt import Periodic
+        >>> H2 = Periodic(torch.tensor([[0.00, 0.00, 0.00],
+                                       [0.00, 0.00, 0.79]]),
+                          torch.tensor(1), torch.eye(3) * 3, 2.0)
+        >>> print(H2.positions_vec.shape)
+        torch.Size([125, 2, 2, 3])
+
     """
 
-    def __init__(self, position: Tensor, natom: Tensor, latvec: Tensor,
+    def __init__(self, positions: Tensor, n_atoms: Tensor, latvec: Tensor,
                  cutoff: Union[Tensor, float], **kwargs):
-        self.position: Tensor = position
-        self.n_atom: Tensor = natom
+        self.positions: Tensor = positions
+        self.n_atoms: Tensor = n_atoms
         self.latvec, self.cutoff = self._check(latvec, cutoff, **kwargs)
 
         self._device = self.latvec.device
         self._dtype = self.latvec.dtype
 
-        dist_ext = kwargs.get('distance_extention', 1.0)
+        dist_ext = kwargs.get('distance_extension', 1.0)
 
         # Global cutoff for the diatomic interactions
         self.cutoff: Tensor = self.cutoff + dist_ext
@@ -63,7 +74,7 @@ class Periodic:
         self._invlatvec, self._mask_zero = self._inverse_lattice()
 
         # Cell translation
-        self.cellvec, self.rcellvec, self.ncell = (
+        self.cellvec, self.rcellvec, self.n_cells = (
             self.get_cell_translations(**kwargs))
 
         # Position vectors and distance matrix
@@ -115,23 +126,23 @@ class Periodic:
 
         dd = {'dtype': self._dtype, 'device': self._device}
 
-        # Extentions for lattice vectors
-        pos_ext = kwargs.get('positive_extention', 1)
-        neg_ext = kwargs.get('negative_extention', 1)
+        # Extensions for lattice vectors
+        pos_ext = kwargs.get('positive_extension', 1)
+        neg_ext = kwargs.get('negative_extension', 1)
 
-        # Ranges of cell translation on three dimentions
+        # Ranges of cell translation on three dimensions
         _tmp = torch.floor(self.cutoff * torch.norm(
             self._invlatvec, dim=-1).T).T
         ranges = torch.stack([-(neg_ext + _tmp), pos_ext + _tmp])
 
-        # For 1D/ 2D cell translation, non-periodic direction will be zero
+        # For 1D/2D cell translation, non-periodic direction will be zero
         ranges[torch.stack([self._mask_zero, self._mask_zero])] = 0
 
         # length of the first, second and third column in ranges
         leng = ranges[1, :].long() - ranges[0, :].long() + 1
 
         # number of cells
-        ncell = leng[..., 0] * leng[..., 1] * leng[..., 2]
+        n_cells = leng[..., 0] * leng[..., 1] * leng[..., 2]
 
         # Cell translation vectors in relative coordinates
         if not self._n_batch:  # -> single
@@ -159,42 +170,41 @@ class Periodic:
         rcellvec = (torch.matmul(self.latvec.transpose(-1, -2),
                                  cellvec)).transpose(-1, -2)
 
-        return cellvec.transpose(-1, -2), rcellvec, ncell
+        return cellvec.transpose(-1, -2), rcellvec, n_cells
 
     def _get_periodic_distance(self) -> Tuple[Tensor, Tensor]:
-        """Get position vectors and distance matirx between central cell and
-        neighbouring cells."""
+        """Get positions and distances between central and neighbouring cells."""
         # Number of atoms in central cell
-        natom = self.n_atom
+        n_atoms = self.n_atoms
 
         # Positions of atoms in all images
         positions = (self.rcellvec.unsqueeze(-2) +
-                     self.position.unsqueeze(-3))
+                     self.positions.unsqueeze(-3))
 
         # Position vectors
         positions_vec = (positions.unsqueeze(-3) -
-                         self.position.unsqueeze(-3).unsqueeze(-2))
+                         self.positions.unsqueeze(-3).unsqueeze(-2))
 
         # Distance matrix, large values will be padded for batch systems
         if not self._n_batch:  # -> single
             distance = torch.sqrt(
-                ((positions.repeat(1, natom, 1) - torch.repeat_interleave(
-                    self.position, natom, 0)) ** 2).sum(-1).reshape(
-                        -1, natom, natom))
+                ((positions.repeat(1, n_atoms, 1) - torch.repeat_interleave(
+                    self.positions, n_atoms, 0)) ** 2).sum(-1).reshape(
+                        -1, n_atoms, n_atoms))
 
         else:  # -> batch
             distance = pack([torch.sqrt(((ipos[:, :inat].repeat(1, inat, 1) -
                                           icp[:inat].repeat_interleave(inat, 0)
                                           ) ** 2).sum(-1)).reshape(-1, inat, inat)
                              for ipos, icp, inat in zip(
-                                     positions, self.position, natom)
+                                     positions, self.positions, n_atoms)
                              ], value=1e3)
 
         return positions_vec, distance
 
     def _inverse_lattice(self) -> Tuple[Tensor, Tensor]:
         """Get inverse lattice vectors."""
-        # Build a mask for zero vectors in 1D/ 2D lattice vectors
+        # Build a mask for zero vectors in 1D/2D lattice vectors
         mask_zero = self.latvec.eq(0).all(-1)
         _latvec = self.latvec + torch.diag_embed(mask_zero.type(
             self.latvec.dtype))
@@ -214,7 +224,7 @@ class Periodic:
 
     @property
     def reciprocal_lattice(self) -> Tensor:
-        """Get reciprocal lattice vectors"""
+        """Get reciprocal lattice vectors."""
         return 2 * np.pi * self._invlatvec
 
     @property
@@ -238,8 +248,7 @@ class Periodic:
 
     @property
     def neighbour_vector(self) -> Tensor:
-        """Get position vectors matirx for neighbour list within cutoff
-        distance."""
+        """Get positions for neighbour list within cutoff distance."""
         # Mask for images containing atoms within cutoff distance
         _mask = self.neighbour.any(-1).any(-1)
 
@@ -253,8 +262,7 @@ class Periodic:
 
     @property
     def neighbour_distance(self) -> Tensor:
-        """Get distance matirx for neighbour list within cutoff
-        distance."""
+        """Get distance matrix for neighbour list within cutoff distance."""
         # Mask for images containing atoms within cutoff distance
         _mask = self.neighbour.any(-1).any(-1)
 
