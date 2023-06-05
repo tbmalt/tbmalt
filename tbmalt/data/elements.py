@@ -15,7 +15,7 @@ Attributes:
     gamma_cutoff (Dict[tuple, Tensor]): Dictionary keyed by pairs of atomic
         numbers & valued by pre-calculated cutoff distances for short range
         part of gamma calculations.
-    gamma_element_list: List[int]: List of atomic numbers of the elements whose
+    gamma_element_list: (List[int]): List of atomic numbers of the elements whose
         cutoff distances for gamma calculations are available from
         pre-calculations.
 
@@ -61,7 +61,9 @@ atomic_numbers: Dict[str, int] = {sym: z for z, sym in
                                   enumerate(chemical_symbols)}
 
 # Dictionary of pre-calculated cutoff values of atom pairs for shortgamma
-# calculatoins.
+# calculations. These are used exclusively by the `gamma_exponential_pbc`
+# function; which constructs the gamma term via the exponential method when
+# operating upon periodic systems.
 gamma_cutoff: Dict[tuple, Tensor] = {
     (1, 1, 'cutoff'): torch.tensor([20.024999999999999]),
     (1, 6, 'cutoff'): torch.tensor([22.037500000000001]),
@@ -108,5 +110,5 @@ gamma_cutoff: Dict[tuple, Tensor] = {
     (79, 0, 'cutoff'): torch.tensor([1.1])}
 
 # List of atomic numbers of the elements with pre-calculated cutoff distances
-# for shortgamma calculatoins.
+# for shortgamma calculations.
 gamma_element_list: List[int] = [0, 1, 6, 8, 16, 79]

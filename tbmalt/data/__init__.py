@@ -18,7 +18,7 @@ Attributes:
     gamma_cutoff (Dict[tuple, Tensor]): Dictionary keyed by pairs of atomic
         numbers & valued by pre-calculated cutoff distances for short range
         part of gamma calculations.
-    gamma_element_list: List[int]: List of atomic numbers of the elements whose
+    gamma_element_list: (List[int]): List of atomic numbers of the elements whose
         cutoff distances for gamma calculations are available from
         pre-calculations.
 
