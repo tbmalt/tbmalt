@@ -4,6 +4,7 @@
 import torch
 import pytest
 import pkg_resources
+from packaging import version
 from dscribe.descriptors import ACSF
 from ase.build import molecule
 from tbmalt.ml.acsf import Acsf
@@ -11,11 +12,14 @@ from tbmalt import Geometry
 from tbmalt.data.elements import chemical_symbols
 from tbmalt.common.batch import pack
 
-dscribe_version = pkg_resources.get_distribution('dscribe').version
+dscribe_version = version.parse(
+    pkg_resources.get_distribution('dscribe').version)
 
-if dscribe_version == "1.2.2":
-   pytestmark = pytest.mark.skip(
-       "Skipping tests: Deprecated dscribe package detected")
+
+if dscribe_version <= version.parse("1.2.2"):
+    pytestmark = pytest.mark.skip(
+        "Skipping tests: Deprecated dscribe package detected")
+
 
 # Set some global parameters which only used here
 torch.set_default_dtype(torch.float64)
@@ -39,9 +43,9 @@ def test_single_g1(device):
     acsf = Acsf(geo, g1_params=rcut, element_resolve=True)
     acsf()
 
-    # Get reference for unittest
-    acsf_t = ACSF(species=species, r_cut=rcut)
-    acsf_t_g = torch.from_numpy(acsf_t.create(ch4)).to(device)
+    # Get reference
+    acsf_t = ACSF(rcut, species=species)
+    acsf_t_g = torch.from_numpy(acsf_t.create(ch4))
 
     assert torch.max(abs(acsf_t_g - acsf.g)) < 1E-6, text
     assert acsf.g.device == device, textd
@@ -59,7 +63,7 @@ def test_single_g1(device):
     acsfp()
 
     # Get reference
-    acsf_tp = ACSF(species=species, r_cut=rcut, periodic=True)
+    acsf_tp = ACSF(rcut, species=species, periodic=True)
     acsf_t_tp = torch.from_numpy(acsf_tp.create(ch4)).to(device)
 
     assert torch.max(abs(acsf_t_tp - acsfp.g)) < 1E-6, text
@@ -75,9 +79,10 @@ def test_batch_g1(device):
     acsf()
 
     # get reference
-    acsf_d = ACSF(species=species, r_cut=rcut)
+    acsf_d = ACSF(rcut, species=species)
     acsf_d_g1 = [torch.from_numpy(ii).to(device) for ii in
         acsf_d.create([ch4, h2o])]
+
 
     assert torch.max(abs(acsf_d_g1[0] -
                          acsf.g[: acsf_d_g1[0].shape[0]])) < 1E-6, text
@@ -102,7 +107,7 @@ def test_single_g2(device):
     acsf()
 
     # get reference
-    acsf_d = ACSF(species=species, r_cut=rcut, g2_params=[[0.5, 1.0]])
+    acsf_d = ACSF(rcut, species=species, g2_params=[[0.5, 1.0]])
     acsf_d_g = torch.from_numpy(acsf_d.create(ch4)).to(device)
 
     # element resolved True & select G2
@@ -128,7 +133,7 @@ def test_batch_g2(device):
     acsf()
 
     # get reference
-    acsf_d = ACSF(species=species, r_cut=rcut, g2_params=[[0.5, 1.0]])
+    acsf_d = ACSF(rcut, species=species, g2_params=[[0.5, 1.0]])
     acsf_d_g1 = pack([torch.from_numpy(ii) for ii in
         acsf_d.create([ch4, h2o])]).to(device)
 
@@ -148,7 +153,7 @@ def test_single_g3(device):
     acsf()
 
     # get reference
-    acsf_d = ACSF(species=species, r_cut=rcut, g3_params=[1.0])
+    acsf_d = ACSF(rcut, species=species, g3_params=[1.0])
     acsf_d = torch.from_numpy(acsf_d.create(ch4)).to(device)
 
     # switch last dimension due to the orders of atom specie difference
@@ -167,7 +172,7 @@ def test_batch_g3(device):
     g = acsf()
 
     # get reference
-    acsf_d = ACSF(species=species, r_cut=rcut, g3_params=[ 1.0])
+    acsf_d = ACSF(rcut, species=species, g3_params=[ 1.0])
     acsf_d = pack([torch.from_numpy(ii) for ii in
         acsf_d.create([ch4, h2o])]).to(device)
 
@@ -186,7 +191,7 @@ def test_single_g4(device):
         [[0.02, 1.0, -1.0]]), element_resolve=True, atom_like=False)
     g = acsf()
 
-    acsf_d = ACSF(species=species, r_cut=rcut, g4_params=[[0.02, 1.0, -1.0]])
+    acsf_d = ACSF(rcut, species=species, g4_params=[[0.02, 1.0, -1.0]])
     acsf_d_g4 = torch.from_numpy(acsf_d.create(ch4)).to(device)
 
     assert torch.max(abs(acsf_d_g4 - g)) < 1E-6, text
@@ -202,7 +207,7 @@ def test_cho_g4(device):
         [[0.02, 1.0, -1.0]]), element_resolve=True)
     g = acsf()
 
-    acsf_d = ACSF(species=species, r_cut=rcut, g4_params=[[0.02, 1.0, -1.0]])
+    acsf_d = ACSF(rcut, species=species, g4_params=[[0.02, 1.0, -1.0]])
     acsf_d_g4 = torch.from_numpy(acsf_d.create(cho)).to(device)
 
     assert torch.max(abs(
@@ -220,8 +225,7 @@ def test_batch_g4(device):
     uniq = geo.unique_atomic_numbers()
     uniq = uniq.numpy() if device == torch.device('cpu') else uniq.cpu().numpy()
 
-    acsf_d = ACSF(species=uniq, r_cut=rcut,
-                  g4_params=[[0.02, 1.0, -1.0]])
+    acsf_d = ACSF(rcut, species=uniq, g4_params=[[0.02, 1.0, -1.0]])
     acsf_d_g4 = pack([torch.from_numpy(acsf_d.create(ch4)).to(device),
                       torch.from_numpy(acsf_d.create(h2o)).to(device),
                       torch.from_numpy(acsf_d.create(cho)).to(device)])
@@ -242,7 +246,7 @@ def test_single_g5(device):
     acsf()
 
     # get reference from Dscribe
-    acsf_d = ACSF(species=species, r_cut=rcut, g5_params=[[0.02, 1.0, -1.0]])
+    acsf_d = ACSF(rcut, species=species, g5_params=[[0.02, 1.0, -1.0]])
     acsf_d_g5 = torch.from_numpy(acsf_d.create(ch4)).to(device)
 
     assert torch.max(abs(
@@ -253,6 +257,7 @@ def test_single_g5(device):
 def test_batch_g5(device):
     """Test G5 values in batch geometry."""
     rcut = 6.0
+
     geo = Geometry.from_ase_atoms([ch4, h2o, cho], device=device)
     acsf = Acsf(geo, g1_params=rcut, g5_params=torch.tensor(
         [[0.02, 1.0, -1.0]]), element_resolve=True, atom_like=False)
@@ -260,7 +265,7 @@ def test_batch_g5(device):
     uniq = geo.unique_atomic_numbers()
     uniq = uniq.numpy() if device == torch.device('cpu') else uniq.cpu().numpy()
 
-    acsf_d = ACSF(species=uniq, r_cut=rcut,
+    acsf_d = ACSF(rcut, species=uniq,
                   g5_params=[[0.02, 1.0, -1.0]])
     acsf_d_g5 = pack([torch.from_numpy(acsf_d.create(ch4)).to(device),
                       torch.from_numpy(acsf_d.create(h2o)).to(device),
@@ -269,3 +274,4 @@ def test_batch_g5(device):
     assert torch.max(abs(acsf_d_g5[..., 2:].sum(-1) -
                          g[..., 2:].sum(-1))) < 1E-6, text
     assert g.device == device, textd
+
