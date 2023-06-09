@@ -4,16 +4,17 @@
 This module calculate the Ewald summation for periodic
 boundary conditions.
 """
+from abc import ABC
+from typing import Optional, Tuple
 import torch
 import numpy as np
-from typing import Optional, Tuple
 from scipy import special
 from tbmalt import Geometry, Periodic
 from tbmalt.structures.cell import Pbc
 from tbmalt.common.batch import pack
-from abc import ABC
+from tbmalt.data.constant import euler
+
 Tensor = torch.Tensor
-_euler = 0.5772156649
 
 
 def build_coulomb_matrix(geometry: Geometry, **kwargs):
@@ -23,7 +24,7 @@ def build_coulomb_matrix(geometry: Geometry, **kwargs):
         geometry: Object for calculation, storing the data of input geometry.
 
     Keyword Arguments:
-        tol_ewald: EWald tolerance.
+        tol_ewald: Ewald tolerance.
         method: Method to obtain parameters of alpha and cutoff.
         nsearchiter: Maximum of iteration for searching alpha, maxg and maxr.
 
@@ -42,7 +43,6 @@ def build_coulomb_matrix(geometry: Geometry, **kwargs):
                 [-0.2729, -0.4778]])
 
     """
-
     # Check the type of pbc and choose corresponding subclass
     if geometry.pbc.ndim == 1:  # -> Single
         _sum_dim = geometry.pbc.sum(dim=-1)
@@ -62,38 +62,57 @@ def build_coulomb_matrix(geometry: Geometry, **kwargs):
 class Ewald(ABC):
     """ABC for calculating the coulombic interaction in periodic geometry.
 
-    'Ewald' class calculates the long range coulombic interaction using Ewald
+    `Ewald` class calculates the long range coulombic interaction using Ewald
     summation, which consists of three different parts, i.e. two rapidly
     converging terms (real space sum, reciprocal space sum) and a
     self-correction term. Formulas for different periodic boundary conditions
-    are given in the coresponding references.
+    are given in the corresponding references.
 
     Arguments:
         geometry: Object for calculation, storing the data of input geometry.
         periodic: Object for calculation, storing the data of translation
-            vectors and neighbour list for periodic boundary conditoin.
-        param: Parameter used for calculation. Cell volumn for 3D pbc,
+            vectors and neighbour list for periodic boundary condition.
+        param: Parameter used for calculation. Cell volume for 3D pbc,
             cell length for 1D & 2D pbc.
 
     Keyword Arguments:
-        tol_ewald: Tolerance of ewald summation.
+        tol_ewald: Tolerance of Ewald summation.
         method: Method to obtain parameters of alpha, maxr and maxg.
         nsearchiter: Maximum of iteration for searching alpha, maxg and maxr.
 
     Attributes:
-        invrmat: 1/R matrix for the periodic geometry.
+        geometry: Object for calculation, storing the data of input geometry.
+        periodic: Object for calculation, storing the data of translation
+            vectors and neighbour list for periodic boundary condition.
+        latvec: Lattice vectors of the periodic systems.
+        n_atoms: Number of atoms in the system.
+        coord : Coordinates of the atoms.
+        recvec: Reciprocal lattice vectors.
+        param: Parameter used for calculation. Cell volume for 3D pbc,
+            cell length for 1D & 2D pbc.
+        tol_ewald: Tolerance of Ewald summation.
+        method: Method to obtain parameters of alpha, maxr and maxg.
+        nsearchiter: Maximum of iteration for searching alpha, maxg and maxr.
         alpha: Splitting parameter for the Ewald summation
         maxr: The longest real space vector that gives a bigger
             contribution to the EWald sum than tolerance.
         maxg: The longest reciprocal vector that gives a bigger
             contribution to the EWald sum than tolerance.
+        rcellvec_ud: Cell translation vectors in absolute units.
+        ncell_ud: Number of lattice cells.
+        distmat: Periodic distances.
+        neighbour: A mask to choose atoms of images inside the cutoff.
+        ewald_r: Real part of the Ewald summation.
+        mask_g: Mask used for calculation of reciprocal part.
+        ewald_g: Reciprocal part of the Ewald summation
+        invrmat: 1/R matrix for the periodic geometry.
 
     Notes:
         There are two available methods to generate adjustable parameters for
         Ewald summation. The default method uses empirical formulas from
         experience to obtain alpha, maxr and maxg. While these parameters can
         also be obtained by searching, which give exactly the same results in
-        DFTB+ for 3d pbc.
+        DFTB+ for 3D pbc.
 
     Warning:
         The result of 1D ewald summation is sensitive to the selection of
@@ -116,7 +135,7 @@ class Ewald(ABC):
         self.geometry: Geometry = geometry
         self.periodic: Periodic = periodic
         self.latvec: Tensor = self.geometry.cells
-        self.natom: Tensor = self.geometry.n_atoms
+        self.n_atoms: Tensor = self.geometry.n_atoms
         self.coord: Tensor = self.geometry.positions
         self.recvec: Tensor = self.periodic.reciprocal_lattice
 
@@ -142,7 +161,7 @@ class Ewald(ABC):
         self.nsearchiter: int = kwargs.get('nsearchiter', 30)
 
         # Maximum number of atoms in geometry
-        self._max_natoms: Tensor = torch.max(self.natom)
+        self._max_natoms: Tensor = torch.max(self.n_atoms)
 
         # Default method to obtain parameters by empirical formulas
         if self.method == 'experience':
@@ -182,16 +201,16 @@ class Ewald(ABC):
         """Update the lattice points for reciprocal Ewald summation."""
         update = Periodic(self.geometry.positions, self.geometry.n_atoms,
                           self.recvec, cutoff=self.maxg,
-                          distance_extention=0, positive_extention=0,
-                          negative_extention=0)
+                          distance_extension=0, positive_extension=0,
+                          negative_extension=0)
 
-        return update.rcellvec, update.ncell
+        return update.rcellvec, update.n_cells
 
     def _update_neighbour(self) -> Tuple[Tensor, Tensor]:
         """Update the neighbour lists for real Ewald summation."""
         update = Periodic(self.geometry.positions, self.geometry.n_atoms,
                           self.latvec, cutoff=self.maxr,
-                          distance_extention=0)
+                          distance_extension=0)
 
         return update.periodic_distances, update.neighbour
 
@@ -226,8 +245,8 @@ class Ewald(ABC):
             gvec = gvec_tem[mask]
 
             # Vectors for calculating the reciprocal Ewald sum
-            rr = self.coord.repeat(self.natom, 1) -\
-                self.coord.repeat(1, self.natom).view(-1, 3)
+            rr = self.coord.repeat(self.n_atoms, 1) -\
+                self.coord.repeat(1, self.n_atoms).view(-1, 3)
 
             # The reciprocal Ewald sum
             recsum = self._ewald_reciprocal_single(rr, gvec, self.alpha,
@@ -372,7 +391,7 @@ class Ewald(ABC):
 
     def _get_maxg(self) -> Tensor:
         """Get the longest reciprocal vector that gives a bigger
-        contribution to the EWald sum than tolerance."""
+        contribution to the Ewald sum than tolerance."""
         ginit = torch.tensor([1.0e-8], device=self._device,
                              dtype=self._dtype).repeat(self.alpha.size(0))
         ierror = 0
@@ -425,7 +444,7 @@ class Ewald(ABC):
 
     def _get_maxr(self) -> Tensor:
         """Get the longest real space vector that gives a bigger
-           contribution to the EWald sum than tolerance."""
+           contribution to the Ewald sum than tolerance."""
         rinit = torch.tensor([1.0e-8], device=self._device,
                              dtype=self._dtype).repeat(self.alpha.size(0))
         ierror = 0
@@ -495,14 +514,14 @@ class Ewald(ABC):
 
 
 class Ewald3d(Ewald):
-    """Implement of ewald summation for 3d periodic boundary condition.
+    """Implement of Ewald summation for 3D periodic boundary condition.
 
-    Subclass of the 'Ewald' class, containing formulas for 3d pbc.
+    Subclass of the `Ewald` class, containing formulas for 3D pbc.
 
     Arguments:
         geometry: Object for calculation, storing the data of input geometry.
         periodic: Object for calculation, storing the data of translation
-            vectors and neighbour list for periodic boundary conditoin.
+            vectors and neighbour list for periodic boundary condition.
 
     Attributes:
         invrmat: 1/R matrix for the periodic geometry.
@@ -515,7 +534,7 @@ class Ewald3d(Ewald):
 
     def _default_alpha(self) -> Tensor:
         """Returns the default value of alpha."""
-        return (self.natom / self.param ** 2) ** (1/6) * np.pi ** 0.5
+        return (self.n_atoms / self.param ** 2) ** (1/6) * np.pi ** 0.5
 
     def _ewald_reciprocal(self, rr: Tensor, gvec: Tensor,
                           alpha: Tensor, vol: Tensor) -> Tensor:
@@ -553,14 +572,15 @@ class Ewald3d(Ewald):
 
 
 class Ewald2d(Ewald):
-    """Implement of ewald summation for 2D boundary condition.
+    """Implement of Ewald summation for 2D boundary condition.
 
-    Subclass of the 'Ewald' class, containing formulas for 2d pbc.
+    Subclass of the `Ewald` class, containing formulas for 2D pbc.
 
     Arguments:
         geometry: Object for calculation, storing the data of input geometry.
         periodic: Object for calculation, storing the data of translation
-            vectors and neighbour list for periodic boundary conditoin.
+            vectors and neighbour list for periodic boundary condition.
+        length: The length of each lattice vector.
 
     Attributes:
         invrmat: 1/R matrix for the periodic geometry.
@@ -579,7 +599,7 @@ class Ewald2d(Ewald):
 
     def _default_alpha(self) -> Tensor:
         """Returns the default value of alpha."""
-        return self.natom ** (1/6) / self.param * np.pi ** 0.5
+        return self.n_atoms ** (1/6) / self.param * np.pi ** 0.5
 
     def _ewald_reciprocal(self, rr: Tensor, gvec: Tensor,
                           alpha: Tensor, length: Tensor) -> Tensor:
@@ -598,7 +618,7 @@ class Ewald2d(Ewald):
         dot = torch.matmul(rr, gvec.transpose(-1, -2))
 
         # Vectors of the non-periodic direction for reciprocal sum. Different
-        # dircetions can be specified in the batch.
+        # directions can be specified in the batch.
         rr_npe = rr[torch.arange(self._n_batch), :, index_npd]
 
         # Reciprocal, L
@@ -683,14 +703,15 @@ class Ewald2d(Ewald):
 
 
 class Ewald1d(Ewald):
-    """Implement of ewald summation for 1D boundary condition.
+    """Implement of Ewald summation for 1D boundary condition.
 
-    Subclass of the 'Ewald' class, containing formulas for 1d pbc.
+    Subclass of the `Ewald` class, containing formulas for 1D pbc.
 
     Arguments:
         geometry: Object for calculation, storing the data of input geometry.
         periodic: Object for calculation, storing the data of translation
-            vectors and neighbour list for periodic boundary conditoin.
+            vectors and neighbour list for periodic boundary condition.
+        length: The length of each lattice vector.
 
     Attributes:
         invrmat: 1/R matrix for the periodic geometry.
@@ -709,7 +730,7 @@ class Ewald1d(Ewald):
 
     def _default_alpha(self) -> Tensor:
         """Returns the default value of alpha."""
-        return self.natom ** (1/6) / self.param * np.pi ** 0.5
+        return self.n_atoms ** (1/6) / self.param * np.pi ** 0.5
 
     def _ewald_reciprocal(self, rr: Tensor, gvec: Tensor,
                           alpha: Tensor, length: Tensor) -> Tensor:
@@ -748,7 +769,7 @@ class Ewald1d(Ewald):
         rec0 = torch.zeros_like(bb)
         mask = bb != 0
 
-        rec0[mask] = (- _euler - torch.log(bb[mask])
+        rec0[mask] = (- euler - torch.log(bb[mask])
                       - special.exp1(bb[mask].cpu()).to(self._device)
                       ) / length.unsqueeze(
                           -1).repeat_interleave(bb.size(-1), -1)[mask]
@@ -781,7 +802,7 @@ class Ewald1d(Ewald):
         # Reciprocal, 0
         rec0 = torch.zeros_like(bb)
         mask_bb = bb != 0
-        rec0[mask_bb] = (- _euler - torch.log(bb[mask_bb])
+        rec0[mask_bb] = (- euler - torch.log(bb[mask_bb])
                          - special.exp1(bb[mask_bb].cpu()).to(self._device
                                                               )) / length
 

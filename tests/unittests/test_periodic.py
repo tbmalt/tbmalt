@@ -11,7 +11,7 @@ from ase.build import molecule
 from ase.lattice import cubic, tetragonal, orthorhombic, triclinic, monoclinic, hexagonal
 import h5py
 import numpy as np
-from tbmalt import Geometry, Periodic
+from tbmalt import Geometry
 from tbmalt.common.batch import pack
 from tests.test_utils import fix_seed
 from tbmalt.data.units import length_units
