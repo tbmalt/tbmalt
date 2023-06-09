@@ -168,7 +168,7 @@ def test_single_g1(device):
     acsf()
 
     # Get reference
-    acsf_t = ACSF(species=species, rcut=rcut)
+    acsf_t = ACSF(rcut, species=species)
     acsf_t_g = torch.from_numpy(acsf_t.create(ch4))
 
     assert torch.max(abs(acsf_t_g - acsf.g)) < 1E-6, 'tolerance check'
@@ -188,7 +188,7 @@ def test_single_g1(device):
     acsfp()
 
     # Get reference
-    acsf_t = ACSF(species=species, rcut=rcut, periodic=True)
+    acsf_t = ACSF(rcut, species=species, periodic=True)
     acsf_t_gp = torch.from_numpy(acsf_t.create(ch4))
 
 
@@ -202,7 +202,7 @@ def test_batch_g1(device):
     acsf()
 
     # get reference
-    acsf_d = ACSF(species=species, rcut=rcut)
+    acsf_d = ACSF(rcut, species=species)
     acsf_d_g1 = acsf_d.create([ch4, h2o])
 
     assert torch.max(abs(torch.from_numpy(acsf_d_g1[0]) -
@@ -228,7 +228,7 @@ def test_single_g2(device):
     acsf()
 
     # get reference
-    acsf_d = ACSF(species=species, rcut=rcut, g2_params=[[0.5, 1.0]])
+    acsf_d = ACSF(rcut, species=species, g2_params=[[0.5, 1.0]])
     acsf_d_g1 = torch.from_numpy(acsf_d.create(ch4))
 
     # switch last dimension due to the orders of atom specie difference
@@ -247,7 +247,7 @@ def test_batch_g2(device):
     acsf()
 
     # get reference
-    acsf_d = ACSF(species=species, rcut=rcut, g2_params=[[0.5, 1.0]])
+    acsf_d = ACSF(rcut, species=species, g2_params=[[0.5, 1.0]])
     acsf_d_g1 = pack([torch.from_numpy(ii) for ii in acsf_d.create([ch4, h2o])])
 
     # switch last dimension due to the orders of atom specie difference
@@ -266,7 +266,7 @@ def test_single_g3(device):
     acsf()
 
     # get reference
-    acsf_d = ACSF(species=species, rcut=rcut, g3_params=[1.0])
+    acsf_d = ACSF(rcut, species=species, g3_params=[1.0])
     acsf_d = torch.from_numpy(acsf_d.create(ch4))
 
     # switch last dimension due to the orders of atom specie difference
@@ -285,7 +285,7 @@ def test_batch_g3(device):
     g = acsf()
 
     # get reference
-    acsf_d = ACSF(species=species, rcut=rcut, g3_params=[ 1.0])
+    acsf_d = ACSF(rcut, species=species, g3_params=[ 1.0])
     acsf_d = pack([torch.from_numpy(ii) for ii in acsf_d.create([ch4, h2o])])
 
     # switch last dimension due to the orders of atom specie difference
@@ -306,7 +306,7 @@ def test_single_g4(device):
     acsf_t = AcsfTest(geo, basis, shell_dict, g1_params=rcut)
     acsf_t(g4_params=torch.tensor([0.02, 1.0, -1.0]))
 
-    acsf_d = ACSF(species=species, rcut=rcut, g4_params=[[0.02, 1.0, -1.0]])
+    acsf_d = ACSF(rcut, species=species, g4_params=[[0.02, 1.0, -1.0]])
     acsf_d_g4 = torch.from_numpy(acsf_d.create(ch4))
 
     assert torch.max(abs(acsf_d_g4 - g)) < 1E-6, 'tolerance check'
@@ -326,7 +326,7 @@ def test_cho_g4(device):
                       element_resolve=True)
     acsf_t(g4_params=torch.tensor([0.02, 1.0, -1.0]))
 
-    acsf_d = ACSF(species=species, rcut=rcut, g4_params=[[0.02, 1.0, -1.0]])
+    acsf_d = ACSF(rcut, species=species, g4_params=[[0.02, 1.0, -1.0]])
     acsf_d_g4 = torch.from_numpy(acsf_d.create(cho))
 
     assert torch.max(abs(
@@ -342,7 +342,7 @@ def test_batch_g4(device):
         [[0.02, 1.0, -1.0]]), element_resolve=True, atom_like=False)
     g = acsf()
 
-    acsf_d = ACSF(species=geo.unique_atomic_numbers().numpy(), rcut=rcut,
+    acsf_d = ACSF(rcut, species=geo.unique_atomic_numbers().numpy(),
                   g4_params=[[0.02, 1.0, -1.0]])
     acsf_d_g4 = pack([torch.from_numpy(acsf_d.create(ch4)),
                       torch.from_numpy(acsf_d.create(h2o)),
@@ -369,7 +369,7 @@ def test_single_g5(device):
     acsf2()
 
     # get reference from Dscribe
-    acsf_d = ACSF(species=species, rcut=rcut, g5_params=[[0.02, 1.0, -1.0]])
+    acsf_d = ACSF(rcut, species=species, g5_params=[[0.02, 1.0, -1.0]])
     acsf_d_g5 = torch.from_numpy(acsf_d.create(ch4))
 
     assert torch.max(abs(acsf_d_g5[..., 2:].sum(-1) - acsf.g[..., 2:].sum(-1))) < 1E-6
@@ -392,7 +392,7 @@ def test_batch(device):
                 g4_params=g4_params, element_resolve=True)
     acsf()
 
-    acsf_d = ACSF(species=geo.unique_atomic_numbers().numpy(), rcut=rcut,
+    acsf_d = ACSF(rcut, species=geo.unique_atomic_numbers().numpy(),
                   g2_params=[[0.5, 1.0]], g4_params=[[0.02, 1.0, -1.0]])
     acsf_d_g4 = pack([torch.from_numpy(acsf_d.create(ch4)),
                       torch.from_numpy(acsf_d.create(h2o))])
