@@ -10,7 +10,8 @@ from tbmalt.ml.integralfeeds import IntegralFeed
 from tbmalt import Basis
 from tbmalt.physics.dftb.feeds import Feed, SkfOccupationFeed
 from tbmalt.physics.filling import (
-    fermi_search, fermi_smearing, gaussian_smearing, entropy_term, aufbau_filling)
+    fermi_search, fermi_smearing, gaussian_smearing, entropy_term,
+    aufbau_filling)
 from tbmalt.common.maths import eighb
 from tbmalt.physics.dftb.coulomb import build_coulomb_matrix
 from tbmalt.physics.dftb.gamma import build_gamma_matrix
@@ -98,10 +99,30 @@ def _mulliken(
     return q
 
 class Dftb1(Calculator):
-
     """
+    Non-self-consistent-charge density-functional tight-binding method
+    (non-SCC DFTB).
 
-    Developers Notes:
+    Arguments:
+        h_feed: this feed provides the Slater-Koster based integrals used to
+            construct Hamiltonian matrix.
+        s_feed: this feed provides the Slater-Koster based integrals used to
+            construct overlap matrix.
+        o_feed: this feed provides the angular-momenta resolved occupancies
+            for the requested species.
+        r_feed: this feed describes the repulsive interaction. [DEFAULT: None]
+        filling_temp: Electronic temperature used to calculate Fermi-energy.
+            [DEFAULT: None]
+        filling_scheme: The scheme used for finite temperature broadening.
+            There are two broadening methods, Fermi-Dirac broadening and
+            Gaussian broadening, supported in TBMaLT. [DEFAULT: fermi]
+
+    Attributes:
+        rho: density matrix.
+        eig_values: eigen values.
+        eig_vectors: eigen vectors.
+
+    Notes:
         Currently energies and occupancies are not scaled correctly. Occupancies
         and band energies need to be scaled based on whether or not they are i)
         spin-polarised or spin-unpolarised, ii) have a fixed fermi level for
@@ -109,6 +130,58 @@ class Dftb1(Calculator):
         iii) whether k-points are present or not. See the subroutine named
         "getFillingsAndBandEnergies" of the file "dftb/lib_dftbplus/main.F90"
         in DFTB+ for examples.
+
+    Examples:
+        >>> from tbmalt import Basis, Geometry
+        >>> from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed
+        >>> from tbmalt.physics.dftb import Dftb1
+        >>> from tbmalt.io.skf import Skf
+        >>> from ase.build import molecule
+        >>> import urllib
+        >>> import tarfile
+        >>> from os.path import join
+        >>> torch.set_default_dtype(torch.float64)
+
+        # Link to the auorg-1-1 parameter set
+        >>> link = \
+        'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+
+        # Preparation of sk file
+        >>> elements = ['H', 'C', 'O', 'Au', 'S']
+        >>> tmpdir = './'
+        >>> urllib.request.urlretrieve(
+                link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
+        >>> with tarfile.open(path) as tar:
+                tar.extractall(tmpdir)
+        >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
+                         for i in elements for j in elements]
+        >>> for skf_file in skf_files:
+                Skf.read(skf_file).write(path := join(tmpdir, 'auorg.hdf5'))
+
+        # Preparation of system to calculate
+        # Single system
+        >>> geos = Geometry.from_ase_atoms(molecule('CH4'))
+        >>> basiss = Basis(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
+        # Batch systems
+        >>> geob = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
+        >>> basisb = Basis(geob.atomic_numbers, shell_dict={1: [0], 6: [0, 1],
+                                                            8: [0, 1]})
+
+        # Definition of feeds
+        >>> h_feed = ScipySkFeed.from_database(path, [1, 6, 8], 'hamiltonian')
+        >>> s_feed = ScipySkFeed.from_database(path, [1, 6, 8], 'overlap')
+        >>> o_feed = SkfOccupationFeed.from_database(path, [1, 6, 8])
+
+        # Run DFTB1 calculation
+        >>> dftb = Dftb1(h_feed, s_feed, o_feed, filling_temp=0.0036749324)
+        >>> _ = dftb(geos, basiss)
+        >>> getattr(dftb, 'q_final_atomic')
+        tensor([4.3591, 0.9102, 0.9102, 0.9102, 0.9102])
+        >>> _ = dftb(geob, basisb)
+        >>> getattr(dftb, 'q_final_atomic')
+        tensor([[6.7552, 0.6224, 0.6224, 0.0000, 0.0000],
+                [4.3591, 0.9102, 0.9102, 0.9102, 0.9102]])
+
     """
     def __init__(
             self, h_feed: IntegralFeed, s_feed: IntegralFeed, o_feed: Feed,
@@ -153,10 +226,12 @@ class Dftb1(Calculator):
         # Check to see if the overlap matrix has already been constructed. If
         # not then construct it.
         if self._overlap is None:
-            # Check if special arguments are required by the s_feed.matrix method.
+            # Check if special arguments are required by the s_feed.matrix
+            # method.
             if requires_args(self.s_feed.matrix):
                 # If so then make the call via `call_with_required_args`
-                self._overlap = call_with_required_args(self.s_feed.matrix, self)
+                self._overlap = call_with_required_args(
+                    self.s_feed.matrix, self)
             else:
                 # Otherwise just make the default call
                 self._overlap = self.s_feed.matrix(self.geometry, self.basis)
@@ -175,9 +250,11 @@ class Dftb1(Calculator):
         # See `Dftb1.overlap` for an explanation of what this code does.
         if self._hamiltonian is None:
             if requires_args(self.h_feed.matrix):
-                self._hamiltonian = call_with_required_args(self.h_feed.matrix, self)
+                self._hamiltonian = call_with_required_args(
+                    self.h_feed.matrix, self)
             else:
-                self._hamiltonian = self.h_feed.matrix(self.geometry, self.basis)
+                self._hamiltonian = self.h_feed.matrix(
+                    self.geometry, self.basis)
 
         return self._hamiltonian
 
@@ -327,15 +404,15 @@ class Dftb1(Calculator):
     def homo_lumo(self):
         """Highest occupied and lowest unoccupied energy level in unit eV"""
         # Number of occupied states
-        _nocc = (~(self.occupancy - 0 < 1E-10)).long().sum(-1)
+        nocc = (~(self.occupancy - 0 < 1E-10)).long().sum(-1)
 
         # Mask of HOMO and LUMO
-        _mask = torch.zeros_like(
+        mask = torch.zeros_like(
             self.occupancy, device=self.device, dtype=self.dtype).scatter_(
-            -1, _nocc.unsqueeze(-1), 1).scatter_(
-                -1, _nocc.unsqueeze(-1) - 1, 1).bool()
-        homo_lumo = self.eigenvalue[_mask] if self.occupancy.ndim == 1 else\
-            self.eigenvalue[_mask].view(self.occupancy.size(0), -1)
+            -1, nocc.unsqueeze(-1), 1).scatter_(
+                -1, nocc.unsqueeze(-1) - 1, 1).bool()
+        homo_lumo = self.eigenvalue[mask] if self.occupancy.ndim == 1 else\
+            self.eigenvalue[mask].view(self.occupancy.size(0), -1)
 
         return homo_lumo
 
@@ -356,8 +433,8 @@ class Dftb1(Calculator):
     def dos(self):
         """Electronic density of states"""
         # Mask to remove padding values.
-        _mask = torch.where(self.eigenvalue == 0, False, True)
-        return dos(self.eigenvalue, self.dos_energy, sigma=0.1, mask=_mask)
+        mask = torch.where(self.eigenvalue == 0, False, True)
+        return dos(self.eigenvalue, self.dos_energy, sigma=0.1, mask=mask)
 
     def reset(self):
         """Reset all attributes and cached properties."""
@@ -374,7 +451,7 @@ class Dftb1(Calculator):
         density functional tight binding theory calculation. Once complete
         this will return the total system energy.
 
-        Args:
+        Arguments:
             cache: Currently, the `Dftb1` calculator does not make use of the
                 `cache` argument.
 
@@ -402,31 +479,43 @@ class Dftb1(Calculator):
 
 
 class Dftb2(Dftb1):
-    """Self-consistent-charge density-functional tight-binding method (SCC-DFTB).
+    """Self-consistent-charge density-functional tight-binding method
+    (SCC-DFTB).
 
     Arguments:
+        h_feed: this feed provides the Slater-Koster based integrals used to
+            construct Hamiltonian matrix.
+        s_feed: this feed provides the Slater-Koster based integrals used to
+            construct overlap matrix.
+        o_feed: this feed provides the angular-momenta resolved occupancies
+            for the requested species.
         u_feed: this feed provides the Hubbard-U values as needed to construct
             the gamma matrix. This must be a `Feed` type object which when
             provided with a `Basis` object returns the Hubbard-U values for
             the target system.
-        mixer: specifies the charge mixing scheme to be used. Providing the
-            strings "simple" and "anderson" will result in their respectively
-            named mixing schemes being used. Initialised `Mixer` class objects
-            may also be provided directly.
-        gamma_scheme: scheme used to construct the gamma matrix. This may be
-            either "exponential" or "gaussian". [DEFAULT="exponential"]
-        coulomb_scheme: scheme used to construct the coulomb matrix. This may
-            be either "search" or "experience". [DEFAULT="search"]
+        r_feed: this feed describes the repulsive interaction. [DEFAULT: None]
+        filling_temp: Electronic temperature used to calculate Fermi-energy.
+            [DEFAULT: None]
         max_scc_iter: maximum permitted number of SCC iterations. If one or
             more system fail to converge within ``max_scc_iter`` cycles then a
             convergence error will be raise; unless the ``suppress_SCF_error``
             flag has been set. [DEFAULT=200]
+        mixer: specifies the charge mixing scheme to be used. Providing the
+            strings "simple" and "anderson" will result in their respectively
+            named mixing schemes being used. Initialised `Mixer` class objects
+            may also be provided directly.
+
+    Keyword Arguments:
         suppress_SCF_error: if True, convergence errors will be suppressed and
             the calculation will proceed with as normal. This is of use during
             fitting when operating on large batches. This way if most systems
             converge but one does not then it can just be ignored rather than
             ending the program. Unconverged systems can be identified via the
             ``converged`` attribute. [DEFAULT=False]
+        gamma_scheme: scheme used to construct the gamma matrix. This may be
+            either "exponential" or "gaussian". [DEFAULT="exponential"]
+        coulomb_scheme: scheme used to construct the coulomb matrix. This may
+            be either "search" or "experience". [DEFAULT="search"]
 
     Attributes:
         overlap: overlap matrix as constructed by the supplied `s_feed`.
@@ -445,6 +534,78 @@ class Dftb2(Dftb1):
         mixer: a `Mixer` type class instance used during the SCC cycle to
             perform charge mixing.
 
+    Examples:
+        >>> from tbmalt import Basis, Geometry
+        >>> from tbmalt.physics.dftb.feeds import ScipySkFeed,\
+            SkfOccupationFeed, HubbardFeed
+        >>> from tbmalt.physics.dftb import Dftb2
+        >>> from tbmalt.io.skf import Skf
+        >>> from ase.build import molecule
+        >>> import urllib
+        >>> import tarfile
+        >>> from os.path import join
+        >>> torch.set_default_dtype(torch.float64)
+
+        # Link to the auorg-1-1 parameter set
+        >>> link = \
+        'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+
+        # Preparation of sk file
+        >>> elements = ['H', 'C', 'O', 'Au', 'S']
+        >>> tmpdir = './'
+        >>> urllib.request.urlretrieve(
+                link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
+        >>> with tarfile.open(path) as tar:
+                tar.extractall(tmpdir)
+        >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
+                         for i in elements for j in elements]
+        >>> for skf_file in skf_files:
+                Skf.read(skf_file).write(path := join(tmpdir, 'auorg.hdf5'))
+
+        # Preparation of system to calculate
+        # Single system
+        >>> geos = Geometry.from_ase_atoms(molecule('CH4'))
+        >>> basiss = Basis(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
+        # Batch systems
+        >>> geob = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
+        >>> basisb = Basis(geob.atomic_numbers, shell_dict={1: [0], 6: [0, 1],
+                                                            8: [0, 1]})
+        # Single system with pbc
+        >>> geop = Geometry(
+                torch.tensor([6, 1, 1, 1, 1]),
+                torch.tensor([[3.0, 3.0, 3.0],
+                              [3.6, 3.6, 3.6],
+                              [2.4, 3.6, 3.6],
+                              [3.6, 2.4, 3.6],
+                              [3.6, 3.6, 2.4]]),
+                torch.tensor([[4.0, 4.0, 0.0],
+                              [5.0, 0.0, 5.0],
+                              [0.0, 6.0, 6.0]]),
+                units='a', cutoff=torch.tensor([9.98]))
+        >>> basisp = Basis(geop.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
+
+
+        # Definition of feeds
+        >>> h_feed = ScipySkFeed.from_database(path, [1, 6, 8], 'hamiltonian')
+        >>> s_feed = ScipySkFeed.from_database(path, [1, 6, 8], 'overlap')
+        >>> o_feed = SkfOccupationFeed.from_database(path, [1, 6, 8])
+        >>> u_feed = HubbardFeed.from_database(path, [1, 6, 8])
+
+        # Run DFTB2 calculation
+        >>> mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2,
+                          'generations': 3, 'tolerance': 1e-10}
+        >>> dftb2 = Dftb2(h_feed, s_feed, o_feed, u_feed,
+                          filling_temp=0.0036749324, mix_params=mix_params)
+        >>> _ = dftb2(geos, basiss)
+        >>> getattr(dftb2, 'q_final_atomic')
+        tensor([4.3054, 0.9237, 0.9237, 0.9237, 0.9237])
+        >>> _ = dftb2(geob, basisb)
+        >>> getattr(dftb2, 'q_final_atomic')
+        tensor([[6.5856, 0.7072, 0.7072, 0.0000, 0.0000],
+                [4.3054, 0.9237, 0.9237, 0.9237, 0.9237]])
+        >>> _ = dftb2(geop, basisp)
+        >>> getattr(dftb2, 'q_final_atomic')
+        tensor([4.6124, 0.8332, 0.8527, 0.8518, 0.8499])
 
     """
 
@@ -469,8 +630,8 @@ class Dftb2(Dftb1):
         # Calculator Settings
         self.max_scc_iter = max_scc_iter
         self.suppress_SCF_error = kwargs.get('supress_SCF_error', False)
-        self._gamma_scheme = kwargs.get('gamma_scheme', 'exponential')
-        self._coulomb_scheme = kwargs.get('coulomb_scheme', 'search')
+        self.gamma_scheme = kwargs.get('gamma_scheme', 'exponential')
+        self.coulomb_scheme = kwargs.get('coulomb_scheme', 'search')
 
         # If no pre-initialised was provided then construct one.
         if isinstance(mixer, str):
@@ -491,12 +652,15 @@ class Dftb2(Dftb1):
 
     @property
     def core_hamiltonian(self):
-        """First order core Hamiltonian matrix as built by the `h_feed` entity"""
+        """First order core Hamiltonian matrix as built by the `h_feed`
+        entity"""
         if self._core_hamiltonian is None:
             if requires_args(self.h_feed.matrix):
-                self._core_hamiltonian = call_with_required_args(self.h_feed.matrix, self)
+                self._core_hamiltonian = call_with_required_args(
+                    self.h_feed.matrix, self)
             else:
-                self._core_hamiltonian = self.h_feed.matrix(self.geometry, self.basis)
+                self._core_hamiltonian = self.h_feed.matrix(
+                    self.geometry, self.basis)
 
         return self._core_hamiltonian
 
@@ -510,11 +674,11 @@ class Dftb2(Dftb1):
         if self._invr is None:
             if self.geometry.periodic is not None:
                 self._invr = build_coulomb_matrix(self.geometry,
-                                                  method=self._coulomb_scheme)
+                                                  method=self.coulomb_scheme)
             else:
-                _r = self.geometry.distances
-                _r[_r != 0.0] = 1.0 / _r[_r != 0.0]
-                self._invr = _r
+                r = self.geometry.distances
+                r[r != 0.0] = 1.0 / r[r != 0.0]
+                self._invr = r
 
         return self._invr
 
@@ -528,7 +692,7 @@ class Dftb2(Dftb1):
         if self._gamma is None:
             self._gamma = build_gamma_matrix(
                 self.geometry, self.basis, self.invr,
-                self.u_feed(self.basis), self._gamma_scheme)
+                self.u_feed(self.basis), self.gamma_scheme)
         return self._gamma
 
     @gamma.setter
@@ -589,7 +753,8 @@ class Dftb2(Dftb1):
                 for step in range(1, self.max_scc_iter + 1):
 
                     # Perform a single SCC step and apply the mixing algorithm.
-                    q_current = self.mixer(self._scc_cycle(q_current), q_current)
+                    q_current = self.mixer(self._scc_cycle(q_current),
+                                           q_current)
 
                     # If the system has converged then assign the `q_converged`
                     # values and break out of the SCC cycle.
@@ -633,21 +798,23 @@ class Dftb2(Dftb1):
                 self.converged = torch.full(system_indices.shape, False)
 
                 for step in range(1, self.max_scc_iter + 1):
-                    q_current = self.mixer(self._scc_cycle(q_current), q_current)
+                    q_current = self.mixer(self._scc_cycle(q_current),
+                                           q_current)
 
                     if (c_mask := self.mixer.converged).any():
 
                         idxs = system_indices[c_mask]
-                        q_converged[idxs, :q_current.shape[-1]] = q_current[c_mask, :]
+                        q_converged[idxs, :q_current.shape[-1]] = q_current[
+                            c_mask, :]
                         self.converged[idxs] = True
 
                         # If all systems have converged then the end of the SCC
                         # cycle has been reached.
                         if torch.all(c_mask):
                             break
-                        # Otherwise there are still systems left to converge. Thus
-                        # the converged systems will now be culled to avoid over-
-                        # converging them.
+                        # Otherwise there are still systems left to converge.
+                        # Thus the converged systems will now be culled to avoid
+                        # over-converging them.
                         else:
                             # The order in which things are done here matters
                             # Cull calculator attributes
@@ -666,7 +833,8 @@ class Dftb2(Dftb1):
                         # raised to help with debugging.
                         self._geometry, self._basis = c_geometry, c_basis
                         self.overlap, self.gamma = c_overlap, c_gamma
-                        self.invr, self.core_hamiltonian = c_invr, c_hamiltonian_copy
+                        self.invr, self.core_hamiltonian = c_invr,\
+                            c_hamiltonian_copy
 
                         raise ConvergenceError(
                             "SCC cycle failed to converge; "
@@ -700,7 +868,7 @@ class Dftb2(Dftb1):
         However, as this only filters some, but not all, attributes its ill
         advised to use this anywhere other than the `.forward` method.
 
-        Args:
+        Arguments:
             mask: A tensor of Booleans indicating which systems have converged.
                 Systems which have converged will be masked partially out.
 
@@ -724,7 +892,7 @@ class Dftb2(Dftb1):
         ``q_in`` as the initial guess during the first cycle and as the mixed
         charges in all subsequent cycles.
 
-        Args:
+        Arguments:
             q_in: Input charges are provided via the ``q_in`` argument. This
                 can be viewed as the initial guess for the first cycle and as
                 the mixed charges from the previous step in all subsequent
