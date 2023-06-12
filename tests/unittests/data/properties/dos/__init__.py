@@ -12,7 +12,7 @@ Notes:
 
 
 def _load_bases(path='./'):
-    """Load basis information."""
+    """Load orbs information."""
     file = join(path, 'bases.csv')
     keys = open(file, 'r').readline()[2:-1].split(', ')
     values = torch.tensor(loadtxt(file, delimiter=','), dtype=int)

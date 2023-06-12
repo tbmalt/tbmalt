@@ -3,20 +3,20 @@
 from typing import Literal
 import torch
 from torch import Tensor
-from tbmalt import Geometry, Basis
+from tbmalt import Geometry, OrbitalInfo
 from tbmalt.physics.dftb.feeds import Feed
 import numpy as np
 from tbmalt.common.batch import pack, prepeat_interleave
 from tbmalt.data import gamma_cutoff, gamma_element_list
 
 
-def gamma_exponential(geometry: Geometry, basis: Basis, hubbard_Us: Tensor):
+def gamma_exponential(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor):
     """Construct the gamma matrix via the exponential method.
 
     Arguments:
         geometry: `Geometry` object of the system(s) whose gamma matrix is to
             be constructed.
-        basis: `Basis` instance associated with the target system.
+        orbs: `OrbitalInfo` instance associated with the target system.
         hubbard_Us: Hubbard U values. one value should be specified for each
             atom or shell depending if the calculation being performed is atom
             or shell resolved.
@@ -32,15 +32,15 @@ def gamma_exponential(geometry: Geometry, basis: Basis, hubbard_Us: Tensor):
 
     dtype, device = r.dtype, r.device
 
-    if basis.shell_resolved:  # and expand it if this is shell resolved calc.
+    if orbs.shell_resolved:  # and expand it if this is shell resolved calc.
         def dri(t, ind):  # Abstraction of lengthy double interleave operation
             return t.repeat_interleave(ind, -1).repeat_interleave(ind, -2)
 
         # Get № shells per atom & determine batch status, then expand.
-        batch = (spa := basis.shells_per_atom).ndim >= 2
+        batch = (spa := orbs.shells_per_atom).ndim >= 2
         r = pack([dri(i, j) for i, j in zip(r, spa)]) if batch else dri(r, spa)
 
-        z = prepeat_interleave(z, basis.n_shells_on_species(z))
+        z = prepeat_interleave(z, orbs.n_shells_on_species(z))
 
     # Construct index list for upper triangle gather operation
     ut = torch.unbind(torch.triu_indices(U.shape[-1], U.shape[-1], 0))
@@ -56,7 +56,7 @@ def gamma_exponential(geometry: Geometry, basis: Basis, hubbard_Us: Tensor):
     gamma_tr[..., ut[0] == ut[1]] = -U
 
     # off-diagonal values of on-site part for shell resolved calc
-    if basis.shell_resolved:
+    if orbs.shell_resolved:
         mask_shell = (ut[0] != ut[1]).to(device) * distance_tr.eq(0)
         ua, ub = U[..., ut[0]][mask_shell], U[..., ut[1]][mask_shell]
         mask_diff = (ua - ub).abs() < 1E-8
@@ -108,7 +108,7 @@ def gamma_exponential(geometry: Geometry, basis: Basis, hubbard_Us: Tensor):
     return gamma.squeeze()
 
 
-def gamma_gaussian(geometry: Geometry, basis: Basis, hubbard_Us: Tensor
+def gamma_gaussian(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
                    ) -> Tensor:
     r"""Constructs the gamma matrix via the Gaussian method.
 
@@ -134,7 +134,7 @@ def gamma_gaussian(geometry: Geometry, basis: Basis, hubbard_Us: Tensor
     Arguments:
         geometry: `Geometry` object of the system whose gamma matrix is to be
             constructed.
-        basis: `Basis` instance associated with the target system.
+        orbs: `OrbitalInfo` instance associated with the target system.
         hubbard_Us: Hubbard U values. one value should be specified for each
             atom or shell depending if the calculation being performed is atom
             or shell resolved.
@@ -146,7 +146,7 @@ def gamma_gaussian(geometry: Geometry, basis: Basis, hubbard_Us: Tensor
         One Hubbard U value must be specified for each atom or each shell based
         on whether an atom or shell resolved calculation is being performed.
         Note that this must be consistent with the `shell_resolved` attribute
-        of the supplied `Basis` instance ``basis``.
+        of the supplied `OrbitalInfo` instance ``orbs``.
 
         Currently the Hubbard U values must be specified manually, however the
         option to supply a feed object will be added at a later data. This will
@@ -179,12 +179,12 @@ def gamma_gaussian(geometry: Geometry, basis: Basis, hubbard_Us: Tensor
 
     dtype, device = r.dtype, r.device
 
-    if basis.shell_resolved:  # and expand it if this is shell resolved calc.
+    if orbs.shell_resolved:  # and expand it if this is shell resolved calc.
         def dri(t, ind):  # Abstraction of lengthy double interleave operation
             return t.repeat_interleave(ind, -1).repeat_interleave(ind, -2)
 
         # Get № shells per atom & determine batch status, then expand.
-        batch = (spa := basis.shells_per_atom).ndim >= 2
+        batch = (spa := orbs.shells_per_atom).ndim >= 2
         r = pack([dri(i, j) for i, j in zip(r, spa)]) if batch else dri(r, spa)
 
     # Build the "C" coefficients (eq. 27)
@@ -198,7 +198,7 @@ def gamma_gaussian(geometry: Geometry, basis: Basis, hubbard_Us: Tensor
     gamma.diagonal(0, -2, -1)[:] = hubbard_Us[:]  # (eq. 31)
 
     # off-diagonal values of on-site part for shell resolved calc
-    if basis.shell_resolved:
+    if orbs.shell_resolved:
         mask_shell = torch.ones_like(gamma, dtype=dtype, device=device).bool()
         mask_shell.diagonal(0, -2, -1)[:] = False
         mask_shell = mask_shell * r.eq(0)
@@ -216,7 +216,7 @@ def gamma_gaussian(geometry: Geometry, basis: Basis, hubbard_Us: Tensor
     return gamma
 
 
-def gamma_exponential_pbc(geometry, basis, invr, hubbard_Us):
+def gamma_exponential_pbc(geometry, orbs, invr, hubbard_Us):
     """Build the Slater type gamma in second-order term with pbc."""
 
     r = geometry.periodic.periodic_distances
@@ -228,7 +228,7 @@ def gamma_exponential_pbc(geometry, basis, invr, hubbard_Us):
 
     # TODO: shell resolved calc is missing. For this, coulomb also needs shell
     # resolved calc.
-    if basis.shell_resolved:
+    if orbs.shell_resolved:
         raise NotImplementedError('Not implement shell resolved for pbc yet.')
 
     # Construct index list for upper triangle gather operation
@@ -392,7 +392,7 @@ def _expgamma(distance_tr, alpha, beta, mask_homo, mask_hetero, gamma_tem):
 
 
 def build_gamma_matrix(
-        geometry: Geometry, basis: Basis, invr: Tensor,
+        geometry: Geometry, orbs: OrbitalInfo, invr: Tensor,
         hubbard_Us: Tensor, scheme: Literal['exponential', 'gaussian'] =
         'exponential'):
     """Construct the gamma matrix
@@ -400,7 +400,7 @@ def build_gamma_matrix(
     Arguments:
         geometry: `Geometry` object of the system(s) whose gamma matrix is to
             be constructed.
-        basis: `Basis` instance associated with the target system.
+        orbs: `OrbitalInfo` instance associated with the target system.
         invr: 1/R matrix.
         hubbard_Us: Hubbard U values. one value should be specified for each
             atom or shell depending if the calculation being performed is atom
@@ -415,15 +415,15 @@ def build_gamma_matrix(
 
     if geometry.periodic is None:
         if scheme == 'exponential':
-            return gamma_exponential(geometry, basis, hubbard_Us)
+            return gamma_exponential(geometry, orbs, hubbard_Us)
 
         elif scheme == 'gaussian':
-            return gamma_gaussian(geometry, basis, hubbard_Us)
+            return gamma_gaussian(geometry, orbs, hubbard_Us)
         else:
             raise(NotImplemented(
                 f'Gamma constructor method {scheme} is unknown'))
     else:
         if scheme == 'exponential':
-            return gamma_exponential_pbc(geometry, basis, invr, hubbard_Us)
+            return gamma_exponential_pbc(geometry, orbs, invr, hubbard_Us)
         elif scheme == 'gaussian':
             raise NotImplementedError('Not implement gaussian for pbc yet.')

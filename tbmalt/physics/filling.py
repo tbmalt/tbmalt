@@ -7,14 +7,14 @@ import torch
 from torch import Tensor
 
 from tbmalt import ConvergenceError
-from tbmalt import Basis
+from tbmalt import OrbitalInfo
 from tbmalt.common import float_like
 from tbmalt.common.batch import psort
 
 _Scheme = Callable[[Tensor, Tensor, float_like], Tensor]
 
 def entropy_term(func, eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
-            e_mask: Optional[Union[Tensor, Basis]] = None, **kwargs) -> Tensor:
+                 e_mask: Optional[Union[Tensor, OrbitalInfo]] = None, **kwargs) -> Tensor:
     if func == fermi_smearing:
         return fermi_entropy(eigenvalues, fermi_energy, kT, e_mask, **kwargs)
     elif func == gaussian_smearing:
@@ -26,7 +26,7 @@ def entropy_term(func, eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like
 
 
 def fermi_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
-                  e_mask: Optional[Union[Tensor, Basis]] = None) -> Tensor:
+                  e_mask: Optional[Union[Tensor, OrbitalInfo]] = None) -> Tensor:
     r"""Calculates the electronic entropy term for Fermi-Dirac smearing.
 
         Calculate a system's electronic entropy term. The entropy term is required
@@ -49,8 +49,8 @@ def fermi_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
             ts: The entropy term(s).
 
         """
-    # If a Basis instance was given as a mask then convert it to a tensor
-    if isinstance(e_mask, Basis):
+    # If a OrbitalInfo instance was given as a mask then convert it to a tensor
+    if isinstance(e_mask, OrbitalInfo):
         e_mask = e_mask.on_atoms != -1
 
     # Shape of eigenvalue tensor in which k-points & spin-channels (with
@@ -73,7 +73,7 @@ def fermi_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
 
 
 def gaussian_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
-                     e_mask: Optional[Union[Tensor, Basis]] = None) -> Tensor:
+                     e_mask: Optional[Union[Tensor, OrbitalInfo]] = None) -> Tensor:
     r"""Calculates the electronic entropy term for Gaussian bases smearing.
 
         .. math::
@@ -92,8 +92,8 @@ def gaussian_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
             ts: The entropy term(s).
 
         """
-    # If a Basis instance was given as a mask then convert it to a tensor
-    if isinstance(e_mask, Basis):
+    # If a OrbitalInfo instance was given as a mask then convert it to a tensor
+    if isinstance(e_mask, OrbitalInfo):
         e_mask = e_mask.on_atoms != -1
 
     # Shape of eigenvalue tensor in which k-points & spin-channels (with
@@ -160,7 +160,7 @@ def _smearing_preprocessing(
 
 
 def _smearing_postprocessing(
-        occupancy, e_mask: Optional[Union[Tensor, Basis]] = None) -> Tensor:
+        occupancy, e_mask: Optional[Union[Tensor, OrbitalInfo]] = None) -> Tensor:
     """Zero out ghost states due to padding
 
     Args:
@@ -168,7 +168,7 @@ def _smearing_postprocessing(
         e_mask: Provides info required to distinguish "real" ``eigenvalues``
             from "fake" ones. This is Mandatory when using smearing on batched
             systems. This may be a `Tensor` that is `True` for real states or
-            a `Basis` object. [DEFAULT=None]
+            a `OrbitalInfo` object. [DEFAULT=None]
 
     Returns:
         occupancies: Occupancies with any ghost states zeroed out.
@@ -176,8 +176,8 @@ def _smearing_postprocessing(
     # If a mask is provided
     if e_mask is not None:
 
-        # If a Basis instance was given as a mask then convert it to a tensor
-        if isinstance(e_mask, Basis):
+        # If a OrbitalInfo instance was given as a mask then convert it to a tensor
+        if isinstance(e_mask, OrbitalInfo):
             e_mask = e_mask.on_atoms != -1
         elif isinstance(e_mask, Tensor):
             e_mask = e_mask != -1
@@ -191,7 +191,7 @@ def _smearing_postprocessing(
 
 def fermi_smearing(
         eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
-        e_mask: Optional[Union[Tensor, Basis]] = None) -> Tensor:
+        e_mask: Optional[Union[Tensor, OrbitalInfo]] = None) -> Tensor:
     r"""Fractional orbital occupancies due to Fermi-Dirac smearing.
 
     Using Fermi-Dirac smearing, orbital occupancies are calculated via:
@@ -210,7 +210,7 @@ def fermi_smearing(
         e_mask: Provides info required to distinguish "real" ``eigenvalues``
             from "fake" ones. This is Mandatory when using smearing on batched
             systems. This may be a `Tensor` that is `True` for real states or
-            a `Basis` object. [DEFAULT=None]
+            a `OrbitalInfo` object. [DEFAULT=None]
 
     Returns:
         occupancies: Occupancies of the orbitals.
@@ -242,7 +242,7 @@ def fermi_smearing(
 
 def gaussian_smearing(
         eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
-        e_mask: Optional[Union[Tensor, Basis]] = None) -> Tensor:
+        e_mask: Optional[Union[Tensor, OrbitalInfo]] = None) -> Tensor:
     r"""Fractional orbital occupancies due to Gaussian smearing.
 
     Using Gaussian smearing, orbital occupancies are calculated via:
@@ -261,7 +261,7 @@ def gaussian_smearing(
         e_mask: Provides info required to distinguish "real" ``eigenvalues``
             from "fake" ones. This is Mandatory when using smearing on batched
             systems. This may be a `Tensor` that is `True` for real states or
-            a `Basis` object. [DEFAULT=None]
+            a `OrbitalInfo` object. [DEFAULT=None]
 
     Returns:
         occupancies: Occupancies of the orbitals.
@@ -353,7 +353,7 @@ def fermi_search(
         eigenvalues: Tensor, n_electrons: float_like,
         kT: Optional[float_like] = None, scheme: _Scheme = fermi_smearing,
         tolerance: Optional[Real] = None, max_iter: int = 200,
-        e_mask: Optional[Union[Tensor, Basis]] = None,
+        e_mask: Optional[Union[Tensor, OrbitalInfo]] = None,
         k_weights: Optional[Tensor] = None) -> Tensor:
     r"""Determines the Fermi-energy of a system or batch thereof.
 
@@ -384,7 +384,7 @@ def fermi_search(
         e_mask: Provides info required to distinguish "real" ``eigenvalues``
             from "fake" ones. This is Mandatory when using smearing on batched
             systems. This may be a `Tensor` that is `True` for real states or
-            a `Basis` object. [DEFAULT=None]
+            a `OrbitalInfo` object. [DEFAULT=None]
         k_weights: If periodic systems are supplied then k-point wights can be
             given via this argument.
 
@@ -441,8 +441,8 @@ def fermi_search(
     if kT is not None and not isinstance(kT, Tensor):
         kT = torch.tensor(kT, dtype=dtype, device=dev)
 
-    # If a Basis instance was given as a mask then convert it to a tensor
-    if isinstance(e_mask, Basis):
+    # If a OrbitalInfo instance was given as a mask then convert it to a tensor
+    if isinstance(e_mask, OrbitalInfo):
         e_mask = e_mask.on_atoms != -1
     elif isinstance(e_mask, Tensor):
         if e_mask.dtype is not torch.bool:
@@ -574,7 +574,7 @@ def fermi_search(
 
 def aufbau_filling(
         eigenvalues: Tensor, n_electrons: float_like,
-        e_mask: Optional[Union[Tensor, Basis]] = None,
+        e_mask: Optional[Union[Tensor, OrbitalInfo]] = None,
         k_weights: Optional[Tensor] = None) -> Tensor:
     """Fractional orbital occupancies due to the Aufbau principle.
 
@@ -591,7 +591,7 @@ def aufbau_filling(
         e_mask: Provides info required to distinguish "real" ``eigenvalues``
             from "fake" ones. This is Mandatory when using smearing on batched
             systems. This may be a `Tensor` that is `True` for real states or
-            a `Basis` object. [DEFAULT=None]
+            a `OrbitalInfo` object. [DEFAULT=None]
         k_weights: If periodic systems are supplied then k-point wights can be
             given via this argument.
 
@@ -609,7 +609,7 @@ def aufbau_filling(
         n_electrons = torch.as_tensor(
             n_electrons, dtype=eigenvalues.dtype, device=eigenvalues.device)
 
-    if isinstance(e_mask, Basis):
+    if isinstance(e_mask, OrbitalInfo):
         e_mask = e_mask.on_atoms != -1
 
     pf = 5 - eigenvalues.ndim - [k_weights, e_mask].count(None)

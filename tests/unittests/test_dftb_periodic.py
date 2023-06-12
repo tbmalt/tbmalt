@@ -3,7 +3,7 @@ import pytest
 import torch
 from ase.build import molecule
 
-from tbmalt import Geometry, Basis
+from tbmalt import Geometry, OrbitalInfo
 from tbmalt.physics.dftb import Dftb1, Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.batch import pack
@@ -45,7 +45,7 @@ def H2_scc(device):
             [0.0, 0.0, 1.5]],
             device=device), cutoff=cutoff)
 
-    basis = Basis(geometry.atomic_numbers, {1: [0]})
+    orbs = OrbitalInfo(geometry.atomic_numbers, {1: [0]})
 
     results = {
         'q_final_atomic': torch.tensor([
@@ -55,7 +55,7 @@ def H2_scc(device):
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
 
-    return geometry, basis, results, kwargs
+    return geometry, orbs, results, kwargs
 
 
 def CH4_scc(device):
@@ -77,7 +77,7 @@ def CH4_scc(device):
             [0.0, 6.0, 6.0]],
             device=device), units='a', cutoff=cutoff)
 
-    basis = Basis(geometry.atomic_numbers, {1: [0], 6: [0, 1]})
+    orbs = OrbitalInfo(geometry.atomic_numbers, {1: [0], 6: [0, 1]})
 
     results = {
         'q_final_atomic': torch.tensor([
@@ -88,7 +88,7 @@ def CH4_scc(device):
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
 
-    return geometry, basis, results, kwargs
+    return geometry, orbs, results, kwargs
 
 
 def H2O_scc(device):
@@ -108,7 +108,7 @@ def H2O_scc(device):
             [0.0, 0.0, 6.0]],
             device=device), units='a', cutoff=cutoff)
 
-    basis = Basis(geometry.atomic_numbers, {1: [0], 8: [0, 1]})
+    orbs = OrbitalInfo(geometry.atomic_numbers, {1: [0], 8: [0, 1]})
 
     results = {
         'q_final_atomic': torch.tensor([
@@ -118,7 +118,7 @@ def H2O_scc(device):
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
 
-    return geometry, basis, results, kwargs
+    return geometry, orbs, results, kwargs
 
 
 def C2H6_scc(device):
@@ -143,7 +143,7 @@ def C2H6_scc(device):
             [0.0, 0.0, 5.0]],
             device=device), units='a', cutoff=cutoff)
 
-    basis = Basis(geometry.atomic_numbers, {1: [0], 6: [0, 1]})
+    orbs = OrbitalInfo(geometry.atomic_numbers, {1: [0], 6: [0, 1]})
 
     results = {
         'q_final_atomic': torch.tensor([
@@ -155,37 +155,37 @@ def C2H6_scc(device):
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
 
-    return geometry, basis, results, kwargs
+    return geometry, orbs, results, kwargs
 
 
 def merge_systems(device, *systems):
     """Combine multiple test systems into a batch."""
 
-    geometry, basis, results, kwargs = systems[0](device)
+    geometry, orbs, results, kwargs = systems[0](device)
 
     results = {k: [v] for k, v in results.items()}
 
     for system in systems[1:]:
-        t_geometry, t_basis, t_results, t_kwargs = system(device)
+        t_geometry, t_orbs, t_results, t_kwargs = system(device)
 
         assert t_kwargs == kwargs, 'Test systems with different settings ' \
                                    'cannot be used together'
 
         geometry += t_geometry
-        basis += t_basis
+        orbs += t_orbs
 
         for k, v in t_results.items():
             results[k].append(t_results[k])
 
     results = {k: pack(v) for k, v in results.items()}
 
-    return geometry, basis, results, kwargs
+    return geometry, orbs, results, kwargs
 
 
-def dftb2_helper(calculator, geometry, basis, results):
+def dftb2_helper(calculator, geometry, orbs, results):
 
     # Trigger the calculation
-    _ = calculator(geometry, basis)
+    _ = calculator(geometry, orbs)
 
     # Ensure that the `hamiltonian` and `overlap` properties return the correct
     # matrices. We do not need to actually check if the matrices are themselves
@@ -211,12 +211,12 @@ def test_dftb2_single(device, feeds_scc):
     mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
 
     for system in systems:
-        geometry, basis, results, kwargs = system(device)
+        geometry, orbs, results, kwargs = system(device)
         kwargs['mix_params'] = mix_params
 
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
 
-        dftb2_helper(calculator, geometry, basis, results)
+        dftb2_helper(calculator, geometry, orbs, results)
 
 
 def test_dftb2_batch(device, feeds_scc):
@@ -226,9 +226,9 @@ def test_dftb2_batch(device, feeds_scc):
                [H2_scc, H2O_scc, CH4_scc, C2H6_scc]]
 
     for batch in batches:
-        geometry, basis, results, kwargs = merge_systems(device, *batch)
+        geometry, orbs, results, kwargs = merge_systems(device, *batch)
 
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
 
-        dftb2_helper(calculator, geometry, basis, results)
+        dftb2_helper(calculator, geometry, orbs, results)

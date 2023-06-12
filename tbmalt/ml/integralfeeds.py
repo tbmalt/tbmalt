@@ -15,7 +15,7 @@ import numpy as np
 import torch
 from h5py import Group
 from numpy import ndarray as Array
-from tbmalt import Geometry, Basis
+from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml import Feed
 from torch import Tensor
 
@@ -124,7 +124,7 @@ class IntegralFeed(ABC, Feed):
 
     # @abstractmethod
     def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-               geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
+               geometry: Geometry, orbs: OrbitalInfo, **kwargs) -> Tensor:
         r"""Compute atomic interaction blocks.
 
         Returns the atomic blocks associated with the atoms in ``atomic_idx_1``
@@ -138,7 +138,7 @@ class IntegralFeed(ABC, Feed):
             atomic_idx_2: Atomic indices of the 2'nd atom associated with each
                 desired interaction block.
             geometry: The systems to which the atomic indices relate.
-            basis: Orbital information associated with said systems.
+            orbs: Orbital information associated with said systems.
 
         Returns:
             blocks: Requested atomic interaction sub-blocks.
@@ -185,12 +185,12 @@ class IntegralFeed(ABC, Feed):
         #
         raise NotImplementedError()
 
-    def matrix(self, geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
+    def matrix(self, geometry: Geometry, orbs: OrbitalInfo, **kwargs) -> Tensor:
         """Construct the hermitian matrix associated with this feed.
 
         Arguments:
             geometry: Systems whose matrices are to be constructed.
-            basis: Orbital information associated with said systems.
+            orbs: Orbital information associated with said systems.
 
         Keyword Arguments:
             kwargs: Any keyword arguments provided are passed during calls to
@@ -209,7 +209,7 @@ class IntegralFeed(ABC, Feed):
         # discounts optimisation, cleaning, and improving batch agnosticism.
 
         # Construct the matrix into which the results will be placed
-        mat = torch.zeros(basis.orbital_matrix_shape,
+        mat = torch.zeros(orbs.orbital_matrix_shape,
                           dtype=self.dtype, device=self.device)
 
         # Identify all unique species combinations.
@@ -217,7 +217,7 @@ class IntegralFeed(ABC, Feed):
             geometry.unique_atomic_numbers(), with_replacement=True)
 
         # Construct an element-element pair matrix
-        an_mat_a = basis.atomic_number_matrix('atomic')
+        an_mat_a = orbs.atomic_number_matrix('atomic')
 
         for pair in unique_interactions:  # Loop over the unique interactions
             # Get the indices of the atoms in each relevant interaction; but
@@ -241,10 +241,10 @@ class IntegralFeed(ABC, Feed):
             b_idx_l = a_idx[:, 3 - a_idx.shape[-1]::2].squeeze(1).cpu().numpy()
 
             # Get the matrix indices associated with the target blocks.
-            blk_idx = self.atomic_block_indices(a_idx_l, b_idx_l, basis)
+            blk_idx = self.atomic_block_indices(a_idx_l, b_idx_l, orbs)
 
             # Construct the blocks for these interactions
-            blks = self.blocks(a_idx_l, b_idx_l, geometry, basis, **kwargs)
+            blks = self.blocks(a_idx_l, b_idx_l, geometry, orbs, **kwargs)
 
             # Assign data to the matrix. As on-site blocks are not masked out
             # during the transpose assignment the transpose assignment must
@@ -255,7 +255,7 @@ class IntegralFeed(ABC, Feed):
         return mat
 
     def atomic_block_indices(self, atomic_idx_1: Array, atomic_idx_2: Array,
-                             basis: Basis) -> Array:
+                             orbs: OrbitalInfo) -> Array:
         """Returns the indices of the specified blocks.
 
         This method identifies the blocks associated with the specified atom
@@ -267,7 +267,7 @@ class IntegralFeed(ABC, Feed):
                 desired interaction block.
             atomic_idx_2: Atomic indices of the 2'nd atom associated with each
                 desired interaction block.
-            basis: Orbital information associated with said systems.
+            orbs: Orbital information associated with said systems.
 
         Returns:
             block_indices: the indices of associate with the specified blocks.
@@ -283,7 +283,7 @@ class IntegralFeed(ABC, Feed):
         idx_i, idx_j = atomic_idx_1.T, atomic_idx_2.T
 
         # Find the index at which each atomic block starts.
-        blk_starts = (opa := basis.orbs_per_atom).cumsum(-1) - opa
+        blk_starts = (opa := orbs.orbs_per_atom).cumsum(-1) - opa
 
         # Row/column offset template; used to build the indices specifying
         # the location of a block's elements in the target matrix

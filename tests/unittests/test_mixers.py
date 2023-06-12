@@ -54,7 +54,7 @@ def gen_systems(device, sizes):
     """Generates a batch of fake system for faux-SCC/SCF convergence testing.
 
     Returns variables needed to conduct faux-SCC/SCF cycles on a batch of
-    systems. Note; variables have no underling physical basis as they are
+    systems. Note; variables have no underling physical orbs as they are
     randomly generated.
 
     Returns:

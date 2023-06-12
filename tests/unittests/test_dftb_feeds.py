@@ -7,7 +7,7 @@ from typing import List
 import numpy as np
 from tbmalt.io.skf import Skf
 from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed
-from tbmalt import Geometry, Basis
+from tbmalt import Geometry, OrbitalInfo
 from tbmalt.common.batch import pack
 from functools import reduce
 
@@ -102,8 +102,8 @@ def test_scipyskfeed_single(skf_file: str, device):
 
     for mol, H_ref, S_ref in zip(
             molecules(device), hamiltonians(device), overlaps(device)):
-        H = H_feed.matrix(mol, Basis(mol.atomic_numbers, b_def))
-        S = S_feed.matrix(mol, Basis(mol.atomic_numbers, b_def))
+        H = H_feed.matrix(mol, OrbitalInfo(mol.atomic_numbers, b_def))
+        S = S_feed.matrix(mol, OrbitalInfo(mol.atomic_numbers, b_def))
 
         check_1 = torch.allclose(H, H_ref, atol=1E-7)
         check_2 = torch.allclose(S, S_ref, atol=1E-7)
@@ -123,18 +123,18 @@ def test_scipyskfeed_batch(skf_file:str, device):
         skf_file, [1, 6, 16, 79], 'overlap', device=device)
 
     mols = reduce(lambda i, j: i+j, molecules(device))
-    basis = Basis(mols.atomic_numbers,
-                  {1: [0], 6: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]})
+    orbs = OrbitalInfo(mols.atomic_numbers,
+                        {1: [0], 6: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]})
 
-    H = H_feed.matrix(mols, basis)
-    S = S_feed.matrix(mols, basis)
+    H = H_feed.matrix(mols, orbs)
+    S = S_feed.matrix(mols, orbs)
 
     check_1 = torch.allclose(H, pack(hamiltonians(device)), atol=1E-7)
     check_2 = torch.allclose(S, pack(overlaps(device)), atol=1E-7)
     check_3 = H.device == device
 
     # Check that batches of size one do not cause problems
-    check_4 = (H_feed.matrix(mols[0:1], basis[0:1]).ndim == 3)
+    check_4 = (H_feed.matrix(mols[0:1], orbs[0:1]).ndim == 3)
 
     assert check_1, 'ScipySkFeed H matrix outside of tolerance (batch)'
     assert check_2, 'ScipySkFeed S matrix outside of tolerance (batch)'
@@ -185,21 +185,21 @@ def test_skfoccupationfeed_single(device, skf_file):
 
     # Check 1: verify that results are returned on the correct device.
     check_1 = device == o_feed(
-        Basis(torch.tensor([1, 1], device=device), shell_dict)).device
+        OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)).device
 
     assert check_1, 'Results were placed on the wrong device'
 
     # Check 2: ensure results are within tolerance
     check_2a = torch.allclose(
-        o_feed(Basis(torch.tensor([1, 1], device=device), shell_dict)),
+        o_feed(OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)),
         torch.tensor([1., 1], device=device))
 
     check_2b = torch.allclose(
-        o_feed(Basis(torch.tensor([6, 1, 1, 1, 1], device=device), shell_dict)),
+        o_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1], device=device), shell_dict)),
         torch.tensor([2., 2/3, 2/3, 2/3, 1, 1, 1, 1], device=device))
 
     check_2c = torch.allclose(
-        o_feed(Basis(torch.tensor([1, 1, 8], device=device), shell_dict)),
+        o_feed(OrbitalInfo(torch.tensor([1, 1, 8], device=device), shell_dict)),
         torch.tensor([1., 1, 2, 4/3, 4/3, 4/3], device=device))
 
     check_2 = check_2a and check_2b and check_2c
@@ -212,7 +212,7 @@ def test_skfoccupationfeed_batch(device, skf_file):
     o_feed = SkfOccupationFeed.from_database(skf_file, [1, 6, 8], device=device)
     shell_dict = {1: [0], 6: [0, 1], 8: [0, 1]}
 
-    basis = Basis(torch.tensor([
+    orbs = OrbitalInfo(torch.tensor([
         [1, 1, 0, 0, 0],
         [6, 1, 1, 1, 1],
         [1, 1, 8, 0, 0],
@@ -224,7 +224,7 @@ def test_skfoccupationfeed_batch(device, skf_file):
         [1, 1,   2,   4/3, 4/3, 4/3, 0, 0]
     ], device=device)
 
-    predicted = o_feed(basis)
+    predicted = o_feed(orbs)
 
     check_1 = predicted.device == device
     assert check_1, 'Results were placed on the wrong device'

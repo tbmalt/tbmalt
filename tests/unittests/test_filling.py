@@ -11,7 +11,7 @@ from tbmalt.physics.filling import (
     fermi_entropy, gaussian_entropy
 )
 from tbmalt.common.batch import pack
-from tbmalt import Basis
+from tbmalt import OrbitalInfo
 
 torch.set_default_dtype(torch.float64)
 
@@ -180,15 +180,15 @@ def _entropy_batch(e_func, device):
     check_3 = ts.device == device
     assert check_3, f'Device persistence check failed {({e_func_name})}'
 
-    # Check 4: ensure a `basis` object can be used inplace of an e_mask
-    basis = Basis(
+    # Check 4: ensure a `orbs` object can be used inplace of an e_mask
+    orbs = OrbitalInfo(
         [torch.tensor(i) for i in [[1, 1], [8, 1, 1], [6, 1, 1, 1, 1], [1, 1, 1, 6, 8], [79] * 13]],
         {1: [0], 6: [0, 1], 8: [0, 1], 79: [0, 1, 2]})
 
     res_a = e_func(e_vals, ef, 0.0036749, e_mask=mask)
-    res_b = e_func(e_vals, ef, 0.0036749, e_mask=basis)
+    res_b = e_func(e_vals, ef, 0.0036749, e_mask=orbs)
     check_4 = torch.allclose(res_a, res_b)
-    assert check_4, f'Failed to convert basis instance to mask ({e_func_name}).'
+    assert check_4, f'Failed to convert orbs instance to mask ({e_func_name}).'
 
     # Check 5: test with a batch of size one
     check_5 = torch.allclose(e_func(e_vals[0:1], ef[0:1], kt[0:1], mask[0:1]),
@@ -551,17 +551,17 @@ def test_fermi_search_general(device):
     assert check_5a, 'Fermi search failed without searing (single)'
     assert check_5b, 'Fermi search failed without searing (batch)'
 
-    # Check 6: ensure a `basis` object can be used inplace of an e_mask
+    # Check 6: ensure a `orbs` object can be used inplace of an e_mask
     e_vals, mask = pack([H2(device)[0], CH4(device)[0]], return_mask=True)
-    basis = Basis(
+    orbs = OrbitalInfo(
         torch.tensor([[1, 1, 0, 0, 0], [6, 1, 1, 1, 1]]),
         {1: [0], 6: [0, 1]}).to(device)
     n_elec = torch.tensor([H2(device)[-1], CH4(device)[-1]], **dv)
     res_a = fermi_search(e_vals, n_elec, 0.0036749, e_mask=mask)
-    res_b = fermi_search(e_vals, n_elec, 0.0036749, e_mask=basis)
+    res_b = fermi_search(e_vals, n_elec, 0.0036749, e_mask=orbs)
     check_6 = torch.allclose(res_a, res_b)
 
-    assert check_6, 'Failed to convert basis instance to mask.'
+    assert check_6, 'Failed to convert orbs instance to mask.'
 
 
 def test_fermi_search_single(device):

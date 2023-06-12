@@ -11,7 +11,7 @@ from typing import List, Literal, Optional, Dict, Tuple
 from scipy.interpolate import CubicSpline
 import torch
 
-from tbmalt import Geometry, Basis, Periodic
+from tbmalt import Geometry, OrbitalInfo, Periodic
 from tbmalt.ml.integralfeeds import IntegralFeed
 from tbmalt.io.skf import Skf, VCRSkf
 from tbmalt.physics.dftb.slaterkoster import sub_block_rot
@@ -103,7 +103,7 @@ class ScipySkFeed(IntegralFeed):
         self.off_sites = off_sites
 
     def _off_site_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-                         geometry: Geometry, basis: Basis) -> Tensor:
+                         geometry: Geometry, orbs: OrbitalInfo) -> Tensor:
         """Compute atomic interaction blocks (off-site only).
 
         Constructs the off-site atomic blocks using Slater-Koster integral
@@ -115,7 +115,7 @@ class ScipySkFeed(IntegralFeed):
               atomic_idx_2: Indices of the 2'nd atom associated with each
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
-              basis: Orbital information associated with said systems.
+              orbs: Orbital information associated with said systems.
 
           Returns:
               blocks: Requested atomic interaction sub-blocks.
@@ -126,7 +126,7 @@ class ScipySkFeed(IntegralFeed):
         z_2 = int(geometry.atomic_numbers[atomic_idx_2[0:1].T])
 
         # Get the species' shell lists (basically a list of azimuthal numbers)
-        shells_1, shells_2 = basis.shell_dict[z_1], basis.shell_dict[z_2]
+        shells_1, shells_2 = orbs.shell_dict[z_1], orbs.shell_dict[z_2]
 
         # Inter-atomic distance and distance vector calculator.
         dist_vec = (geometry.positions[atomic_idx_2.T]
@@ -171,7 +171,7 @@ class ScipySkFeed(IntegralFeed):
         return blks
 
     def _pe_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-                   geometry: Geometry, basis: Basis,
+                   geometry: Geometry, orbs: OrbitalInfo,
                    periodic: Periodic, **kwargs) -> Tensor:
         """Compute atomic interaction blocks (on-site and off-site) with pbc.
 
@@ -184,7 +184,7 @@ class ScipySkFeed(IntegralFeed):
               atomic_idx_2: Indices of the 2'nd atom associated with each
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
-              basis: Orbital information associated with said systems.
+              orbs: Orbital information associated with said systems.
               periodic: Distance matrix and position vectors including periodic
                   images.
 
@@ -204,7 +204,7 @@ class ScipySkFeed(IntegralFeed):
         z_2 = int(geometry.atomic_numbers[atomic_idx_2[0:1].T])
 
         # Get the species' shell lists (basically a list of azimuthal numbers)
-        shells_1, shells_2 = basis.shell_dict[z_1], basis.shell_dict[z_2]
+        shells_1, shells_2 = orbs.shell_dict[z_1], orbs.shell_dict[z_2]
 
         # Inter-atomic distance and distance vector calculator.
         if n_batch is None:  # -> single
@@ -291,7 +291,7 @@ class ScipySkFeed(IntegralFeed):
         return blks
 
     def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-               geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
+               geometry: Geometry, orbs: OrbitalInfo, **kwargs) -> Tensor:
         r"""Compute atomic interaction blocks using SK-integral tables.
 
           Returns the atomic blocks associated with the atoms in ``atomic_idx_1``
@@ -307,7 +307,7 @@ class ScipySkFeed(IntegralFeed):
               atomic_idx_2: Indices of the 2'nd atom associated with each
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
-              basis: Orbital information associated with said systems.
+              orbs: Orbital information associated with said systems.
 
           Returns:
               blocks: Requested atomic interaction sub-blocks.
@@ -345,7 +345,7 @@ class ScipySkFeed(IntegralFeed):
             flip = False
 
         # Construct the tensor into which results are to be placed
-        n_rows, n_cols = basis.n_orbs_on_species(torch.stack((z_1, z_2)))
+        n_rows, n_cols = orbs.n_orbs_on_species(torch.stack((z_1, z_2)))
         blks = torch.empty(len(atomic_idx_1), n_rows, n_cols, dtype=self.dtype,
                            device=self.device)
 
@@ -360,18 +360,18 @@ class ScipySkFeed(IntegralFeed):
             if geometry.periodic is not None:
                 _on_site = self._pe_blocks(
                     atomic_idx_1[on_site], atomic_idx_2[on_site],
-                    geometry, basis, geometry.periodic, onsite=True)
+                    geometry, orbs, geometry.periodic, onsite=True)
                 blks[on_site] = blks[on_site] + _on_site
 
         if any(~on_site):  # Then the off-site blocks
             if geometry.periodic is None:
                 blks[~on_site] = self._off_site_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
-                    geometry, basis)
+                    geometry, orbs)
             else:
                 blks[~on_site] = self._pe_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
-                    geometry, basis, geometry.periodic)
+                    geometry, orbs, geometry.periodic)
 
         if flip:  # If the atoms were switched, then a transpose is required.
             blks = blks.transpose(-1, -2)
@@ -492,7 +492,7 @@ class SkFeed(IntegralFeed):
         interpolation: interpolation type.
         device: Device on which the feed object and its contents resides.
         dtype: dtype used by feed object.
-        vcr: Compression radii in DFTB basis.
+        vcr: Compression radii in DFTB orbs.
         is_local_onsite: `is_local_onsite` allows for constructing chemical
             environment dependent on-site energies.
 
@@ -547,7 +547,7 @@ class SkFeed(IntegralFeed):
         self.is_local_onsite = False
 
     def _off_site_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-                         geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
+                         geometry: Geometry, orbs: OrbitalInfo, **kwargs) -> Tensor:
         """Compute atomic interaction blocks (off-site only).
         Constructs the off-site atomic blocks using Slater-Koster integral
         tables.
@@ -557,7 +557,7 @@ class SkFeed(IntegralFeed):
               atomic_idx_2: Indices of the 2'nd atom associated with each
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
-              basis: Orbital information associated with said systems.
+              orbs: Orbital information associated with said systems.
           Returns:
               blocks: Requested atomic interaction sub-blocks.
         """
@@ -567,7 +567,7 @@ class SkFeed(IntegralFeed):
         z_2 = int(geometry.atomic_numbers[atomic_idx_2[0:1].T])
 
         # Get the species' shell lists (basically a list of azimuthal numbers)
-        shells_1, shells_2 = basis.shell_dict[z_1], basis.shell_dict[z_2]
+        shells_1, shells_2 = orbs.shell_dict[z_1], orbs.shell_dict[z_2]
 
         # Inter-atomic distance and distance vector calculator.
         dist_vec = (geometry.positions[atomic_idx_2.T]
@@ -615,7 +615,7 @@ class SkFeed(IntegralFeed):
         return blks
 
     def _pe_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-                   geometry: Geometry, basis: Basis,
+                   geometry: Geometry, orbs: OrbitalInfo,
                    periodic: Periodic, **kwargs) -> Tensor:
         """Compute atomic interaction blocks (on-site and off-site) with pbc.
 
@@ -628,7 +628,7 @@ class SkFeed(IntegralFeed):
               atomic_idx_2: Indices of the 2'nd atom associated with each
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
-              basis: Orbital information associated with said systems.
+              orbs: Orbital information associated with said systems.
               periodic: Distance matrix and position vectors including periodic
                   images.
 
@@ -648,7 +648,7 @@ class SkFeed(IntegralFeed):
         z_2 = int(geometry.atomic_numbers[atomic_idx_2[0:1].T])
 
         # Get the species' shell lists (basically a list of azimuthal numbers)
-        shells_1, shells_2 = basis.shell_dict[z_1], basis.shell_dict[z_2]
+        shells_1, shells_2 = orbs.shell_dict[z_1], orbs.shell_dict[z_2]
 
         # Inter-atomic distance and distance vector calculator.
         if n_batch is None:  # -> single
@@ -734,7 +734,7 @@ class SkFeed(IntegralFeed):
         return blks
 
     def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
-               geometry: Geometry, basis: Basis, **kwargs) -> Tensor:
+               geometry: Geometry, orbs: OrbitalInfo, **kwargs) -> Tensor:
         r"""Compute atomic interaction blocks using SK-integral tables.
 
         Returns the atomic blocks associated with the atoms in ``atomic_idx_1``
@@ -749,7 +749,7 @@ class SkFeed(IntegralFeed):
             atomic_idx_2: Indices of the 2'nd atom associated with each
                 desired interaction block.
             geometry: The systems to which the atomic indices relate.
-            basis: Orbital information associated with said systems.
+            orbs: Orbital information associated with said systems.
 
         Returns:
             blocks: Requested atomic interaction sub-blocks.
@@ -786,7 +786,7 @@ class SkFeed(IntegralFeed):
             flip = False
 
         # Construct the tensor into which results are to be placed
-        n_rows, n_cols = basis.n_orbs_on_species(torch.stack((z_1, z_2)))
+        n_rows, n_cols = orbs.n_orbs_on_species(torch.stack((z_1, z_2)))
         blks = torch.zeros(len(atomic_idx_1), n_rows, n_cols, dtype=self.dtype,
                            device=self.device)
 
@@ -806,18 +806,18 @@ class SkFeed(IntegralFeed):
             if geometry.periodic is not None:
                 _on_site = self._pe_blocks(
                     atomic_idx_1[on_site], atomic_idx_2[on_site],
-                    geometry, basis, geometry.periodic, onsite=True)
+                    geometry, orbs, geometry.periodic, onsite=True)
                 blks[on_site] = blks[on_site] + _on_site
 
         if any(~on_site):  # Then the off-site blocks
             if geometry.periodic is None:
                 blks[~on_site] = self._off_site_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
-                    geometry, basis)
+                    geometry, orbs)
             else:
                 blks[~on_site] = self._pe_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
-                    geometry, basis, geometry.periodic)
+                    geometry, orbs, geometry.periodic)
 
         if flip:  # If the atoms were switched, then a transpose is required.
             blks = blks.transpose(-1, -2)
@@ -981,7 +981,7 @@ class SkfOccupationFeed(Feed):
     def __init__(self, occupancies: Dict[int, Tensor]):
         # This class will be abstracted and extended to allow for specification
         # via shell number which will avoid the current limits which only allow
-        # for minimal basis sets.
+        # for minimal orbs sets.
 
         self.occupancies = occupancies
 
@@ -1009,7 +1009,7 @@ class SkfOccupationFeed(Feed):
         return self.__class__({k: v.to(device=device)
                                for k, v in self.occupancies.items()})
 
-    def __call__(self, basis: Basis) -> Tensor:
+    def __call__(self, orbs: OrbitalInfo) -> Tensor:
         """Shell resolved occupancies.
 
         This returns the shell resolved occupancies for the neutral atom in the
@@ -1017,7 +1017,7 @@ class SkfOccupationFeed(Feed):
         parameters read in from an SKF formatted file.
 
         Arguments:
-            basis: basis objects for the target systems.
+            orbs: orbs objects for the target systems.
 
         Returns:
             occupancies: shell resolved occupancies.
@@ -1025,9 +1025,9 @@ class SkfOccupationFeed(Feed):
 
         # Construct a pair of arrays, 'zs' & `ls`, that can be used to look up
         # the species and shell number for each orbital.
-        z, l = basis.atomic_numbers, basis.shell_ls
-        zs = prepeat_interleave(z, basis.n_orbs_on_species(z), -1)
-        ls = prepeat_interleave(l, basis.orbs_per_shell, -1)
+        z, l = orbs.atomic_numbers, orbs.shell_ls
+        zs = prepeat_interleave(z, orbs.n_orbs_on_species(z), -1)
+        ls = prepeat_interleave(l, orbs.orbs_per_shell, -1)
 
         # Tensor into which the results will be placed
         occupancies = torch.zeros_like(zs, dtype=self.dtype)
@@ -1086,14 +1086,14 @@ class HubbardFeed(Feed):
         the azimuthal number of the orbital & the species to which it belongs.
 
     Todo:
-        At a test that throws an error if a shell resolved basis is provided but
+        At a test that throws an error if a shell resolved orbs is provided but
         `hubbard_u` is found to only be atom resolved; and vise versa. The skf
         database should also instruct the loader whether it is shell-resolved.
     """
     def __init__(self, hubbard_u: Dict[int, Tensor]):
         # This class will be abstracted and extended to allow for specification
         # via shell number which will avoid the current limits which only allow
-        # for minimal basis sets.
+        # for minimal orbs sets.
 
         self.hubbard_u = hubbard_u
 
@@ -1121,25 +1121,25 @@ class HubbardFeed(Feed):
         return self.__class__({k: v.to(device=device)
                                for k, v in self.hubbard_u.items()})
 
-    def __call__(self, basis: Basis) -> Tensor:
+    def __call__(self, orbs: OrbitalInfo) -> Tensor:
         """Shell resolved occupancies.
 
         This returns the shell resolved Hubbard U for the atom.
 
         Arguments:
-            basis: basis objects for the target systems.
+            orbs: orbs objects for the target systems.
 
         Returns:
             hubbard_us: Hubbard U values, either shell or atom resolved
-                depending on status of `basis.shell_resolved`.
+                depending on status of `orbs.shell_resolved`.
         """
 
         # Construct a pair of arrays, 'zs' & `ls`, that can be used to look up
         # the species and shell number for each orbital.
-        z, l = basis.atomic_numbers, basis.shell_ls
+        z, l = orbs.atomic_numbers, orbs.shell_ls
 
-        if basis.shell_resolved:
-            zs = prepeat_interleave(z, basis.n_shells_on_species(z), -1)
+        if orbs.shell_resolved:
+            zs = prepeat_interleave(z, orbs.n_shells_on_species(z), -1)
             ls = l
 
             # Tensor into which the results will be placed

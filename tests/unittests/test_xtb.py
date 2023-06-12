@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 import torch
 
-from tbmalt import Geometry, Basis
+from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb1, Dftb2
 from tbmalt.physics.dftb.feeds import HubbardFeed
@@ -287,7 +287,7 @@ def test_dftb1_single(device: torch.device, name: str, skf_file) -> None:
     geometry = Geometry(numbers, positions)
 
     # H has a second s-function in GFN1-xTB!!
-    basis = Basis(numbers, get_elem_angular(GFN1_XTB.element))
+    basis = OrbitalInfo(numbers, get_elem_angular(GFN1_XTB.element))
 
     # create (integral) feeds
     h_feed = Gfn1HamiltonianFeed(GFN1_XTB, dtype, device)
@@ -314,7 +314,7 @@ def test_dftb1_batch(device: torch.device, name1: str, name2: str, skf_file) -> 
     geometry = Geometry(numbers, positions)
 
     # H has a second s-function in GFN1-xTB!!
-    basis = Basis(numbers, get_elem_angular(GFN1_XTB.element))
+    basis = OrbitalInfo(numbers, get_elem_angular(GFN1_XTB.element))
 
     # create (integral) feeds
     h_feed = Gfn1HamiltonianFeed(GFN1_XTB, dtype, device)
@@ -341,7 +341,7 @@ def test_dftb2_single(device: torch.device, name: str, skf_file) -> None:
     geometry = Geometry(numbers, positions)
 
     # H has a second s-function in GFN1-xTB!!
-    basis = Basis(numbers, {1: [0, 0], 6: [0, 1], 8: [0, 1]})
+    basis = OrbitalInfo(numbers, {1: [0, 0], 6: [0, 1], 8: [0, 1]})
 
     # create (integral) feeds
     h_feed = Gfn1HamiltonianFeed(GFN1_XTB, dtype, device)
@@ -370,7 +370,7 @@ def test_dftb2_batch(device: torch.device, name1: str, name2: str, skf_file) -> 
     geometry = Geometry(numbers, positions)
 
     # H has a second s-function in GFN1-xTB!!
-    basis = Basis(numbers, get_elem_angular(GFN1_XTB.element))
+    basis = OrbitalInfo(numbers, get_elem_angular(GFN1_XTB.element))
 
     # create (integral) feeds
     h_feed = Gfn1HamiltonianFeed(GFN1_XTB, dtype, device)
