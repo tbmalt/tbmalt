@@ -6,7 +6,7 @@ import torch
 import h5py
 from sklearn.ensemble import RandomForestRegressor
 
-from tbmalt import Geometry, Basis
+from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
@@ -59,7 +59,7 @@ g2_params = torch.tensor([0.5, 1.0])
 g4_params = torch.tensor([[0.02, 1.0, -1.0]])
 element_resolve = True  # If ACSF is element resolved
 n_estimators = 100  # parameters in random forest
-global_r = True  # If basis parameters is global
+global_r = True  # If orbs parameters is global
 tolerance = 1e-6  # tolerance of loss
 shell_resolved = False  # If DFTB Hubbard U is shell resolved
 
@@ -107,9 +107,9 @@ if fit_model or pred_model:
 
 # 2.2: Loading of the DFTB parameters into their associated feed objects
 # ----------------------------------------------------------------------
-# Construct the `Geometry` and `Basis` objects. The former is analogous to the
+# Construct the `Geometry` and `OrbitalInfo` objects. The former is analogous to the
 # ase.Atoms object while the latter provides information about what orbitals
-# are present and which atoms they belong two. `Basis` is perhaps a poor choice
+# are present and which atoms they belong two. `OrbitalInfo` is perhaps a poor choice
 # of name and `OrbitalInfo` would be more appropriate.
 # Construct the Hamiltonian and overlap matrix feeds; but ensure that the DFTB
 # parameter set database actually exists first.
@@ -250,8 +250,8 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
     for epoch in range(number_of_epochs):
 
         data = dataloder[indice[epoch % len(indice)]]
-        basis = Basis(data.geometry.atomic_numbers, shell_dict,
-                      shell_resolved=shell_resolved)
+        orbs = OrbitalInfo(data.geometry.atomic_numbers, shell_dict,
+                            shell_resolved=shell_resolved)
 
         if not global_r:
             this_cr = comp_r[indice[epoch % len(indice)]]
@@ -274,7 +274,7 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
         # Perform the forwards operation
         dftb_calculator.h_feed.vcr = this_cr
         dftb_calculator.s_feed.vcr = this_cr
-        dftb_calculator(data.geometry, basis)
+        dftb_calculator(data.geometry, orbs)
 
         # Calculate the loss
         loss = calculate_losses(dftb_calculator, data)
@@ -310,8 +310,8 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
     return dftb_calculator
 
 
-def build_feature(geometry, basis):
-    acsf = Acsf(geometry, basis, basis.shell_dict, g1_params, g2_params, g4_params,
+def build_feature(geometry, orbs):
+    acsf = Acsf(geometry, orbs, orbs.shell_dict, g1_params, g2_params, g4_params,
                 element_resolve=element_resolve)
     acsf()
 
@@ -348,10 +348,10 @@ def single_test(dftb_calculator: Dftb2,
     # There is random seed when choosing data, make sure the order is correct
     geometry_fit = dftb_calculator.geometry
     geometry_test = dataloder_test.geometry
-    basis_fit = dftb_calculator.basis
+    orbs_fit = dftb_calculator.orbs
 
-    basis_test = Basis(geometry_test.atomic_numbers, shell_dict,
-                       shell_resolved=shell_resolved)
+    orbs_test = OrbitalInfo(geometry_test.atomic_numbers, shell_dict,
+                            shell_resolved=shell_resolved)
 
     if not global_r:
         # flatten and remove padding atomic numbers
@@ -359,10 +359,10 @@ def single_test(dftb_calculator: Dftb2,
         numbers_test = geometry_test.atomic_numbers[geometry_test.atomic_numbers.ne(0)]
 
         # Collect ML input and reference
-        x_fit = build_feature(geometry_fit, basis_fit)
+        x_fit = build_feature(geometry_fit, orbs_fit)
         y_fit = dftb_calculator.h_feed.vcr.detach()
         y_fit = y_fit[geometry_fit.atomic_numbers.ne(0)]
-        x_test = build_feature(geometry_test, basis_test)
+        x_test = build_feature(geometry_test, orbs_test)
 
         # predict compression radii
         y_pred = scikit_learn_model(x_fit, y_fit, x_test, geometry_test)
@@ -396,8 +396,8 @@ def single_test(dftb_calculator: Dftb2,
         dftb_calculator.s_feed.vcr = this_cr
 
     # Perform DFTB calculations
-    dftb_calculator_std(geometry_test, basis_test)
-    dftb_calculator(geometry_test, basis_test)
+    dftb_calculator_std(geometry_test, orbs_test)
+    dftb_calculator(geometry_test, orbs_test)
 
 
 # STEP 3.1: Execution training

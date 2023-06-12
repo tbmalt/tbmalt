@@ -7,7 +7,7 @@ import torch.nn as nn
 import numpy as np
 import h5py
 
-from tbmalt import Geometry, Basis
+from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
@@ -263,10 +263,10 @@ def dftb_results(numbers, positions, cells, **kwargs):
     # Build objects for DFTB calculations
     geometry = Geometry(numbers, positions, cells, units='a',
                         cutoff=torch.tensor([18.0]))
-    basis = Basis(geometry.atomic_numbers, shell_dict, shell_resolved=False)
+    orbs = OrbitalInfo(geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
     if not dftb:
-        dftb_calculator(geometry, basis)
+        dftb_calculator(geometry, orbs)
     else:
         # Build new feeds
         h_feed_o = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
@@ -278,7 +278,7 @@ def dftb_results(numbers, positions, cells, **kwargs):
         kwargs = {}
         kwargs['mix_params'] = mix_params
         dftb_calculator_o = Dftb2(h_feed_o, s_feed_o, o_feed, u_feed, **kwargs)
-        dftb_calculator_o(geometry, basis)
+        dftb_calculator_o(geometry, orbs)
 
     return dftb_calculator if not dftb else dftb_calculator_o
 

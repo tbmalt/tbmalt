@@ -26,7 +26,7 @@ Tensor = torch.Tensor
 
 
 # Highest atomic number the project can deal with. Currently this is only used
-# by the `Basis` class.
+# by the `OrbitalInfo` class.
 MAX_ATOMIC_NUMBER = 120
 
 # Chemical symbols of the elements. Neutronium is included to ensure the index

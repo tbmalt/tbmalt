@@ -16,7 +16,7 @@ from typing import Optional, Union
 
 import torch
 
-from tbmalt import Geometry, Basis
+from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml import Feed
 from tbmalt.ml.integralfeeds import IntegralFeed
 from tbmalt.ml.module import require_args
@@ -41,8 +41,8 @@ class XtbOccupationFeed(Feed):
     Feed for reference occupation.
 
     A separate feed is required because the existing ones can only handle
-    a minimal basis. The extended tight-binding model, however, employs only
-    a *mostly* minimal basis.
+    a minimal orbs. The extended tight-binding model, however, employs only
+    a *mostly* minimal orbs.
     """
 
     def __init__(
@@ -100,8 +100,8 @@ class XtbOccupationFeed(Feed):
         """Floating point dtype used by feed object."""
         return self.__dtype
 
-    def __call__(self, basis: Basis) -> torch.Tensor:
-        numbers = basis.atomic_numbers
+    def __call__(self, orbs: OrbitalInfo) -> torch.Tensor:
+        numbers = orbs.atomic_numbers
 
         # helper for mapping atomic, orbital and shell indices
         ihelp = IndexHelper.from_numbers(numbers, get_elem_angular(self.par.element))
@@ -151,7 +151,7 @@ class XtbOverlapFeed(IntegralFeed):
     def matrix(self, geometry: Geometry):
         """
         Construct the overlap matrix.
-        The basis is constructed within the dxtb's `Hamiltonian` class.
+        The orbs is constructed within the dxtb's `Hamiltonian` class.
 
         Parameters
         ----------
@@ -199,7 +199,7 @@ class XtbHamiltonianFeed(IntegralFeed):
     def matrix(self, geometry: Geometry, overlap: torch.Tensor) -> torch.Tensor:
         """
         Construct the Hamiltonian matrix.
-        The basis is constructed within the dxtb's `Hamiltonian` class.
+        The orbs is constructed within the dxtb's `Hamiltonian` class.
 
         Parameters
         ----------

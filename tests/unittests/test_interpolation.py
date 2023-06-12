@@ -5,7 +5,7 @@ from scipy.interpolate import CubicSpline as SciCubSpl
 import pytest
 from tests.test_utils import *
 from tbmalt.common.maths.interpolation import PolyInterpU, CubicSpline, BicubInterp
-from tbmalt import Geometry, Basis
+from tbmalt import Geometry, OrbitalInfo
 torch.set_default_dtype(torch.float64)
 
 data = np.loadtxt('tests/unittests/data/polyinterp/HH.dat')

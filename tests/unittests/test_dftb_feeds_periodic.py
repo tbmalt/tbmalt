@@ -7,7 +7,7 @@ from typing import List
 import numpy as np
 from tbmalt.io.skf import Skf
 from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed, SkFeed
-from tbmalt import Geometry, Basis
+from tbmalt import Geometry, OrbitalInfo
 from tbmalt.common.batch import pack
 from functools import reduce
 
@@ -148,8 +148,8 @@ def test_scipyskfeed_pbc_single(skf_file: str, device):
 
     for sys, H_ref, S_ref in zip(
             systems(device), hamiltonians(device), overlaps(device)):
-        H = H_feed.matrix(sys, Basis(sys.atomic_numbers, b_def))
-        S = S_feed.matrix(sys, Basis(sys.atomic_numbers, b_def))
+        H = H_feed.matrix(sys, OrbitalInfo(sys.atomic_numbers, b_def))
+        S = S_feed.matrix(sys, OrbitalInfo(sys.atomic_numbers, b_def))
 
         check_1 = torch.allclose(H, H_ref, atol=1E-2)
         check_2 = torch.allclose(S, S_ref, atol=1E-1)
@@ -168,18 +168,18 @@ def test_scipyskfeed_pbc_batch(skf_file: str, device):
         skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
 
     sys = reduce(lambda i, j: i+j, systems(device))
-    basis = Basis(sys.atomic_numbers,
-                  {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]})
+    orbs = OrbitalInfo(sys.atomic_numbers,
+                        {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]})
 
-    H = H_feed.matrix(sys, basis)
-    S = S_feed.matrix(sys, basis)
+    H = H_feed.matrix(sys, orbs)
+    S = S_feed.matrix(sys, orbs)
 
     check_1 = torch.allclose(H, pack(hamiltonians(device)), atol=1E-2)
     check_2 = torch.allclose(S, pack(overlaps(device)), atol=1E-1)
     check_3 = H.device == device
 
     # Check that batches of size one do not cause problems
-    check_4 = (H_feed.matrix(sys[0:1], basis[0:1]).ndim == 3)
+    check_4 = (H_feed.matrix(sys[0:1], orbs[0:1]).ndim == 3)
 
     assert check_1, 'ScipySkFeed H matrix outside of tolerance (batch)'
     assert check_2, 'ScipySkFeed S matrix outside of tolerance (batch)'
@@ -202,8 +202,8 @@ def test_skffeed_pbc_single(skf_file: str, device):
 
     for sys, H_ref, S_ref in zip(
             systems(device), hamiltonians(device), overlaps(device)):
-        H = H_feed.matrix(sys, Basis(sys.atomic_numbers, b_def))
-        S = S_feed.matrix(sys, Basis(sys.atomic_numbers, b_def))
+        H = H_feed.matrix(sys, OrbitalInfo(sys.atomic_numbers, b_def))
+        S = S_feed.matrix(sys, OrbitalInfo(sys.atomic_numbers, b_def))
 
         check_1 = torch.allclose(H, H_ref, atol=1E-12)
         check_2 = torch.allclose(S, S_ref, atol=1E-12)
@@ -222,18 +222,18 @@ def test_skffeed_pbc_batch(skf_file: str, device):
         skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
 
     sys = reduce(lambda i, j: i+j, systems(device))
-    basis = Basis(sys.atomic_numbers,
-                  {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]})
+    orbs = OrbitalInfo(sys.atomic_numbers,
+                        {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]})
 
-    H = H_feed.matrix(sys, basis)
-    S = S_feed.matrix(sys, basis)
+    H = H_feed.matrix(sys, orbs)
+    S = S_feed.matrix(sys, orbs)
 
     check_1 = torch.allclose(H, pack(hamiltonians(device)), atol=1E-12)
     check_2 = torch.allclose(S, pack(overlaps(device)), atol=1E-12)
     check_3 = H.device == device
 
     # Check that batches of size one do not cause problems
-    check_4 = (H_feed.matrix(sys[0:1], basis[0:1]).ndim == 3)
+    check_4 = (H_feed.matrix(sys[0:1], orbs[0:1]).ndim == 3)
 
     assert check_1, 'SkFeed H matrix outside of tolerance (batch)'
     assert check_2, 'SkFeed S matrix outside of tolerance (batch)'

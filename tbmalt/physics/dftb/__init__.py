@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any, Literal, Union
 
 from tbmalt.ml.module import Calculator, requires_args, call_with_required_args
 from tbmalt.ml.integralfeeds import IntegralFeed
-from tbmalt import Basis
+from tbmalt import OrbitalInfo
 from tbmalt.physics.dftb.feeds import Feed, SkfOccupationFeed
 from tbmalt.physics.filling import (
     fermi_search, fermi_smearing, gaussian_smearing, entropy_term,
@@ -40,56 +40,56 @@ from torch import Tensor
 # clear in its intent and operation. This function will be made private
 # until it is cleared up.
 def _mulliken(
-        rho: Tensor, S: Tensor, basis: Optional[Basis] = None,
+        rho: Tensor, S: Tensor, orbs: Optional[OrbitalInfo] = None,
         resolution: Optional[Literal['atom', 'shell', 'orbital']] = None
 ) -> Tensor:
     r"""Mulliken population analysis.
 
     By default, orbital resolved populations are returned, however, passing the
-    associated basis instance will produce atom or shell resolved populations
-    depending on the basis instance's `shell_resolved` attribute (the behavior
+    associated orbs instance will produce atom or shell resolved populations
+    depending on the orbs instance's `shell_resolved` attribute (the behavior
     of which can be overridden via the ``resolution`` argument).
 
     Arguments:
         rho: density matrix.
         S: overlap matrix.
-        basis: a `Basis` instance may be specified to enable atom/shell
+        orbs: a `OrbitalInfo` instance may be specified to enable atom/shell
             resolved populations. If omitted, populations will be orbital
             resolved. [DEFAULT=None]
         resolution: can be specified to override the degree of resolution
-            defined by the ``basis`` instance, available options are:
+            defined by the ``orbs`` instance, available options are:
 
                 - "atom": atom resolved
                 - "shell": shell resolved
                 - "orbital": orbital resolved
 
             If unspecified, this will default to the resolution defined by the
-            `basis.shell_resolved` attribute. This is only valid when ``basis``
+            `orbs.shell_resolved` attribute. This is only valid when ``orbs``
             is also specified. [DEFAULT=None]
 
     Returns:
         q: mulliken populations.
 
     Raises:
-        TypeError: if ``resolution`` is specified in absence of ``basis``.
+        TypeError: if ``resolution`` is specified in absence of ``orbs``.
 
     """
 
-    if resolution is not None and basis is None:
+    if resolution is not None and orbs is None:
         raise TypeError(
             '"resolution" overrides default behaviour associated with the '
-            '"basis" object\'s "shell_resolved" attribute. Thus it cannot be '
-            'specified in absence of the "basis" argument.')
+            '"orbs" object\'s "shell_resolved" attribute. Thus it cannot be '
+            'specified in absence of the "orbs" argument.')
 
     q = (rho * S).sum(-1)  # Calculate the per-orbital Mulliken populations
-    if basis is not None:  # Resolve to per-shell/atom if instructed to
+    if orbs is not None:  # Resolve to per-shell/atom if instructed to
         if resolution is None:
-            # TODO: Change basis to have a res_matrix_shape property.
-            size, ind = basis.res_matrix_shape, basis.on_res
+            # TODO: Change orbs to have a res_matrix_shape property.
+            size, ind = orbs.res_matrix_shape, orbs.on_res
         elif resolution == 'atom':
-            size, ind = basis.atomic_matrix_shape, basis.on_atoms
+            size, ind = orbs.atomic_matrix_shape, orbs.on_atoms
         elif resolution == 'shell':
-            size, ind = basis.shell_matrix_shape, basis.on_shells
+            size, ind = orbs.shell_matrix_shape, orbs.on_shells
         else:
             raise NotImplementedError("Unknown resolution")
 
@@ -132,7 +132,7 @@ class Dftb1(Calculator):
         in DFTB+ for examples.
 
     Examples:
-        >>> from tbmalt import Basis, Geometry
+        >>> from tbmalt import OrbitalInfo, Geometry
         >>> from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed
         >>> from tbmalt.physics.dftb import Dftb1
         >>> from tbmalt.io.skf import Skf
@@ -161,10 +161,10 @@ class Dftb1(Calculator):
         # Preparation of system to calculate
         # Single system
         >>> geos = Geometry.from_ase_atoms(molecule('CH4'))
-        >>> basiss = Basis(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
+        >>> orbs_s = OrbitalInfo(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
         # Batch systems
         >>> geob = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
-        >>> basisb = Basis(geob.atomic_numbers, shell_dict={1: [0], 6: [0, 1],
+        >>> orbs_b = OrbitalInfo(geob.atomic_numbers, shell_dict={1: [0], 6: [0, 1],
                                                             8: [0, 1]})
 
         # Definition of feeds
@@ -174,10 +174,10 @@ class Dftb1(Calculator):
 
         # Run DFTB1 calculation
         >>> dftb = Dftb1(h_feed, s_feed, o_feed, filling_temp=0.0036749324)
-        >>> _ = dftb(geos, basiss)
+        >>> _ = dftb(geos, orbs_s)
         >>> getattr(dftb, 'q_final_atomic')
         tensor([4.3591, 0.9102, 0.9102, 0.9102, 0.9102])
-        >>> _ = dftb(geob, basisb)
+        >>> _ = dftb(geob, orbs_b)
         >>> getattr(dftb, 'q_final_atomic')
         tensor([[6.7552, 0.6224, 0.6224, 0.0000, 0.0000],
                 [4.3591, 0.9102, 0.9102, 0.9102, 0.9102]])
@@ -234,7 +234,7 @@ class Dftb1(Calculator):
                     self.s_feed.matrix, self)
             else:
                 # Otherwise just make the default call
-                self._overlap = self.s_feed.matrix(self.geometry, self.basis)
+                self._overlap = self.s_feed.matrix(self.geometry, self.orbs)
 
         # Return the cached overlap matrix.
         return self._overlap
@@ -254,7 +254,7 @@ class Dftb1(Calculator):
                     self.h_feed.matrix, self)
             else:
                 self._hamiltonian = self.h_feed.matrix(
-                    self.geometry, self.basis)
+                    self.geometry, self.orbs)
 
         return self._hamiltonian
 
@@ -265,7 +265,7 @@ class Dftb1(Calculator):
     @property
     def q_zero(self):
         """Initial orbital populations"""
-        return self.o_feed(self.basis)
+        return self.o_feed(self.orbs)
 
     @property
     def q_final(self):
@@ -281,14 +281,14 @@ class Dftb1(Calculator):
     def q_zero_shells(self):
         """Initial shell-wise populations"""
         return torch.zeros(
-            self.basis.shell_matrix_shape[:-1],
+            self.orbs.shell_matrix_shape[:-1],
             device=self.device, dtype=self.dtype).scatter_add_(
-            -1, self.basis.on_shells.clamp(min=0), self.q_zero)
+            -1, self.orbs.on_shells.clamp(min=0), self.q_zero)
 
     @property
     def q_final_shells(self):
         """Final shell-wise populations"""
-        return _mulliken(self.rho, self.overlap, self.basis, 'shell')
+        return _mulliken(self.rho, self.overlap, self.orbs, 'shell')
 
     @property
     def q_delta_shells(self):
@@ -299,14 +299,14 @@ class Dftb1(Calculator):
     def q_zero_atomic(self):
         """Initial atomic populations"""
         return torch.zeros(
-            self.basis.atomic_matrix_shape[:-1],
+            self.orbs.atomic_matrix_shape[:-1],
             device=self.device, dtype=self.dtype).scatter_add_(
-            -1, self.basis.on_atoms.clamp(min=0), self.q_zero)
+            -1, self.orbs.on_atoms.clamp(min=0), self.q_zero)
 
     @property
     def q_final_atomic(self):
         """Final atomic populations"""
-        return _mulliken(self.rho, self.overlap, self.basis, 'atom')
+        return _mulliken(self.rho, self.overlap, self.orbs, 'atom')
 
     @property
     def dipole(self) -> Tensor:
@@ -322,7 +322,7 @@ class Dftb1(Calculator):
 
     @property
     def q_zero_res(self):
-        if self.basis.shell_resolved:
+        if self.orbs.shell_resolved:
             return self.q_zero_shells
         else:
             return self.q_zero_atomic
@@ -345,12 +345,12 @@ class Dftb1(Calculator):
         if self.filling_temp is not None:
             return self.filling_scheme(
                 self.eig_values, self.fermi_energy, self.filling_temp,
-                e_mask=self.basis if self.is_batch else None) * scale_factor
+                e_mask=self.orbs if self.is_batch else None) * scale_factor
         # Otherwise just fill according to the Aufbau principle
         else:
             return aufbau_filling(
                 self.eig_values, self.n_electrons,
-                e_mask=self.basis if self.is_batch else None) * scale_factor
+                e_mask=self.orbs if self.is_batch else None) * scale_factor
 
     @property
     def fermi_energy(self):
@@ -359,7 +359,7 @@ class Dftb1(Calculator):
             self.eig_values, self.n_electrons, self.filling_temp,
             self.filling_scheme,
             # Pass the e_mask argument, but only if required.
-            e_mask=self.basis if self.is_batch else None)
+            e_mask=self.orbs if self.is_batch else None)
 
     @property
     def band_energy(self):
@@ -377,7 +377,7 @@ class Dftb1(Calculator):
             # The function `entropy_term` yields the "TS" term
             energy -= scale_factor * entropy_term(
                 self.filling_scheme, self.eig_values, self.fermi_energy,
-                self.filling_temp, e_mask=self.basis if self.is_batch else None)
+                self.filling_temp, e_mask=self.orbs if self.is_batch else None)
         return energy
 
     @property
@@ -491,8 +491,8 @@ class Dftb2(Dftb1):
             for the requested species.
         u_feed: this feed provides the Hubbard-U values as needed to construct
             the gamma matrix. This must be a `Feed` type object which when
-            provided with a `Basis` object returns the Hubbard-U values for
-            the target system.
+            provided with a `OrbitalInfo` object returns the Hubbard-U values
+            for the target system.
         r_feed: this feed describes the repulsive interaction. [DEFAULT: None]
         filling_temp: Electronic temperature used to calculate Fermi-energy.
             [DEFAULT: None]
@@ -535,7 +535,7 @@ class Dftb2(Dftb1):
             perform charge mixing.
 
     Examples:
-        >>> from tbmalt import Basis, Geometry
+        >>> from tbmalt import OrbitalInfo, Geometry
         >>> from tbmalt.physics.dftb.feeds import ScipySkFeed,\
             SkfOccupationFeed, HubbardFeed
         >>> from tbmalt.physics.dftb import Dftb2
@@ -565,10 +565,10 @@ class Dftb2(Dftb1):
         # Preparation of system to calculate
         # Single system
         >>> geos = Geometry.from_ase_atoms(molecule('CH4'))
-        >>> basiss = Basis(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
+        >>> orbs_s = OrbitalInfo(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
         # Batch systems
         >>> geob = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
-        >>> basisb = Basis(geob.atomic_numbers, shell_dict={1: [0], 6: [0, 1],
+        >>> orbs_b = OrbitalInfo(geob.atomic_numbers, shell_dict={1: [0], 6: [0, 1],
                                                             8: [0, 1]})
         # Single system with pbc
         >>> geop = Geometry(
@@ -582,7 +582,7 @@ class Dftb2(Dftb1):
                               [5.0, 0.0, 5.0],
                               [0.0, 6.0, 6.0]]),
                 units='a', cutoff=torch.tensor([9.98]))
-        >>> basisp = Basis(geop.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
+        >>> orbs_p = OrbitalInfo(geop.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
 
 
         # Definition of feeds
@@ -596,14 +596,14 @@ class Dftb2(Dftb1):
                           'generations': 3, 'tolerance': 1e-10}
         >>> dftb2 = Dftb2(h_feed, s_feed, o_feed, u_feed,
                           filling_temp=0.0036749324, mix_params=mix_params)
-        >>> _ = dftb2(geos, basiss)
+        >>> _ = dftb2(geos, orbs_s)
         >>> getattr(dftb2, 'q_final_atomic')
         tensor([4.3054, 0.9237, 0.9237, 0.9237, 0.9237])
-        >>> _ = dftb2(geob, basisb)
+        >>> _ = dftb2(geob, orbs_b)
         >>> getattr(dftb2, 'q_final_atomic')
         tensor([[6.5856, 0.7072, 0.7072, 0.0000, 0.0000],
                 [4.3054, 0.9237, 0.9237, 0.9237, 0.9237]])
-        >>> _ = dftb2(geop, basisp)
+        >>> _ = dftb2(geop, orbs_p)
         >>> getattr(dftb2, 'q_final_atomic')
         tensor([4.6124, 0.8332, 0.8527, 0.8518, 0.8499])
 
@@ -660,7 +660,7 @@ class Dftb2(Dftb1):
                     self.h_feed.matrix, self)
             else:
                 self._core_hamiltonian = self.h_feed.matrix(
-                    self.geometry, self.basis)
+                    self.geometry, self.orbs)
 
         return self._core_hamiltonian
 
@@ -691,8 +691,8 @@ class Dftb2(Dftb1):
         """Gamma matrix as constructed using the `u_feed`"""
         if self._gamma is None:
             self._gamma = build_gamma_matrix(
-                self.geometry, self.basis, self.invr,
-                self.u_feed(self.basis), self.gamma_scheme)
+                self.geometry, self.orbs, self.invr,
+                self.u_feed(self.orbs), self.gamma_scheme)
         return self._gamma
 
     @gamma.setter
@@ -775,13 +775,13 @@ class Dftb2(Dftb1):
             else:
                 # For the batch case, systems will be culled as and when they
                 # converge. This process involves modifying attributes such as
-                # `geometry`, `basis`, `overlap`, etc. Doing so allows all the
+                # `geometry`, `orbs`, `overlap`, etc. Doing so allows all the
                 # existing code within the methods and properties to be used.
                 # However, this requires that copies of the original objects
                 # are saved and restored at the end of the batch SCC cycle.
                 # Note that a copy of the second order hamiltonian matrix is not
                 # required as it is regenerated in full in the second SCC cycle.
-                c_geometry, c_basis = self.geometry, self.basis
+                c_geometry, c_orbs = self.geometry, self.orbs
                 c_overlap, c_gamma = self.overlap, self.gamma
                 c_invr, c_hamiltonian_copy = self.invr, self.core_hamiltonian
 
@@ -820,7 +820,7 @@ class Dftb2(Dftb1):
                             # Cull calculator attributes
                             self.__cull(c_mask)
                             # Cull local variables
-                            n_res = self.basis.res_matrix_shape[-1]
+                            n_res = self.orbs.res_matrix_shape[-1]
                             system_indices = system_indices[~c_mask]
                             q_current = q_current[~c_mask, :n_res]
                             # Cull mixer
@@ -831,7 +831,7 @@ class Dftb2(Dftb1):
                     if not self.suppress_SCF_error:
                         # Here a restore is performed before the error being
                         # raised to help with debugging.
-                        self._geometry, self._basis = c_geometry, c_basis
+                        self._geometry, self._orbs = c_geometry, c_orbs
                         self.overlap, self.gamma = c_overlap, c_gamma
                         self.invr, self.core_hamiltonian = c_invr,\
                             c_hamiltonian_copy
@@ -843,7 +843,7 @@ class Dftb2(Dftb1):
                 # Restore the calculator back to its state prior to culling.
                 # Properties like `rho` and `eig_values` are not reset as it is
                 # assumed that they will be overridden in the next stage.
-                self._geometry, self._basis = c_geometry, c_basis
+                self._geometry, self._orbs = c_geometry, c_orbs
                 self.overlap, self.gamma = c_overlap, c_gamma
                 self.invr, self.core_hamiltonian = c_invr, c_hamiltonian_copy
 
@@ -876,10 +876,10 @@ class Dftb2(Dftb1):
             Do not invoke this function manually unless you are sure that you
             know what you are doing!
         """
-        self._basis = self.basis[~mask]
+        self._orbs = self.orbs[~mask]
         self._geometry = self.geometry[~mask]
-        n_orbs = torch.max(self.basis.n_orbitals)
-        n_res = self.basis.res_matrix_shape[-1]
+        n_orbs = torch.max(self.orbs.n_orbitals)
+        n_res = self.orbs.res_matrix_shape[-1]
         self._overlap = self._overlap[~mask, :n_orbs, :n_orbs]
         self._core_hamiltonian = self._core_hamiltonian[~mask, :n_orbs, :n_orbs]
         self._gamma = self._gamma[~mask, :n_res, :n_res]
@@ -907,14 +907,14 @@ class Dftb2(Dftb1):
             computed charges are only returned to facilitate ease of use.
 
             The charges ``q_in`` and ``q_out`` may be either shell or atom
-            resolved, but must match up with that as defined by the basis
+            resolved, but must match up with that as defined by the orbs
             attribute `shell_resolved`.
         """
 
         # Construct the shift matrix
         shifts = torch.einsum(
             '...i,...ij->...j', q_in - self.q_zero_res, self.gamma)
-        shifts = prepeat_interleave(shifts, self.basis.orbs_per_res)
+        shifts = prepeat_interleave(shifts, self.orbs.orbs_per_res)
         shifts = (shifts[..., None] + shifts[..., None, :])
 
         # Compute the second order Hamiltonian matrix
@@ -932,7 +932,7 @@ class Dftb2(Dftb1):
         self.rho = s_occs @ s_occs.transpose(-1, -2).conj()
 
         # Compute and return the new
-        return _mulliken(self.rho, self.overlap, self.basis)
+        return _mulliken(self.rho, self.overlap, self.orbs)
 
     def reset(self):
         """Reset all attributes and cached properties."""

@@ -8,7 +8,7 @@ import numpy as np
 from tbmalt import Geometry
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
-from tbmalt.structures.basis import _rows_to_NxNx2
+from tbmalt.structures.orbitalinfo import _rows_to_NxNx2
 
 
 class Acsf:
@@ -236,7 +236,7 @@ class Acsf:
             for j, jan in enumerate(self.unique_atomic_numbers[i:]):
                 _mask.append(torch.tensor([ian, jan], device=self._device))
         uniq_atom_pair = pack(_mask)
-        # anm = self.basis.atomic_number_matrix('atomic')
+        # anm = self.orbs.atomic_number_matrix('atomic')
 
         g_res = []
         for iu in uniq_atom_pair:

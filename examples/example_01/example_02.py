@@ -4,7 +4,7 @@ import random
 import torch
 import h5py
 
-from tbmalt import Basis
+from tbmalt import OrbitalInfo
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
@@ -93,12 +93,12 @@ else:
 
 # 2.2: Loading of the DFTB parameters into their associated feed objects
 # ----------------------------------------------------------------------
-# Construct the `Geometry` and `Basis` objects. The former is analogous to the
+# Construct the `Geometry` and `OrbitalInfo` objects. The former is analogous to the
 # ase.Atoms object while the latter provides information about what orbitals
-# are present and which atoms they belong two. `Basis` is perhaps a poor choice
+# are present and which atoms they belong two. `OrbitalInfo` is perhaps a poor choice
 # of name and `OrbitalInfo` would be more appropriate.
 # geometry = Geometry(atomic_numbers, positions, units='a')
-# basis = Basis(geometry.atomic_numbers, shell_dict, shell_resolved=False)
+# orbs = OrbitalInfo(geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
 # Construct the Hamiltonian and overlap matrix feeds; but ensure that the DFTB
 # parameter set database actually exists first.
@@ -181,10 +181,10 @@ if fit_model:
     for epoch in range(number_of_epochs):
 
         data = dataloder[indice[epoch % len(indice)]]
-        basis = Basis(data.geometry.atomic_numbers, shell_dict, shell_resolved=False)
+        orbs = OrbitalInfo(data.geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
         # Perform the forwards operation
-        dftb_calculator(data.geometry, basis)
+        dftb_calculator(data.geometry, orbs)
 
         # Calculate the loss
         loss = calculate_losses(dftb_calculator, data)

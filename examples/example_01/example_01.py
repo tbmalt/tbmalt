@@ -3,7 +3,7 @@
 from os.path import exists
 from typing import Any
 import torch
-from tbmalt import Geometry, Basis
+from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
@@ -55,12 +55,11 @@ target_path = 'target_data.json'
 # 2.1: Target system specific objects
 # -----------------------------------
 
-# Construct the `Geometry` and `Basis` objects. The former is analogous to the
-# ase.Atoms object while the latter provides information about what orbitals
-# are present and which atoms they belong two. `Basis` is perhaps a poor choice
-# of name and `OrbitalInfo` would be more appropriate.
+# Construct the `Geometry` and `OrbitalInfo` objects. The former is analogous
+# to the ase.Atoms object while the latter provides information about what
+# orbitals are present and which atoms they belong two.
 geometry = Geometry.from_ase_atoms(list(map(molecule, molecule_names)))
-basis = Basis(geometry.atomic_numbers, shell_dict, shell_resolved=False)
+orbs = OrbitalInfo(geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
 # geometry[True, False, False, False]
 # 2.2: Loading of the DFTB parameters into their associated feed objects
@@ -97,7 +96,7 @@ u_feed = HubbardFeed.from_database(parameter_db_path, species)
 # As this is a minimal working example, no optional settings are provided to the
 # calculator object.
 dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed)
-dftb_calculator(geometry, basis)
+dftb_calculator(geometry, orbs)
 
 # Construct machine learning object
 lr = 0.002
@@ -174,7 +173,7 @@ def update_model(calculator: Calculator):
 if fit_model:
     for epoch in range(1, number_of_epochs + 1):
         # Perform the forwards operation
-        dftb_calculator(geometry, basis)
+        dftb_calculator(geometry, orbs)
 
         # Calculate the loss
         loss = calculate_losses(dftb_calculator, targets)
@@ -193,4 +192,4 @@ if fit_model:
         # dftb_calculator.reset()
 else:
     # Run the DFTB calculation
-    dftb_calculator(geometry, basis)
+    dftb_calculator(geometry, orbs)

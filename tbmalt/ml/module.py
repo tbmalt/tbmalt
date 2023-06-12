@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any, Tuple
 from functools import wraps
 import torch
 
-from tbmalt import Geometry, Basis
+from tbmalt import Geometry, OrbitalInfo
 
 
 def require_args(*r_args, **r_kwargs):
@@ -87,7 +87,7 @@ class Calculator(ABC):
         self.__device = device
 
         self._geometry = None
-        self._basis = None
+        self._orbs = None
         self._ml_params = None
 
     @property
@@ -104,13 +104,13 @@ class Calculator(ABC):
     def forward(self, cache: Optional[Dict[str, Any]] = None):
         pass
 
-    def __call__(self, geometry: Geometry, basis: Basis,
+    def __call__(self, geometry: Geometry, orbs: OrbitalInfo,
                  cache: Optional[Dict[str, Any]] = None, **kwargs):
         """Run the calculator instance.
 
         Arguments:
             geometry: System(s) upon which the calculation is to be run.
-            basis: Orbital information associated with said system(s).
+            orbs: Orbital information associated with said system(s).
             cache: A cache entity that may be used to bootstrap the calculation.
 
         Returns:
@@ -121,36 +121,36 @@ class Calculator(ABC):
                 energy.
 
         """
-        # If a new geometry & basis object have been provided then it's assumed
+        # If a new geometry & orbs object have been provided then it's assumed
         # that the user wants to use the calculator on a new system. Otherwise
         # assume the user wishes to rerun the calculator on the current system.
         # The latter is useful if rerunning a calculation after updating one or
         # more of the feed objects.
 
-        g_spec, b_spec = geometry is not None, basis is not None
+        g_spec, b_spec = geometry is not None, orbs is not None
 
-        # Either geometry and basis are passed or neither are. It is not logical
+        # Either geometry and orbs are passed or neither are. It is not logical
         # to provide only one.
         if all([g_spec, b_spec]) != any([g_spec, b_spec]):
             raise ValueError(
-                '"geometry" & "basis" are mutually inclusive arguments; either '
+                '"geometry" & "orbs" are mutually inclusive arguments; either '
                 'both must be provided or neither.')
 
-        # If no geometry/basis objects were provide and none are currently set
+        # If no geometry/orbs objects were provide and none are currently set
         # then no calculation can be run.
         if not g_spec and self.geometry is None:
             raise AttributeError(
-                '"geometry" & "basis" objects must be specified before a '
+                '"geometry" & "orbs" objects must be specified before a '
                 'calculation can run')
 
-        # Reset the calculator, update the `geometry` & `basis` attributes, if
+        # Reset the calculator, update the `geometry` & `orbs` attributes, if
         # required, then call the `forward` method.
         # reinitialise, and then call the `forward` method.
         if not g_spec:
             self.reset()
         else:
             self.reset()
-            self._geometry, self._basis = geometry, basis
+            self._geometry, self._orbs = geometry, orbs
 
         return self.forward(cache=cache, **kwargs)
 
@@ -169,8 +169,8 @@ class Calculator(ABC):
         return self._geometry
 
     @property
-    def basis(self):
-        return self._basis
+    def orbs(self):
+        return self._orbs
 
     @abstractmethod
     def reset(self):
