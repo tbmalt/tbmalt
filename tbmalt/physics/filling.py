@@ -13,8 +13,9 @@ from tbmalt.common.batch import psort
 
 _Scheme = Callable[[Tensor, Tensor, float_like], Tensor]
 
-def entropy_term(func, eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
-                 e_mask: Optional[Union[Tensor, OrbitalInfo]] = None, **kwargs) -> Tensor:
+def entropy_term(func, eigenvalues: Tensor, fermi_energy: Tensor,
+                 kT: float_like, e_mask: Optional[Union[Tensor, OrbitalInfo]] = None,
+                 **kwargs) -> Tensor:
     if func == fermi_smearing:
         return fermi_entropy(eigenvalues, fermi_energy, kT, e_mask, **kwargs)
     elif func == gaussian_smearing:
@@ -26,17 +27,14 @@ def entropy_term(func, eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like
 
 
 def fermi_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
-                  e_mask: Optional[Union[Tensor, OrbitalInfo]] = None) -> Tensor:
+                  e_mask: Optional[Union[Tensor, OrbitalInfo]] = None
+                  ) -> Tensor:
     r"""Calculates the electronic entropy term for Fermi-Dirac smearing.
 
-        Calculate a system's electronic entropy term. The entropy term is required
-        when calculating various properties, most notably the Mermin free energy;
-        which is used in place of the total system energy when finite temperature
-        (electronic broadening) is active.
-
-        .. math::
-
-            TS = -k_B\sum_{i}f_i \; ln(f_i) + (1 - f_i)\; ln(1 - f_i))
+        Calculate a system's electronic entropy term. The entropy term is
+        required when calculating various properties, most notably the Mermin
+        free energy; which is used in place of the total system energy when
+        finite temperature (electronic broadening) is active.
 
         Arguments:
             eigenvalues: Eigen-energies, i.e. orbital-energies.
@@ -47,6 +45,27 @@ def fermi_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
 
         Returns:
             ts: The entropy term(s).
+
+        Notes:
+            The entropy term is computed as:
+
+            .. math::
+
+                TS = -k_B\sum_{i}[f_i \; ln(f_i) + (1 - f_i)\; ln(1 - f_i)]
+
+        Examples:
+            >>> from tbmalt.physics.filling import fermi_entropy
+
+            # An example H2 system
+            >>> e_vals = torch.tensor([-0.3405911944959140,
+                                       0.2311892808528265])
+            >>> kt = torch.tensor(0.0036749324000000)
+            >>> e_fermi = torch.tensor(-0.0547009568215437)
+
+            # Calculate the entropy term
+            >>> ts = fermi_entropy(e_vals, e_fermi, kt)
+            >>> ts
+            tensor(0.)
 
         """
     # If a OrbitalInfo instance was given as a mask then convert it to a tensor
@@ -73,13 +92,9 @@ def fermi_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
 
 
 def gaussian_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
-                     e_mask: Optional[Union[Tensor, OrbitalInfo]] = None) -> Tensor:
+                     e_mask: Optional[Union[Tensor, OrbitalInfo]] = None
+                     ) -> Tensor:
     r"""Calculates the electronic entropy term for Gaussian bases smearing.
-
-        .. math::
-
-            TS = \frac{k_B}{2 \sqrt{\pi}} \sum_{i} exp \left(- \left(
-                    \frac{\epsilon_i E_f}{kT} \right)^2 \right)
 
         Arguments:
             eigenvalues: Eigen-energies, i.e. orbital-energies.
@@ -90,6 +105,28 @@ def gaussian_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
 
         Returns:
             ts: The entropy term(s).
+
+        Notes:
+            The entropy term is computed as:
+
+            .. math::
+
+                TS = \frac{k_B}{2 \sqrt{\pi}} \sum_{i} exp \left(- \left(
+                        \frac{\epsilon_i E_f}{kT} \right)^2 \right)
+
+        Examples:
+            >>> from tbmalt.physics.filling import gaussian_entropy
+
+            # An example H2 system
+            >>> e_vals = torch.tensor([-0.3405911944959140,
+                                       0.2311892808528265])
+            >>> kt = torch.tensor(0.0036749324000000)
+            >>> e_fermi = torch.tensor(-0.0547009568215437)
+
+            # Calculate the entropy term
+            >>> ts = gaussian_entropy(e_vals, e_fermi, kt)
+            >>> ts
+            tensor(0.)
 
         """
     # If a OrbitalInfo instance was given as a mask then convert it to a tensor
@@ -160,10 +197,11 @@ def _smearing_preprocessing(
 
 
 def _smearing_postprocessing(
-        occupancy, e_mask: Optional[Union[Tensor, OrbitalInfo]] = None) -> Tensor:
+        occupancy, e_mask: Optional[Union[Tensor, OrbitalInfo]] = None
+        ) -> Tensor:
     """Zero out ghost states due to padding
 
-    Args:
+    Arguments:
         occupancy: Occupancies of the orbitals
         e_mask: Provides info required to distinguish "real" ``eigenvalues``
             from "fake" ones. This is Mandatory when using smearing on batched
@@ -226,6 +264,21 @@ def fermi_smearing(
 
     Warnings:
         Gradients resulting from this function can be ill defined, i.e. nan.
+
+    Examples:
+        >>> from tbmalt.physics.filling import fermi_smearing
+
+        # An example H2 system
+        >>> e_vals = torch.tensor([-0.3405911944959140,
+                                   0.2311892808528265])
+        >>> kt = torch.tensor(0.0036749324000000)
+        >>> e_fermi = torch.tensor(-0.0547009568215437)
+
+        # Fermi smearing
+        >>> occ = fermi_smearing(e_vals, e_fermi, kt)
+        >>> occ
+        tensor([1.0000e+00, 1.6375e-34])
+
     """
     # Developers Notes: it might be worth trying to resolve the gradient
     # stability issue associated with this function.
@@ -278,6 +331,20 @@ def gaussian_smearing(
     Warnings:
         Gradients will become unstable if a `kT` value of zero is used.
 
+    Examples:
+        >>> from tbmalt.physics.filling import gaussian_smearing
+
+        # An example H2 system
+        >>> e_vals = torch.tensor([-0.3405911944959140,
+                                   0.2311892808528265])
+        >>> kt = torch.tensor(0.0036749324000000)
+        >>> e_fermi = torch.tensor(-0.0547009568215437)
+
+        # Gaussian smearing
+        >>> occ = gaussian_smearing(e_vals, e_fermi, kt)
+        >>> occ
+        tensor([1., 0.])
+
     """
     fermi_energy, kT = _smearing_preprocessing(eigenvalues, fermi_energy, kT)
 
@@ -292,7 +359,8 @@ def gaussian_smearing(
 
 def _middle_gap_approximation(
         eigenvalues: Tensor, n_electrons: Tensor, scale_factor: Tensor,
-        e_mask: Optional[Tensor] = None, return_occupations: bool = False):
+        e_mask: Optional[Tensor] = None, return_occupations: bool = False
+        ) -> Tuple[Tensor, Tensor]:
     """Returns the midpoint between the HOMO and LUMO."""
 
     # Shape of Ɛ tensor where k-points & spin-channels have been flattened out.
@@ -429,6 +497,21 @@ def fermi_search(
                (2020). DFTB+, a software package for efficient approximate
                density functional theory based atomistic simulations. The
                Journal of Chemical Physics, 152(12), 124101.
+
+    Examples:
+        >>> from tbmalt.physics.filling import fermi_search
+
+        # An example H2 system
+        >>> e_vals = torch.tensor([-0.3405911944959140,
+                                   0.2311892808528265])
+        >>> kt = torch.tensor(0.0036749324000000)
+        >>> n_elec = 2.0
+
+        # Fermi search
+        >>> e_fermi = fermi_search(e_vals, n_elec, kt, scheme=fermi_smearing)
+        >>> e_fermi
+        tensor(-0.0547)
+
     """
 
     # __Setup__
@@ -490,7 +573,8 @@ def fermi_search(
     else:
         # e_fermi holds results & c_mask tracks which systems have converged.
         e_fermi = torch.zeros_like(n_electrons, device=dev, dtype=dtype)
-        c_mask = torch.full_like(n_electrons, False, dtype=torch.bool, device=dev)
+        c_mask = torch.full_like(n_electrons, False, dtype=torch.bool,
+                                 device=dev)
 
         def elec_count(f, m=...):
             """Makes a call to the smearing function & returns the sum.
@@ -598,6 +682,7 @@ def aufbau_filling(
     Returns:
         occupancies: Fractional occupancies of the orbitals according to Aufbau
             filling.
+
     """
 
     # No comments are provided for the code here as all the code present is
