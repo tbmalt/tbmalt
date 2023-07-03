@@ -51,6 +51,27 @@ class Skf:
          occupations: Occupations of the orbitals, homo-atomic systems only.
             [DEFAULT=None]
 
+    Examples:
+        Examples of reading and writing.
+
+        >>> import urllib, tarfile
+        >>> from os.path import join
+        >>> from tbmalt.io.skf import Skf
+        >>> link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+        >>> taraug = urllib.request.urlretrieve(link, path := join('./auorg-1-1.tar.xz'))
+        >>> tartmp = tarfile.open(path)
+        >>> tartmp.extractall('./')
+        >>> cc = Skf.from_skf('./auorg-1-1/C-C.skf')
+        >>> print(cc.hamiltonian.keys())
+        dict_keys([(0, 0), (0, 1), (1, 1)])
+
+        use auorg-1-1 to generate binary h5 and read the binary file
+
+        >>> cc.write('tmp.h5')
+        >>> cch5 = Skf.read('tmp.h5')
+        >>> print(cch5.hamiltonian.keys())
+        dict_keys([(0, 0), (0, 1), (1, 1)])
+
     Attributes:
         atomic: True if the system contains atomic data, only relevant to the
             homo-atomic cases.
@@ -58,12 +79,12 @@ class Skf:
     .. _Notes:
     Notes:
         HOMO atomic systems commonly, but not always, include additional
-        "atomic" data; nam`ely atomic mass, on-site terms, occupations, and
+        "atomic" data; namely atomic mass, on-site terms, occupations, and
         the Hubbard-U values. These can be optionally specified using the
         ``mass``, ``on_sites``, ``occupations``, and ``hubbard_us`` attributes
         respectively. However, these attributes are mutually inclusive, i.e.
         either all are specified or none are. Furthermore, values contained
-        within such tensors should be ordered from lowest azimuthal number
+        within such tensors should be ordered from the lowest azimuthal number
         to highest, where applicable.
 
         Further information regarding the skf file format specification can be
@@ -196,7 +217,7 @@ class Skf:
 
             return cls.from_skf(path, **kwargs)
 
-        with h5py.File(path, 'r') as db:  # Otherwise must be an hdf5 database
+        with h5py.File(path, 'r') as db:  # Otherwise must be a hdf5 database
             # If atom_pair is specified use this to identify the target
             if atom_pair is not None:
                 name = '-'.join([chemical_symbols[int(i)] for i in atom_pair])
@@ -271,7 +292,7 @@ class Skf:
             lines[2 + atomic: 2 + atomic + n_grids])),
             **dd).view(n_grids, -1).chunk(2, 1)
 
-        # H/S tables are reordered so the lowest l comes first, broken up into
+        # H/S tables are reordered so the lowest l comes first, broken up
         # into shell-pair chunks, e.g. ss, sp, sd, pp, etc, before finally
         # being placed into dictionaries.
         count = h_data.shape[-1]
@@ -316,7 +337,7 @@ class Skf:
         """Instantiate a `Skf` instances from an HDF5 group.
 
         Arguments:
-            source: An HDF5 group containing slater-koster data.
+            source: An HDF5 group containing Slater-Koster data.
             device: Device on which to place tensors. [DEFAULT=None]
             dtype: dtype to be used for floating point tensors. [DEFAULT=None]
 
@@ -331,7 +352,7 @@ class Skf:
     def write(self, path: str, overwrite: Optional[bool] = False):
         """Save the Slater-Koster data to a file.
 
-        The target file can be either an skf file or an hdf5 database. Desired
+        The target file can be either a skf file or a hdf5 database. Desired
         file format will be inferred from the file's name.
 
         Arguments:
@@ -362,7 +383,7 @@ class Skf:
                 self.to_hdf5(db.create_group(name))
 
     def to_skf(self, path: str):
-        """Writes data to an skf formatted file.
+        """Writes data to a skf formatted file.
 
         Arguments:
             path: path specifying the location of the skf file.
@@ -604,6 +625,19 @@ class VCRSkf(Skf):
         occupations: Occupations of the orbitals, homo-atomic systems only.
             [DEFAULT=None]
 
+    Examples:
+        Examples of reading the h5 file with VCR. Generation data set with VCR
+        can be seen in `examples/example_01/example_02_setup.py`.
+
+        >>> import urllib, torch
+        >>> from os.path import join
+        >>> from tbmalt.io.skf import Skf
+        >>> link = 'https://zenodo.org/record/8109578/files/example_dftb_vcr.h5?download=1'
+        >>> h5file = urllib.request.urlretrieve(link, path := join('./example_dftb_vcr.h5'))
+        >>> skfh5 = Skf.read('./example_dftb_vcr.h5', torch.tensor([6, 6]))
+        >>> print(skfh5.hamiltonian.keys())
+        dict_keys([(0, 0), (0, 1), (1, 1)])
+
     Notes:
         Unlike their `Skf` parent class `VCRSkf` files cannot be stored as text
         files, only as HDF5 binaries.
@@ -622,7 +656,7 @@ class VCRSkf(Skf):
     @classmethod
     def read(cls, path: str, atom_pair: Optional[Sequence[int]] = None,
              **kwargs) -> 'VCRSkf':
-        """Load variable compression radii Slater-Koster data from an hdf5 file.
+        """Load variable compression radii Slater-Koster data from a hdf5 file.
 
         Arguments:
             path: Path to the hdf5 database file that is to be read.
@@ -663,8 +697,8 @@ class VCRSkf(Skf):
         """Instantiate a `VCRSkf` instances from an HDF5 group.
 
         Arguments:
-            source: HDF5 group containing variable compression radius slater-
-                koster data.
+            source: HDF5 group containing variable compression radius Slater-
+                Koster data.
             device: Device on which to place tensors. [DEFAULT=None]
             dtype: dtype to be used for floating point tensors. [DEFAULT=None]
 
@@ -720,11 +754,11 @@ class VCRSkf(Skf):
 
     @classmethod
     def from_dir(cls, source: str, target: str):
-        """Parse multiple skf files into an hdf5 `VCRSkf` instance.
+        """Parse multiple skf files into a hdf5 `VCRSkf` instance.
 
         When run against a `target` directory this method scans for map files
         which indicate the presence of data that can be used to build variable
-        compression radii slater koster files instance (`VCRSkf`). There are
+        compression radii Slater-Koster files instance (`VCRSkf`). There are
         two types of source, the first is 'csv' type, the second is 'skf' type.
 
         Arguments:
@@ -834,7 +868,7 @@ class VCRSkf(Skf):
                     np.unique(np.array(this_file_keys)[..., 2:].astype(dtype=np.float64)))
 
                 if atom_pair[0] == atom_pair[1]:
-                    # Load the file into an Skf instance to extract the data from
+                    # Load the file into a Skf instance to extract the data from
                     skf_homo = Skf.read(homo_files[tuple(pair.tolist())])
                     vcrskf = cls(
                         atom_pair, h_data, s_data, grid, cr_grid, mass=skf_homo.mass,
@@ -887,7 +921,7 @@ class VCRSkf(Skf):
 
         # When dealing with homoatomic systems only the files where the
         # two atoms have the same compression radii will actually contain
-        # homoatomic data. Thus a list of slicers is created to take this
+        # homoatomic data. Thus, a list of slicers is created to take this
         # into account when reading.
         slicers = [s_homo if (r1 == r2 and pair[0] == pair[1])
                    else s_hetro for r1, r2 in
@@ -940,11 +974,11 @@ class VCRSkf(Skf):
 
     @classmethod
     def from_dir_raw(cls, source: str, target: str):
-        """Parse multiple skf files into an hdf5 `VCRSkf` instance.
+        """Parse multiple skf files into a hdf5 `VCRSkf` instance.
 
         When run against a `target` directory this method scans for map files
         which indicate the presence of data that can be used to build variable
-        compression radii slater koster files instance (`VCRSkf`).
+        compression radii Slater-Koster files instance (`VCRSkf`).
 
         Arguments:
             source: director holding the skf and map files.
@@ -1020,7 +1054,7 @@ def _esr(text: str) -> str:
     """Expand stared number representations.
 
     This is primarily used to resolve the skf file specification violations
-    which are found in some of the early skf files. Specifically the user of
+    which are found in some early skf files. Specifically the user of
     started notations like `10*1.0` to represent a value of one repeated ten
     times, or the mixed use of spaces, tabs and commas.
 
