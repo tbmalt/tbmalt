@@ -67,7 +67,7 @@ class ScipySkFeed(IntegralFeed):
         That is to say if there is a (1, 6, 0, 0) (H[s]-C[s]) key present then
         there must not also be a (6, 1, 0, 0) (H[s]-C[s]) key present as they
         are the same interaction. To help prevent this the class will raise an
-        error is the second atomic number is greater than the first; e.g. the
+        error if the second atomic number is greater than the first; e.g. the
         key (6, 1, 0, 0) will raise an error but (1, 6, 0, 0) will not.
 
     Warnings:
@@ -122,8 +122,8 @@ class ScipySkFeed(IntegralFeed):
         """
 
         # Identify atomic numbers associated with the interaction
-        z_1 = int(geometry.atomic_numbers[atomic_idx_1[0:1].T])
-        z_2 = int(geometry.atomic_numbers[atomic_idx_2[0:1].T])
+        z_1 = int(geometry.atomic_numbers[atomic_idx_1[0: 1].T])
+        z_2 = int(geometry.atomic_numbers[atomic_idx_2[0: 1].T])
 
         # Get the species' shell lists (basically a list of azimuthal numbers)
         shells_1, shells_2 = orbs.shell_dict[z_1], orbs.shell_dict[z_2]
@@ -185,8 +185,8 @@ class ScipySkFeed(IntegralFeed):
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
               orbs: Orbital information associated with said systems.
-              periodic: Distance matrix and position vectors including periodic
-                  images.
+              periodic: Periodic object containing distance matrix and position
+                  vectors for periodic images.
 
           Returns:
               blocks: Requested atomic interaction sub-blocks.
@@ -200,8 +200,8 @@ class ScipySkFeed(IntegralFeed):
                    if periodic.neighbour_vector.ndim == 5 else None)
 
         # Identify atomic numbers associated with the interaction
-        z_1 = int(geometry.atomic_numbers[atomic_idx_1[0:1].T])
-        z_2 = int(geometry.atomic_numbers[atomic_idx_2[0:1].T])
+        z_1 = int(geometry.atomic_numbers[atomic_idx_1[0: 1].T])
+        z_2 = int(geometry.atomic_numbers[atomic_idx_2[0: 1].T])
 
         # Get the species' shell lists (basically a list of azimuthal numbers)
         shells_1, shells_2 = orbs.shell_dict[z_1], orbs.shell_dict[z_2]
@@ -400,7 +400,6 @@ class ScipySkFeed(IntegralFeed):
         Returns:
             sk_feed: A `ScipySkFeed` instance with the requested integrals.
 
-
         Notes:
             This method interpolates off-site integrals with `CubicSpline`
             instances.
@@ -415,6 +414,52 @@ class ScipySkFeed(IntegralFeed):
             >>> Zs = ['H', 'C', 'Au', 'S']
             >>> for file in [f'{i}-{j}.skf' for i in Zs for j in Zs]:
             >>>     Skf.read(file).write('my_skf.hdf5')
+
+        Examples:
+            >>> from tbmalt import OrbitalInfo, Geometry
+            >>> from tbmalt.physics.dftb.feeds import ScipySkFeed
+            >>> from tbmalt.io.skf import Skf
+            >>> from ase.build import molecule
+            >>> import urllib
+            >>> import tarfile
+            >>> from os.path import join
+            >>> torch.set_default_dtype(torch.float64)
+
+            # Link to the auorg-1-1 parameter set
+            >>> link = \
+            'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+
+            # Preparation of sk file
+            >>> elements = ['H', 'C', 'O', 'Au', 'S']
+            >>> tmpdir = './'
+            >>> urllib.request.urlretrieve(
+                    link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
+            >>> with tarfile.open(path) as tar:
+                    tar.extractall(tmpdir)
+            >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
+                             for i in elements for j in elements]
+            >>> for skf_file in skf_files:
+                    Skf.read(skf_file).write(path := join(tmpdir,
+                                                          'auorg.hdf5'))
+
+            # Preparation of system to calculate
+            >>> geo = Geometry.from_ase_atoms(molecule('H2'))
+            >>> orbs = OrbitalInfo(geo.atomic_numbers,
+                                     shell_dict={1: [0]})
+
+            # Definition of feeds
+            >>> h_feed = ScipySkFeed.from_database(path, [1], 'hamiltonian')
+            >>> s_feed = ScipySkFeed.from_database(path, [1], 'overlap')
+
+            # Matrix elements
+            >>> H = h_feed.matrix(geo, orbs)
+            >>> S = s_feed.matrix(geo, orbs)
+            >>> print(H)
+            tensor([[-0.2386, -0.3211],
+                    [-0.3211, -0.2386]])
+            >>> print(S)
+            tensor([[1.0000, 0.6433],
+                    [0.6433, 1.0000]])
 
         """
         # As C-H & C-H interactions are the same only one needs to be loaded.
@@ -475,10 +520,11 @@ class ScipySkFeed(IntegralFeed):
 
 
 class SkFeed(IntegralFeed):
-    r"""Slater-Koster based integral feed for testing DFTB calculations.
+    r"""Slater-Koster based integral feed for DFTB calculations.
 
-    This feed uses Scipy splines & Slater-Koster transformations to construct
-    Hamiltonian and overlap matrices via the traditional DFTB method.
+    This feed uses polynomial/cubic spline/bicubic interpolation & Slater-Koster
+    transformations to construct Hamiltonian and overlap matrices via the
+    traditional DFTB method.
 
     Arguments:
         on_sites: On-site integrals presented as a dictionary keyed by atomic
@@ -506,16 +552,12 @@ class SkFeed(IntegralFeed):
         That is to say if there is a (1, 6, 0, 0) (H[s]-C[s]) key present then
         there must not also be a (6, 1, 0, 0) (H[s]-C[s]) key present as they
         are the same interaction. To help prevent this the class will raise an
-        error is the second atomic number is greater than the first; e.g. the
+        error if the second atomic number is greater than the first; e.g. the
         key (6, 1, 0, 0) will raise an error but (1, 6, 0, 0) will not.
 
     Warnings:
-        This integral feed is not backpropagatable as Scipy splines are used
-        to interpolate the Slater-Koster tables. This is primarily indented to
-        be used for testing purposes.
-
         `CubicSpline` instances should not attempt to extrapolate, but rather
-        return NaNs, i.e. 'extrapolate=False'. When interpolating `ScipySkFeed`
+        return NaNs, i.e. 'extrapolate=False'. When interpolating `SkFeed`
         instances will identify and set all NaNs to zero.
 
     """
@@ -563,8 +605,8 @@ class SkFeed(IntegralFeed):
         """
 
         # Identify atomic numbers associated with the interaction
-        z_1 = int(geometry.atomic_numbers[atomic_idx_1[0:1].T])
-        z_2 = int(geometry.atomic_numbers[atomic_idx_2[0:1].T])
+        z_1 = int(geometry.atomic_numbers[atomic_idx_1[0: 1].T])
+        z_2 = int(geometry.atomic_numbers[atomic_idx_2[0: 1].T])
 
         # Get the species' shell lists (basically a list of azimuthal numbers)
         shells_1, shells_2 = orbs.shell_dict[z_1], orbs.shell_dict[z_2]
@@ -629,8 +671,8 @@ class SkFeed(IntegralFeed):
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
               orbs: Orbital information associated with said systems.
-              periodic: Distance matrix and position vectors including periodic
-                  images.
+              periodic: Periodic object containing distance matrix and position
+                  vectors for periodic images.
 
           Returns:
               blocks: Requested atomic interaction sub-blocks.
@@ -644,8 +686,8 @@ class SkFeed(IntegralFeed):
                    if periodic.neighbour_vector.ndim == 5 else None)
 
         # Identify atomic numbers associated with the interaction
-        z_1 = int(geometry.atomic_numbers[atomic_idx_1[0:1].T])
-        z_2 = int(geometry.atomic_numbers[atomic_idx_2[0:1].T])
+        z_1 = int(geometry.atomic_numbers[atomic_idx_1[0: 1].T])
+        z_2 = int(geometry.atomic_numbers[atomic_idx_2[0: 1].T])
 
         # Get the species' shell lists (basically a list of azimuthal numbers)
         shells_1, shells_2 = orbs.shell_dict[z_1], orbs.shell_dict[z_2]
@@ -754,8 +796,6 @@ class SkFeed(IntegralFeed):
         Returns:
             blocks: Requested atomic interaction sub-blocks.
 
-        Warnings:
-            This is not backpropagatable.
         """
         # Atomic index arrays must be numpy arrays
         atomic_idx_1 = _enforce_numpy(atomic_idx_1)
@@ -834,7 +874,7 @@ class SkFeed(IntegralFeed):
             device: Optional[torch.device] = None) -> 'SkFeed':
         r"""Instantiate instance from an HDF5 database of Slater-Koster files.
 
-        Instantiate a `ScipySkFeed` instance for the specified elements using
+        Instantiate a `SkFeed` instance for the specified elements using
         integral tables contained within a Slater-Koster HDF5 database.
 
         Arguments:
@@ -847,14 +887,10 @@ class SkFeed(IntegralFeed):
             dtype: dtype used by feed object.
 
         Returns:
-            sk_feed: A `ScipySkFeed` instance with the requested integrals.
-
+            sk_feed: A `SkFeed` instance with the requested integrals.
 
         Notes:
-            This method interpolates off-site integrals with `CubicSpline`
-            instances.
-
-            This method will not instantiate `ScipySkFeed` instances directly
+            This method will not instantiate `SkFeed` instances directly
             from human readable skf files, or a directory thereof. Thus, any
             such files must first be converted into their binary equivalent.
             This reduces overhead & file format error instabilities. The code
@@ -865,6 +901,51 @@ class SkFeed(IntegralFeed):
             >>> for file in [f'{i}-{j}.skf' for i in Zs for j in Zs]:
             >>>     Skf.read(file).write('my_skf.hdf5')
 
+        Examples:
+            >>> from tbmalt import OrbitalInfo, Geometry
+            >>> from tbmalt.physics.dftb.feeds import SkFeed
+            >>> from tbmalt.io.skf import Skf
+            >>> from ase.build import molecule
+            >>> import urllib
+            >>> import tarfile
+            >>> from os.path import join
+            >>> torch.set_default_dtype(torch.float64)
+
+            # Link to the auorg-1-1 parameter set
+            >>> link = \
+            'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+
+            # Preparation of sk file
+            >>> elements = ['H', 'C', 'O', 'Au', 'S']
+            >>> tmpdir = './'
+            >>> urllib.request.urlretrieve(
+                    link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
+            >>> with tarfile.open(path) as tar:
+                    tar.extractall(tmpdir)
+            >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
+                             for i in elements for j in elements]
+            >>> for skf_file in skf_files:
+                    Skf.read(skf_file).write(path := join(tmpdir,
+                                                          'auorg.hdf5'))
+
+            # Preparation of system to calculate
+            >>> geo = Geometry.from_ase_atoms(molecule('H2'))
+            >>> orbs = OrbitalInfo(geo.atomic_numbers,
+                                     shell_dict={1: [0]})
+
+            # Definition of feeds
+            >>> h_feed = SkFeed.from_database(path, [1], 'hamiltonian')
+            >>> s_feed = SkFeed.from_database(path, [1], 'overlap')
+
+            # Matrix elements
+            >>> H = h_feed.matrix(geo, orbs)
+            >>> S = s_feed.matrix(geo, orbs)
+            >>> print(H)
+            tensor([[-0.2386, -0.3211],
+                    [-0.3211, -0.2386]])
+            >>> print(S)
+            tensor([[1.0000, 0.6433],
+                    [0.6433, 1.0000]])
 
         """
         # As C-H & C-H interactions are the same only one needs to be loaded.
@@ -966,7 +1047,7 @@ class SkfOccupationFeed(Feed):
     Arguments:
         occupancies: a dictionary keyed by atomic numbers & valued by tensors
             specifying the angular-momenta resolved occupancies. In each tensor
-            There should be one value for each angular momenta with the lowest
+            there should be one value for each angular momenta with the lowest
             angular component first.
 
     Examples:
@@ -1060,6 +1141,40 @@ class SkfOccupationFeed(Feed):
             occupancy_feed: An `SkfOccupationFeed` instance containing the
                 requested occupancy information.
 
+        Examples:
+            >>> from tbmalt import OrbitalInfo
+            >>> from tbmalt.physics.dftb.feeds import SkfOccupationFeed
+            >>> import urllib
+            >>> import tarfile
+            >>> from os.path import join
+            >>> torch.set_default_dtype(torch.float64)
+
+            # Link to the auorg-1-1 parameter set
+            >>> link = \
+            'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+
+            # Preparation of sk file
+            >>> elements = ['H', 'C', 'O', 'Au', 'S']
+            >>> tmpdir = './'
+            >>> urllib.request.urlretrieve(
+                    link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
+            >>> with tarfile.open(path) as tar:
+                    tar.extractall(tmpdir)
+            >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
+                             for i in elements for j in elements]
+            >>> for skf_file in skf_files:
+                    Skf.read(skf_file).write(path := join(tmpdir,
+                                                          'auorg.hdf5'))
+
+            # Definition of feeds
+            >>> o_feed = SkfOccupationFeed.from_database(path, [1, 6])
+            >>> shell_dict = {1: [0], 6: [0, 1]}
+
+            # Occupancy information of an example system
+            >>> o_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
+            tensor([2.0000, 0.6667, 0.6667, 0.6667,
+                    1.0000, 1.0000, 1.0000, 1.0000])
+
         """
         return cls({i: Skf.read(path, (i, i), **kwargs).occupations
                     for i in species})
@@ -1071,7 +1186,7 @@ class HubbardFeed(Feed):
     Arguments:
         hubbard_u: a dictionary keyed by atomic numbers & valued by tensors
             specifying the angular-momenta resolved Hubbard U. In each tensor
-            There should be one value for each angular momenta with the lowest
+            there should be one value for each angular momenta with the lowest
             angular component first. Note that if the Hubbard U is not angular
             -momenta resolved in a skf file, the tensors will be the same for
             different angular-momenta.
@@ -1163,7 +1278,7 @@ class HubbardFeed(Feed):
     @classmethod
     def from_database(cls, path: str, species: List[int], **kwargs
                       ) ->'HubbardFeed':
-        """Instantiate an `SkfOccupationFeed` instance from an HDF5 database.
+        """Instantiate an `HubbardFeed` instance from an HDF5 database.
 
         Arguments:
             path: path to the HDF5 file in which the skf file data is stored.
@@ -1175,8 +1290,41 @@ class HubbardFeed(Feed):
             dtype: dtype to be used for floating point tensors. [DEFAULT=None]
 
         Returns:
-            occupancy_feed: An `SkfOccupationFeed` instance containing the
+            occupancy_feed: An `HubbardFeed` instance containing the
                 requested occupancy information.
+
+        Examples:
+            >>> from tbmalt import OrbitalInfo
+            >>> from tbmalt.physics.dftb.feeds import HubbardFeed
+            >>> import urllib
+            >>> import tarfile
+            >>> from os.path import join
+            >>> torch.set_default_dtype(torch.float64)
+
+            # Link to the auorg-1-1 parameter set
+            >>> link = \
+            'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+
+            # Preparation of sk file
+            >>> elements = ['H', 'C', 'O', 'Au', 'S']
+            >>> tmpdir = './'
+            >>> urllib.request.urlretrieve(
+                    link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
+            >>> with tarfile.open(path) as tar:
+                    tar.extractall(tmpdir)
+            >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
+                             for i in elements for j in elements]
+            >>> for skf_file in skf_files:
+                    Skf.read(skf_file).write(path := join(tmpdir,
+                                                          'auorg.hdf5'))
+
+            # Definition of feeds
+            >>> u_feed = HubbardFeed.from_database(path, [1, 6])
+            >>> shell_dict = {1: [0], 6: [0, 1]}
+
+            # Hubbard U values of an example system
+            >>> u_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
+            tensor([0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
 
         """
         return cls({i: Skf.read(path, (i, i), **kwargs).hubbard_us
