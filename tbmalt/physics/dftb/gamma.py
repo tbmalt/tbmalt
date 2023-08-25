@@ -10,7 +10,8 @@ from tbmalt.common.batch import pack, prepeat_interleave
 from tbmalt.data import gamma_cutoff, gamma_element_list
 
 
-def gamma_exponential(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor):
+def gamma_exponential(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
+                      ) -> Tensor:
     """Construct the gamma matrix via the exponential method.
 
     Arguments:
@@ -24,8 +25,29 @@ def gamma_exponential(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor)
     Returns:
         gamma: gamma matrix.
 
+    Examples:
+        >>> from tbmalt import OrbitalInfo, Geometry
+        >>> from tbmalt.physics.dftb.gamma import gamma_exponential
+        >>> from ase.build import molecule
+
+        # Preparation of system to calculate
+        >>> geo = Geometry.from_ase_atoms(molecule('CH4'))
+        >>> orbs = OrbitalInfo(geo.atomic_numbers,
+                               shell_dict= {1: [0], 6: [0, 1]})
+        >>> hubbard_U = torch.tensor([0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
+
+        # Build the gamma matrix
+        >>> gamma = gamma_exponential(geo, orbs, hubbard_U)
+        >>> print(gamma)
+        tensor([[0.3647, 0.3234, 0.3234, 0.3234, 0.3234],
+                [0.3234, 0.4196, 0.2654, 0.2654, 0.2654],
+                [0.3234, 0.2654, 0.4196, 0.2654, 0.2654],
+                [0.3234, 0.2654, 0.2654, 0.4196, 0.2654],
+                [0.3234, 0.2654, 0.2654, 0.2654, 0.4196]])
+
     """
-    """Build the Slater type gamma in second-order term."""
+
+    # Build the Slater type gamma in second-order term.
     U = hubbard_Us
     r = geometry.distances
     z = geometry.atomic_numbers
@@ -153,6 +175,26 @@ def gamma_gaussian(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
         facilitate the automated construction of the Hubbard U tensor and shall
         permit the use of environmentally dependent U values if desired.
 
+    Examples:
+        >>> from tbmalt import OrbitalInfo, Geometry
+        >>> from tbmalt.physics.dftb.gamma import gamma_gaussian
+        >>> from ase.build import molecule
+
+        # Preparation of system to calculate
+        >>> geo = Geometry.from_ase_atoms(molecule('CH4'))
+        >>> orbs = OrbitalInfo(geo.atomic_numbers,
+                               shell_dict= {1: [0], 6: [0, 1]})
+        >>> hubbard_U = torch.tensor([0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
+
+        # Build the gamma matrix
+        >>> gamma = gamma_gaussian(geo, orbs, hubbard_U)
+        >>> print(gamma)
+        tensor([[0.3647, 0.3326, 0.3326, 0.3326, 0.3326],
+                [0.3326, 0.4196, 0.2745, 0.2745, 0.2745],
+                [0.3326, 0.2745, 0.4196, 0.2745, 0.2745],
+                [0.3326, 0.2745, 0.2745, 0.4196, 0.2745],
+                [0.3326, 0.2745, 0.2745, 0.2745, 0.4196]])
+
     """
     # Developers Notes: At some point in the future this function will be
     # changed to allow dictionaries and UFeeds to be supplied. This will allow
@@ -160,7 +202,7 @@ def gamma_gaussian(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
     # expansion operation batch agnostic. This could be achieved by manually
     # computing the distance matrix or using gather operations.
 
-    if geometry.positions.ndim >= 2:
+    if geometry.positions.ndim > 2:
         raise NotImplementedError(
             'The Gaussian gamma matrix construction scheme does not currently '
             'support batch operability.')
@@ -216,9 +258,58 @@ def gamma_gaussian(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
     return gamma
 
 
-def gamma_exponential_pbc(geometry, orbs, invr, hubbard_Us):
-    """Build the Slater type gamma in second-order term with pbc."""
+def gamma_exponential_pbc(geometry: Geometry, orbs: OrbitalInfo,
+                          invr: Tensor, hubbard_Us: Tensor) -> Tensor:
+    """Build the gamma matrix with pbc via the exponential method.
 
+    Arguments:
+        geometry: `Geometry` object of the system(s) whose gamma matrix is to
+            be constructed.
+        orbs: `OrbitalInfo` instance associated with the target system.
+        invr: the 1/R matrix.
+        hubbard_Us: Hubbard U values. one value should be specified for each
+            atom or shell depending if the calculation being performed is atom
+            or shell resolved.
+
+    Returns:
+        gamma: gamma matrix.
+
+    Notes:
+        Currently shell resolved calculation is not supported yet for periodic
+        systems.
+        To avoid loops to calculate cutoff distances of short range part for
+        atom pairs, some of the cutoff values are pre-calculated and stored in
+        data module, which can be used to construct gamma matrix. For atom pairs
+        which have not been stored, the built-in function will search for the
+        cutoff values.
+
+    Examples:
+        >>> from tbmalt import OrbitalInfo, Geometry
+        >>> from tbmalt.physics.dftb.gamma import gamma_exponential_pbc
+
+        # Preparation of system to calculate
+        >>> cell = torch.tensor([[2., 0., 0.], [0., 4., 0.], [0., 0., 2.]])
+        >>> pos = torch.tensor([[0., 0., 0.], [0., 2., 0.]])
+        >>> num = torch.tensor([1, 1])
+        >>> cutoff = torch.tensor([9.98])
+        >>> geo = Geometry(num, pos, cell, units='a', cutoff=cutoff)
+        >>> orbs = OrbitalInfo(geo.atomic_numbers,
+                               shell_dict= {1: [0]})
+        >>> hubbard_U = torch.tensor([0.4196, 0.4196])
+
+        # 1/R matrix.calculated from coulomb module
+        >>> invr = torch.tensor([[-0.4778, -0.2729],
+                                 [-0.2729, -0.4778]])
+
+        # Build the gamma matrix
+        >>> gamma = gamma_exponential_pbc(geo, orbs, invr, hubbard_U)
+        >>> print(gamma)
+        tensor([[-0.1546, -0.3473],
+                [-0.3473, -0.1546]])
+
+    """
+
+    # Read geometry information
     r = geometry.periodic.periodic_distances
     U = torch.clone(hubbard_Us).repeat(r.size(-3), 1, 1).transpose(0, 1)
     z = geometry.atomic_numbers
@@ -226,8 +317,8 @@ def gamma_exponential_pbc(geometry, orbs, invr, hubbard_Us):
 
     dtype, device = r.dtype, r.device
 
-    # TODO: shell resolved calc is missing. For this, coulomb also needs shell
-    # resolved calc.
+    # Shell resolved calc is not supported yet. For this, coulomb also
+    # needs shell resolved calc.
     if orbs.shell_resolved:
         raise NotImplementedError('Not implement shell resolved for pbc yet.')
 
@@ -270,7 +361,7 @@ def gamma_exponential_pbc(geometry, orbs, invr, hubbard_Us):
                                          -1, -2)[..., 0].unsqueeze(-2))
         expcutoff = expcutoff.repeat_interleave(r.size(-3), -2)
 
-    # new masks of homo or hetero Hubbert
+    # new masks of homo or hetero Hubbard
     mask_cutoff = distance_tr < expcutoff
     mask_homo = mask_homo if z.ndim == 1 else mask_homo.unsqueeze(-2)
     mask_hetero = mask_hetero if z.ndim == 1 else mask_hetero.unsqueeze(-2)
@@ -286,7 +377,7 @@ def gamma_exponential_pbc(geometry, orbs, invr, hubbard_Us):
     gamma[..., ut[1], ut[0]] = gamma[..., ut[0], ut[1]]
     gamma = gamma.sum(-3)
 
-    # diagonal values is so called chemical hardness Hubbert
+    # diagonal values is so called chemical hardness Hubbard
     _onsite = -U[0] if z.ndim == 1 else -U[:, 0]
     _tem = gamma.diagonal(0, -2, -1) + _onsite
     gamma.diagonal(0, -2, -1)[:] = _tem[:]
@@ -298,13 +389,36 @@ def gamma_exponential_pbc(geometry, orbs, invr, hubbard_Us):
     return gamma
 
 
-def _expgamma_cutoff(alpha, beta, gamma_tem,
-                     minshortgamma=1.0e-10, tolshortgamma=1.0e-10):
-    """The cutoff distance for short range part."""
+def _expgamma_cutoff(alpha: Tensor, beta: Tensor, gamma_tem: Tensor,
+                     minshortgamma=1e-10, tolshortgamma=1e-10) -> Tensor:
+    """The cutoff distance for short range part.
+
+    Arguments:
+        alpha: 16/5 * U for the first atom.
+        beta: 16/5 * U for the second atom.
+        gamma_tem: gamma values.
+
+    Returns:
+        mincutoff: The cutoff distance where the short range part goes to zero
+            for certain atom pairs.
+
+    Examples:
+        >>> from tbmalt.physics.dftb.gamma import _expgamma_cutoff
+        >>> ua = torch.tensor([0.3647, 0.4196]) # Hubbard U values of C, H
+        >>> ub = torch.tensor([0.4196, 0.4196]) # Hubbard U values of H, H
+        >>> cutoff = _expgamma_cutoff(ua * 3.2, ub * 3.2,
+                                      torch.zeros_like(ua))
+
+        # Cutoff distances for C-H and H-H in a.u.
+        >>> print(cutoff)
+        tensor([22.0375, 20.0250])
+
+    """
+
     # initial distance
     rab = torch.ones_like(alpha)
 
-    # mask of homo or hetero Hubbert in triangular gamma
+    # mask of homo or hetero Hubbard in triangular gamma
     mask_homo, mask_hetero = alpha == beta, alpha != beta
     mask_homo[alpha.eq(0)], mask_hetero[alpha.eq(0)] = False, False
     mask_homo[beta.eq(0)], mask_hetero[beta.eq(0)] = False, False
@@ -363,19 +477,35 @@ def _expgamma_cutoff(alpha, beta, gamma_tem,
     return mincutoff
 
 
-def _expgamma(distance_tr, alpha, beta, mask_homo, mask_hetero, gamma_tem):
-    """Calculate the value of short range gamma."""
+def _expgamma(distance_tr: Tensor, alpha: Tensor, beta: Tensor,
+              mask_homo: Tensor, mask_hetero: Tensor, gamma_tem: Tensor
+              ) -> Tensor:
+    """Calculate the value of short range gamma.
+
+    Arguments:
+        distance_tr: triangular distance matrix.
+        alpha: 16/5 * U for the first atom.
+        beta: 16/5 * U for the second atom.
+        mask_homo: A mask for homo Hubbard values.
+        mask_hetero: A mask for hetero Hubbard values.
+        gamma_tem: gamma values.
+
+    Returns:
+        gamma_tem: gamma values.
+
+    """
+
     r_homo = 1.0 / distance_tr[mask_homo]
     r_hetero = 1.0 / distance_tr[mask_hetero]
 
-    # homo Hubbert
+    # homo Hubbard
     aa, dd_homo = alpha[mask_homo], distance_tr[mask_homo]
     tau_r = aa * dd_homo
     e_fac = torch.exp(-tau_r) / 48.0 * r_homo
     gamma_tem[mask_homo] = \
         (48.0 + 33.0 * tau_r + 9.0 * tau_r ** 2 + tau_r ** 3) * e_fac
 
-    # hetero Hubbert
+    # hetero Hubbard
     aa, bb = alpha[mask_hetero], beta[mask_hetero]
     dd_hetero = distance_tr[mask_hetero]
     aa2, aa4, aa6 = aa ** 2, aa ** 4, aa ** 6
@@ -394,7 +524,7 @@ def _expgamma(distance_tr, alpha, beta, mask_homo, mask_hetero, gamma_tem):
 def build_gamma_matrix(
         geometry: Geometry, orbs: OrbitalInfo, invr: Tensor,
         hubbard_Us: Tensor, scheme: Literal['exponential', 'gaussian'] =
-        'exponential'):
+        'exponential') -> Tensor:
     """Construct the gamma matrix
 
     Arguments:
@@ -411,6 +541,28 @@ def build_gamma_matrix(
     Return:
         gamma_matrix: the resulting gamma matrix.
 
+    Examples:
+        >>> from tbmalt import OrbitalInfo, Geometry
+        >>> from tbmalt.physics.dftb.gamma import build_gamma_matrix
+        >>> from ase.build import molecule
+
+        # Preparation of system to calculate
+        >>> geo = Geometry.from_ase_atoms(molecule('CH4'))
+        >>> orbs = OrbitalInfo(geo.atomic_numbers,
+                               shell_dict= {1: [0], 6: [0, 1]})
+        >>> hubbard_U = torch.tensor([0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
+        >>> r = geo.distances
+        >>> r[r != 0.0] = 1.0 / r[r != 0.0]
+
+        # Build the gamma matrix
+        >>> gamma = build_gamma_matrix(geo, orbs, r, hubbard_U, 'exponential')
+        >>> print(gamma)
+        tensor([[0.3647, 0.3234, 0.3234, 0.3234, 0.3234],
+                [0.3234, 0.4196, 0.2654, 0.2654, 0.2654],
+                [0.3234, 0.2654, 0.4196, 0.2654, 0.2654],
+                [0.3234, 0.2654, 0.2654, 0.4196, 0.2654],
+                [0.3234, 0.2654, 0.2654, 0.2654, 0.4196]])
+
     """
 
     if geometry.periodic is None:
@@ -420,8 +572,8 @@ def build_gamma_matrix(
         elif scheme == 'gaussian':
             return gamma_gaussian(geometry, orbs, hubbard_Us)
         else:
-            raise(NotImplemented(
-                f'Gamma constructor method {scheme} is unknown'))
+            raise (NotImplementedError(
+                   f'Gamma constructor method {scheme} is unknown'))
     else:
         if scheme == 'exponential':
             return gamma_exponential_pbc(geometry, orbs, invr, hubbard_Us)
