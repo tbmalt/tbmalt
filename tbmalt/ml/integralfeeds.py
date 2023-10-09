@@ -6,7 +6,8 @@ responsible for generating the Hamiltonian and overlap matrices. The on-site
 and off-site blocks are constructed by the `on_site_blocks` & `off_site_blocks`
 class methods respectively.
 
-Warning this is development stage code and is subject to significant change.
+Warning:
+     This is development stage code and is subject to significant change.
 """
 from abc import ABC
 from typing import Union
@@ -50,7 +51,7 @@ class IntegralFeed(ABC, Feed):
     """
 
     def __init__(self, dtype, device):
-        # These variables must NEVER be modified outside of the .to method!
+        # These variables must NEVER be modified outside the .to method!
         self.__device = device
         self.__dtype = dtype
 
@@ -122,7 +123,6 @@ class IntegralFeed(ABC, Feed):
         """
         return np.array(list(map(np.all, atomic_idx_1 == atomic_idx_2)))
 
-    # @abstractmethod
     def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
                geometry: Geometry, orbs: OrbitalInfo, **kwargs) -> Tensor:
         r"""Compute atomic interaction blocks.
@@ -300,7 +300,6 @@ class IntegralFeed(ABC, Feed):
 
         return blk_idx.cpu().numpy()
 
-    # @abstractmethod
     def to(self, device: torch.device) -> 'IntegralFeed':
         """Returns a copy of the `SkFeed` instance on the specified device.
 

@@ -9,14 +9,14 @@ are all inherited.
 """
 
 from os.path import join
+import urllib, tempfile, tarfile
+
 import numpy as np
 import torch
 import functools
 import pytest
-import urllib
-import tarfile
 
-from tbmalt.io.skf import Skf
+from tbmalt.io.skf import Skf, VCRSkf
 
 
 def fix_seed(func):
@@ -137,3 +137,39 @@ def skf_file(tmpdir):
         Skf.read(skf_file).write(path := join(tmpdir, 'auorg.hdf5'))
 
     return path
+
+
+def skf_file_vcr(output_path: str):
+    """Path to Slater-Koster files.
+
+    This function downloads the Slater-Koster parameter set & converts it to
+     HDF5 database stored at the path provided. Slater-Koster parameter set of
+     each atom has different compression radii.
+
+    Arguments:
+         output_path: location to where the database file should be stored.
+
+    Warnings:
+        This will fail without an internet connection.
+
+    """
+    # Link to the VCR Slater-Koster parameter set
+    link = 'https://zenodo.org/record/8109578/files/compr_wav.tar.gz?download=1'
+
+    # Elements of interest and compression radii grids
+    elements = ['H', 'C', 'N', 'O']
+    compr = ['01.00', '01.50', '02.00', '02.50', '03.00', '03.50', '04.00',
+             '04.50', '05.00', '06.00', '08.00', '10.00']
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+
+        # Download and extract the auorg parameter set to the temporary directory
+        urllib.request.urlretrieve(link, path := join(tmpdir, 'compr_wav.tar.gz'))
+
+        with tarfile.open(path, 'r:gz') as tar:
+            tar.extractall(tmpdir)
+
+        # Read all Slater-Koster parameter sets
+        [join(tmpdir, 'compr_wav', f'{i}-{j}.skf.{ic}.{jc}')
+         for i in elements for j in elements for ic in compr for jc in compr]
+        VCRSkf.from_dir(join(tmpdir, 'compr_wav'), output_path)

@@ -1008,7 +1008,7 @@ class SkFeed(IntegralFeed):
                     off_sites[pair + key].abcd.requires_grad_(True)
 
             else:  # Construct the onsite interactions
-                # Repeated so theres 1 value per orbital not just per shell.
+                # Repeated so there's 1 value per orbital not just per shell.
                 on_sites_vals = skf.on_sites.repeat_interleave(
                     torch.arange(len(skf.on_sites)) * 2 + 1).to(device)
 
