@@ -540,7 +540,7 @@ class CubicSpline(torch.nn.Module):
         y1 = self.yp[..., ilast - 2]
         y1p = (y2 - y0) / (2.0 * self.delta_r)
         y1pp = (y2 + y0 - 2.0 * y1) / (self.delta_r * self.delta_r)
-        dr = dr.repeat(self.yp.shape[0], 1).T if self.yp.dim() == 2 else dr
+        # dr = dr.repeat(self.yp.shape[0], 1).T if self.yp.dim() == 2 else dr
 
         result[is_tail] = poly_to_zero(
             dr, -1.0 * self.tail, -1.0 / self.tail, y1, y1p, y1pp)
