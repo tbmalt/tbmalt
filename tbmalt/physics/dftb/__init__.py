@@ -418,7 +418,7 @@ class Dftb1(Calculator):
 
     @property
     def dos_energy(self, ext=energy_units['ev'], grid=1000):
-        """Energy distribution of (p)DOS in unit eV"""
+        """Energy distribution of (p)DOS in unit hartree"""
         e_min = torch.min(self.eigenvalue.detach(), dim=-1).values - ext
         e_max = torch.max(self.eigenvalue.detach(), dim=-1).values + ext
         dos_energy = torch.linspace(
