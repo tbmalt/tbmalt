@@ -238,6 +238,7 @@ def test_skfeed_single(device):
     s_feed = SkFeed.from_database(path_to_file, species, 'overlap',
                                   interpolation='bicubic')
 
+    # Define (wave-function) compression radii, keep s and p the same
     vcrs = [torch.tensor([2.7, 2.5, 2.5, 2.5, 2.5], device=device),
             torch.tensor([2.3, 2.5, 2.5], device=device)]
     H_ref = [H_ref_ch4, H_ref_h2o]
@@ -245,7 +246,7 @@ def test_skfeed_single(device):
 
     for ii, mol in enumerate([molecule('CH4'), molecule('H2O')]):
         mol = Geometry.from_ase_atoms(mol)
-        h_feed.vcr = vcrs[ii]  # torch.ones(mol.atomic_numbers.shape) * 3
+        h_feed.vcr = vcrs[ii]
         s_feed.vcr = vcrs[ii]
 
         H = h_feed.matrix(mol, OrbitalInfo(mol.atomic_numbers, b_def))
@@ -255,9 +256,9 @@ def test_skfeed_single(device):
         check_2 = torch.allclose(S, S_ref[ii], atol=1E-4)
         check_3 = H.device == device
 
-        assert check_1, f'ScipySkFeed H matrix outside of tolerance ({mol})'
-        assert check_2, f'ScipySkFeed S matrix outside of tolerance ({mol})'
-        assert check_3, 'ScipySkFeed.matrix returned on incorrect device'
+        assert check_1, f'SkFeed H matrix outside of tolerance ({mol})'
+        assert check_2, f'SkFeed S matrix outside of tolerance ({mol})'
+        assert check_3, 'SkFeed.matrix returned on incorrect device'
 
     os.system(f'rm {path_to_file}')
 
@@ -277,6 +278,7 @@ def test_skfeed_batch(device):
     s_feed = SkFeed.from_database(path_to_file, species, 'overlap',
                                   interpolation='bicubic')
 
+    # Define (wave-function) compression radii, keep s and p the same
     vcrs = torch.tensor([[2.7, 2.5, 2.5, 2.5, 2.5], [2.3, 2.5, 2.5, 0, 0]],
                         device=device)
     H_ref = pack([H_ref_ch4, H_ref_h2o])
@@ -293,11 +295,12 @@ def test_skfeed_batch(device):
     check_2 = torch.allclose(S, S_ref, atol=1E-4)
     check_3 = H.device == device
 
-    assert check_1, f'ScipySkFeed H matrix outside of tolerance ({mol})'
-    assert check_2, f'ScipySkFeed S matrix outside of tolerance ({mol})'
-    assert check_3, 'ScipySkFeed.matrix returned on incorrect device'
+    assert check_1, f'SkFeed H matrix outside of tolerance ({mol})'
+    assert check_2, f'SkFeed S matrix outside of tolerance ({mol})'
+    assert check_3, 'SkFeed.matrix returned on incorrect device'
 
     os.system(f'rm {path_to_file}')
+
 
 ###############################################
 # tbmalt.physics.dftb.feeds.SkfOccupationFeed #

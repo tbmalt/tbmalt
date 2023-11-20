@@ -96,9 +96,9 @@ class IntegralFeed(ABC, Feed):
         """Wrapper function to ensure atomic indices are supplied as arrays.
 
         Issues arise when using torch.Tensors for advanced indexing operations
-        in bach agnostic code. Thus numpy.ndarrays are used instead. If a user
+        in bach agnostic code. Thus, numpy.ndarrays are used instead. If a user
         inadvertently supplies a torch.Tensor then the results can be highly
-        unpredictable. Thus this wrapper checks for and auto-converts torch
+        unpredictable. Thus, this wrapper checks for and auto-converts torch
         tensors into numpy arrays as needed before warning the user.
         """
         pass
@@ -167,7 +167,7 @@ class IntegralFeed(ABC, Feed):
         # Indexing operations can get messy here due to inconsistencies in how
         # advanced indexing is implemented in pytorch. Normally, this would not
         # be a significant issue; however, batch agnostic code is hard to write
-        # when advanced indexing works for some systems but not others. Thus
+        # when advanced indexing works for some systems but not others. Thus,
         # a pair of numpy arrays are used instead. Do *NOT* use torch tensors
         # as they will result in highly inconsistent behaviour. Later, a wrapper
         # will decorate this function to ensure spurious tensors are converted
