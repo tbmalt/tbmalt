@@ -424,6 +424,7 @@ class ScipySkFeed(IntegralFeed):
             >>> import urllib
             >>> import tarfile
             >>> from os.path import join
+            >>> import torch
             >>> torch.set_default_dtype(torch.float64)
 
             # Link to the auorg-1-1 parameter set
@@ -914,6 +915,7 @@ class SkFeed(IntegralFeed):
             >>> import urllib
             >>> import tarfile
             >>> from os.path import join
+            >>> import torch
             >>> torch.set_default_dtype(torch.float64)
 
             # Link to the auorg-1-1 parameter set
