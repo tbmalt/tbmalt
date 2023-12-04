@@ -167,6 +167,7 @@ def test_scipyskfeed_pbc_batch(skf_file: str, device):
     S_feed = ScipySkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'overlap', device=device)
 
+
     sys = reduce(lambda i, j: i+j, systems(device))
     orbs = OrbitalInfo(sys.atomic_numbers,
                         {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]})
@@ -239,3 +240,4 @@ def test_skffeed_pbc_batch(skf_file: str, device):
     assert check_2, 'SkFeed S matrix outside of tolerance (batch)'
     assert check_3, 'SkFeed.matrix returned on incorrect device'
     assert check_4, 'Failure to operate on batches of size "one"'
+

@@ -12,7 +12,6 @@ from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
 from tbmalt.data import chemical_symbols
 
-
 ######################
 # Geometry Test Data #
 ######################
@@ -132,7 +131,7 @@ def geometry_basic_helper(device, positions, atomic_numbers):
     # Check 8: Error should be raised if the number of systems in the positions
     # & atomic_numbers arguments disagree with one another
     if batch:
-        with pytest.raises(AssertionError, match=r'`atomic_numbers` & `pos*'):
+        with pytest.raises(AssertionError, match=r'`positions` & `atomic_numbers`*'):
             _ = Geometry(atomic_numbers[slice(None, None, 2)], positions)
 
 

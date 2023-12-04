@@ -161,7 +161,7 @@ class SiliconDataset(Dataset):
         latvec = self.latvecs[idx]
         homo_lumo = self.homo_lumos[idx]
         eigenvalue = self.eigenvalues[idx]
-        system = {"number": number, "position": position, "latvec": latvec,
+        system = {"number": number, "position": position, "lattice": latvec,
                   "homo_lumo": homo_lumo, "eigenvalue": eigenvalue, "idx": idx}
 
         return system
@@ -302,7 +302,7 @@ def main(rank, world_size, train_dataset, data_train_dos):
         for ibatch, data in enumerate(train_data):
             # Perform the forwards operation
             forward_cal = dftb_results(data['number'], data['position'],
-                                       data['latvec'])
+                                       data['lattice'])
             loss = loss_fn(forward_cal, data_train_dos, data['idx'])
             _loss = _loss + loss
         optimizer.zero_grad()
@@ -339,7 +339,7 @@ def test(rank, world_size, test_dataset):
     # Pred
     for ibatch, data in enumerate(test_data):
         scc_pred = dftb_results(data['number'], data['position'],
-                                data['latvec'])
+                                data['lattice'])
         fermi_pred = getattr(scc_pred, 'fermi_energy').detach()
         hl_pred = getattr(scc_pred, 'homo_lumo').detach()
         hl_pred_tot.append(hl_pred)
@@ -381,7 +381,7 @@ def test(rank, world_size, test_dataset):
     # DFTB
     for ibatch, data in enumerate(test_data):
         scc_dftb = dftb_results(data['number'], data['position'],
-                                data['latvec'], dftb=True)
+                                data['lattice'], dftb=True)
         # dftb
         fermi_dftb = getattr(scc_dftb, 'fermi_energy').detach()
         hl_dftb = getattr(scc_dftb, 'homo_lumo').detach()

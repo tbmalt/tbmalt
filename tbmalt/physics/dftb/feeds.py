@@ -11,7 +11,7 @@ from typing import List, Literal, Optional, Dict, Tuple
 from scipy.interpolate import CubicSpline
 import torch
 
-from tbmalt import Geometry, OrbitalInfo, Periodic
+from tbmalt import Geometry, OrbitalInfo, Periodicity
 from tbmalt.ml.integralfeeds import IntegralFeed
 from tbmalt.io.skf import Skf, VCRSkf
 from tbmalt.physics.dftb.slaterkoster import sub_block_rot
@@ -20,6 +20,9 @@ from tbmalt.ml import Feed
 from tbmalt.common.batch import pack, prepeat_interleave
 from tbmalt.common.maths.interpolation import PolyInterpU, BicubInterp
 from tbmalt.common.maths.interpolation import CubicSpline as CSpline
+
+# Todo:
+#   - Need to determine why this is so slow for periodic systems.
 
 Tensor = torch.Tensor
 Array = np.ndarray
@@ -172,11 +175,11 @@ class ScipySkFeed(IntegralFeed):
 
     def _pe_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
                    geometry: Geometry, orbs: OrbitalInfo,
-                   periodic: Periodic, **kwargs) -> Tensor:
+                   periodic: Periodicity, **kwargs) -> Tensor:
         """Compute atomic interaction blocks (on-site and off-site) with pbc.
 
         Constructs the on-site and off-site atomic blocks using Slater-Koster
-        integral tables for periodic systems.
+        integral tables for periodicity systems.
 
         Arguments:
               atomic_idx_1: Indices of the 1'st atom associated with each
@@ -185,7 +188,7 @@ class ScipySkFeed(IntegralFeed):
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
               orbs: Orbital information associated with said systems.
-              periodic: Distance matrix and position vectors including periodic
+              periodic: Distance matrix and position vectors including periodicity
                   images.
 
           Returns:
@@ -357,21 +360,21 @@ class ScipySkFeed(IntegralFeed):
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
-            if geometry.periodic is not None:
+            if geometry.periodicity is not None:
                 _on_site = self._pe_blocks(
                     atomic_idx_1[on_site], atomic_idx_2[on_site],
-                    geometry, orbs, geometry.periodic, onsite=True)
+                    geometry, orbs, geometry.periodicity, onsite=True)
                 blks[on_site] = blks[on_site] + _on_site
 
         if any(~on_site):  # Then the off-site blocks
-            if geometry.periodic is None:
+            if geometry.periodicity is None:
                 blks[~on_site] = self._off_site_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
                     geometry, orbs)
             else:
                 blks[~on_site] = self._pe_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
-                    geometry, orbs, geometry.periodic)
+                    geometry, orbs, geometry.periodicity)
 
         if flip:  # If the atoms were switched, then a transpose is required.
             blks = blks.transpose(-1, -2)
@@ -616,11 +619,11 @@ class SkFeed(IntegralFeed):
 
     def _pe_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
                    geometry: Geometry, orbs: OrbitalInfo,
-                   periodic: Periodic, **kwargs) -> Tensor:
+                   periodic: Periodicity, **kwargs) -> Tensor:
         """Compute atomic interaction blocks (on-site and off-site) with pbc.
 
         Constructs the on-site and off-site atomic blocks using Slater-Koster
-        integral tables for periodic systems.
+        integral tables for periodicity systems.
 
         Arguments:
               atomic_idx_1: Indices of the 1'st atom associated with each
@@ -629,7 +632,7 @@ class SkFeed(IntegralFeed):
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
               orbs: Orbital information associated with said systems.
-              periodic: Distance matrix and position vectors including periodic
+              periodic: Distance matrix and position vectors including periodicity
                   images.
 
           Returns:
@@ -803,21 +806,21 @@ class SkFeed(IntegralFeed):
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
-            if geometry.periodic is not None:
+            if geometry.periodicity is not None:
                 _on_site = self._pe_blocks(
                     atomic_idx_1[on_site], atomic_idx_2[on_site],
-                    geometry, orbs, geometry.periodic, onsite=True)
+                    geometry, orbs, geometry.periodicity, onsite=True)
                 blks[on_site] = blks[on_site] + _on_site
 
         if any(~on_site):  # Then the off-site blocks
-            if geometry.periodic is None:
+            if geometry.periodicity is None:
                 blks[~on_site] = self._off_site_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
                     geometry, orbs)
             else:
                 blks[~on_site] = self._pe_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
-                    geometry, orbs, geometry.periodic)
+                    geometry, orbs, geometry.periodicity)
 
         if flip:  # If the atoms were switched, then a transpose is required.
             blks = blks.transpose(-1, -2)

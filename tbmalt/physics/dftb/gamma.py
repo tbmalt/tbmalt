@@ -219,7 +219,7 @@ def gamma_gaussian(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
 def gamma_exponential_pbc(geometry, orbs, invr, hubbard_Us):
     """Build the Slater type gamma in second-order term with pbc."""
 
-    r = geometry.periodic.periodic_distances
+    r = geometry.periodicity.periodic_distances
     U = torch.clone(hubbard_Us).repeat(r.size(-3), 1, 1).transpose(0, 1)
     z = geometry.atomic_numbers
     U = U.squeeze(0) if z.ndim == 1 else U
@@ -413,7 +413,7 @@ def build_gamma_matrix(
 
     """
 
-    if geometry.periodic is None:
+    if geometry.periodicity is None:
         if scheme == 'exponential':
             return gamma_exponential(geometry, orbs, hubbard_Us)
 

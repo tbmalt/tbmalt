@@ -12,12 +12,24 @@ import numpy as np
 from h5py import Group
 from ase import Atoms
 from ase.lattice.bravais import Lattice
-from tbmalt.structures.cell import Pbc
-from tbmalt.structures.periodic import Periodic
+from tbmalt.structures.periodicity import Triclinic
 from tbmalt.common.batch import pack, merge, deflate
 from tbmalt.data.units import length_units
 from tbmalt.data import chemical_symbols
 Tensor = torch.Tensor
+
+
+# Todo:
+#   - Currently the cutoff value is being stored in two places, the `Geometry`
+#     class and the `Periodicity` class. Furthermore, it is being modified
+#     within the latter. There should be a single centralised place in which
+#     this value is stored.
+#   - Currently periodic systems are hard-coded to use the `Triclinic` periodic
+#     helper class. Note that triclinic is used in reference to the general
+#     geometric shape and not the specific crystal structure. This is done
+#     because only one type of periodic boundary condition is supported at this
+#     time. Later this should be generalised.
+
 
 
 class Geometry:
@@ -31,20 +43,22 @@ class Geometry:
     Arguments:
         atomic_numbers: Atomic numbers of the atoms.
         positions : Coordinates of the atoms.
-        cells: Lattice vectors of the periodic systems. [DEFAULT: None]
-        frac: Whether using fractional coordinates to describe periodic
+        lattice_vector: Lattice vectors of the periodicity systems. [DEFAULT: None]
+        frac: Whether using fractional coordinates to describe periodicity
             systems. [DEFAULT: False]
-        cutoff: Global cutoff for the diatomic interactions in periodic
-            systems. [DEFAULT: None]
-        units: Unit in which ``positions`` and ``cells`` were specified. For a
-            list of available units see :mod:`.units`. [DEFAULT='bohr']
+        cutoff: Global cutoff for the diatomic interactions in periodicity
+            systems. [DEFAULT: 9.98].
+        units: Unit in which ``positions``, ``cells``, and ``cutoff`` were
+            specified. For a list of available units see :mod:`.units`
+            [DEFAULT='bohr'].
 
     Attributes:
         atomic_numbers: Atomic numbers of the atoms.
         positions: Coordinates of the atoms.
         n_atoms: Number of atoms in the system.
-        cells: Lattice vectors of the periodic systems.
-        periodic: Periodic object to store related information.
+        periodicity: Periodicity object that offer helper methods for periodic
+            systems.
+        lattice: the lattice vectors.
 
     Notes:
         When representing multiple systems, the `atomic_numbers` & `positions`
@@ -53,10 +67,10 @@ class Geometry:
         associated numpy arrays, nor will they inherit their dtype.
 
     Warnings:
-        At this time, 1D & 2D & 3D periodic boundary conditions are supported,
-        but mixing of different types of periodic boundary conditions is
+        At this time, 1D & 2D & 3D periodicity boundary conditions are supported,
+        but mixing of different types of periodicity boundary conditions is
         forbidden. The mixing of fractional and cartesian coordinates is
-        also forbidden. While Helical periodic boundary condition is not
+        also forbidden. While Helical periodicity boundary condition is not
         supported.
 
     Examples:
@@ -85,30 +99,35 @@ class Geometry:
 
     """
 
-    __slots__ = ['atomic_numbers', 'positions', 'n_atoms', 'cells', 'periodic',
-                 'cutoff', '_cutoff', '_n_batch', '_mask_dist', '_cell',
+    __slots__ = ['atomic_numbers', '_positions', 'n_atoms', 'periodicity',
+                 'lattice', '_cutoff', '_n_batch',
                  '__dtype', '__device']
 
-    def __init__(self, atomic_numbers: Union[Tensor, List[Tensor]],
-                 positions: Union[Tensor, List[Tensor]],
-                 cells: Optional[Union[Tensor, List[Tensor],
-                                       Type[Lattice]]] = None,
-                 frac: bool = False,
-                 cutoff: Optional[Union[Tensor, float]] = None,
-                 units: Optional[str] = 'bohr'):
+    # Developers notes technically the `cutoff` argument has the default value
+    # of `None`. However, this is assigned to 9.98 bohr internally after the
+    # fact. This is done to prevent the default value from undergoing a unit
+    # conversion if the user provides the atomic positions and lattice vectors
+    # in units other than atomic units.
 
-        # "pack" will only effect lists of tensors; make sure to remove any
-        # unnecessary padding.
-        self.atomic_numbers = deflate(pack(atomic_numbers))
-        self.positions: Tensor = pack(
-            positions)[..., :self.atomic_numbers.shape[-1], :]
+    def __init__(
+            self, atomic_numbers: Union[Tensor, List[Tensor]],
+            positions: Union[Tensor, List[Tensor]],
+            lattice_vector: Optional[
+                Union[Tensor, List[Tensor], Type[Lattice]]] = None,
+            frac: bool = False,
+            cutoff: Optional[Union[Tensor, float]] = None,
+            units: str = 'bohr'):
 
-        # Mask for clearing padding values in the distance matrix.
-        if (temp_mask := self.atomic_numbers != 0).all():
-            self._mask_dist: Union[Tensor, bool] = False
-        else:
-            self._mask_dist: Union[Tensor, bool] = ~(
-                temp_mask.unsqueeze(-2) * temp_mask.unsqueeze(-1))
+        # Perform general preprocessing and sanitisation of the inputs
+        atomic_numbers, positions, lattice_vector, cutoff = self.__preprocess(
+            atomic_numbers, positions, lattice_vector, cutoff, frac, units)
+
+        self.atomic_numbers: Tensor = atomic_numbers
+        self._positions: Tensor = positions
+
+        # These are static, private variables and must NEVER be modified!
+        self.__device = self._positions.device
+        self.__dtype = self._positions.dtype
 
         self.n_atoms: Tensor = self.atomic_numbers.count_nonzero(-1)
 
@@ -116,50 +135,115 @@ class Geometry:
         self._n_batch: Optional[int] = (None if self.atomic_numbers.dim() == 1
                                         else len(atomic_numbers))
 
-        # Cutoff distance for the diatomic interactions in periodic systems
-        self._cutoff = torch.tensor(
-            [9.98], device=self.positions.device) if cutoff is None else cutoff
+        if lattice_vector is not None:
+            # Todo: Abstract cutoff out of the Geometry class
+            # Cutoff distance for the diatomic interactions in periodicity systems
+            self._cutoff = torch.tensor(
+                [9.98], device=self.__device, dtype=self.__dtype
+            ) if cutoff is None else cutoff
 
-        # Return cell information
-        if cells is not None:
-            self._cell: Pbc = Pbc(cells, frac, dtype=self.positions.dtype,
-                                  device=self.positions.device)
-            self.cells: Tensor = self._cell.cell
+            self.lattice = lattice_vector
+            self.periodicity = Triclinic(self, self._cutoff)
 
-            # Ensure the positions are in cartesian coordinates
-            if frac:
-                self.positions: Tensor = Pbc.frac_to_cartesian(
-                    self.cells, self.positions)
         else:
-            self.cells = None
+            # Todo: Abstract cutoff out of the Geometry class
+            self._cutoff = None
+            self.periodicity = None
+            self.lattice = None
+        # Periodicity system specific components
 
-        # Ensure the distances are in atomic units (bohr)
-        if units != 'bohr':
-            self.positions: Tensor = self.positions * length_units[units]
-            if cells is not None:
-                self.cells: Tensor = Pbc.cell_unit_transfer(self.cells, units)
+    @staticmethod
+    def __preprocess(
+            atomic_numbers: Union[Tensor, List[Tensor]],
+            positions: Union[Tensor, List[Tensor]],
+            lattice_vector: Optional[Union[Tensor, List[Tensor], Type[Lattice]]],
+            cutoff: Optional[Union[Tensor, float]],
+            frac: bool, units: str):
+        """
+        This method just abstracts a lot of overly verbose and messy safety
+        checks and conversions that are performed on the inputs. This is done
+        to make the `__init__` method a little cleaner.
+        """
 
-        # These are static, private variables and must NEVER be modified!
-        self.__device = self.positions.device
-        self.__dtype = self.positions.dtype
+        # Preprocessing:
+        # 1) Ensure that `atomic_numbers` and `positions` are packed as needed,
+        #    `pack` only effects lists of tensors, and deflate is used to
+        #    remove any unnecessary padding.
+        atomic_numbers = deflate(pack(atomic_numbers))
+        positions = pack(positions)[..., :atomic_numbers.shape[-1], :]
 
-        # Check for size discrepancies in `positions` & `atomic_numbers`
-        # & `cells`.
-        if self.atomic_numbers.ndim == 2:
-            check = len(atomic_numbers) == len(positions)
-            assert check, '`atomic_numbers` & `positions` size mismatch found'
-            if self.cells is not None:
-                check = len(positions) == len(cells)
-                assert check, ('`atomic_numbers` & `positions` & `cells` size '
-                               'mismatch found')
+        # 2) If the lattice vectors are supplied as ase.lattice.bravais.Lattice
+        #    instances then the lattice vector arrays must be extracted from
+        #    them. Then make sure that the lattice vectors are pytorch arrays
+        #    and are packed if required. Note that care must be taken here not
+        #    to accidentally cause the lattice vectors to be deflated. A row
+        #    of all zeros is valid in a lattice vector and thus should not be
+        #    pruned.
+        if isinstance(lattice_vector, Lattice):
+            lattice_vector = lattice_vector.cell.array
 
-        # Ensure tensors are on the same device (only two present currently)
-        if self.positions.device != self.positions.device:
+        elif (isinstance(lattice_vector, list)
+              and isinstance(lattice_vector[0], Lattice)):
+            lattice_vector = [i.cell.array for i in lattice_vector]
+
+        if isinstance(lattice_vector, list):
+            lattice_vector = pack(lattice_vector).to(positions.device)
+        elif isinstance(lattice_vector, np.ndarray):
+            lattice_vector = torch.tensor(lattice_vector).to(positions.device)
+
+        # 3) Ensure tensors are on the same device (only two present currently)
+        if positions.device != atomic_numbers.device:
             raise RuntimeError('All tensors must be on the same device!')
 
-        # Periodic object to store related information
-        self.periodic = Periodic(self.positions, self.n_atoms, self.cells,
-                                 self._cutoff) if cells is not None else None
+        # 4) Lattice vectors many not be zero dimensional
+        if lattice_vector is not None and (
+                ~lattice_vector.ne(0).any(-1).any(-1)).any():
+            raise ValueError('Lattice vectors may not be zero dimensional!')
+
+        # 5) Convert fractional positions to their Cartesian values
+        if frac and lattice_vector is not None:
+            # Todo: Remove hard-coding to specific periodicity
+            positions = Triclinic.frac_to_cartesian(lattice_vector, positions)
+
+        # 6) a non-periodic system cannot be given in fractional coordinates
+        if frac and lattice_vector is None:
+            raise ValueError(
+                'Fractional coordinates cannot be used for clusters!')
+
+        # 7) Perform unit conversions as and when required. TBMaLT uses atomic
+        #    units internally; i.e. Bohr for distance.
+        if units != 'bohr':
+            conversion_factor = length_units[units]
+            positions = positions * conversion_factor
+            if lattice_vector is not None:
+                lattice_vector = lattice_vector * conversion_factor
+            if cutoff is not None:
+                cutoff = cutoff * conversion_factor
+
+        # 8) Check for shape discrepancies in `positions`, `atomic_numbers`, &
+        #   `cells`. A position/atomic-number mismatch would have caused an
+        #   error in the first step so it technically does not need to be
+        #   explicitly checked for.
+        check_1 = positions.shape[:-1] == atomic_numbers.shape
+        assert check_1, '`positions` & `atomic_numbers` shape mismatch found'
+        if lattice_vector is not None and atomic_numbers.ndim != 1:
+            check_2 = positions.shape[0] == lattice_vector.shape[0]
+            assert check_2, '`positions` & `lattice_vector` shape mismatch found'
+
+        return atomic_numbers, positions, lattice_vector, cutoff
+
+    def _update(self):
+        pass
+
+    @property
+    def positions(self):
+        return self._positions
+
+    @positions.setter
+    def positions(self, value):
+        self._positions = value
+        if self.periodicity is not None:
+            self.periodicity._positions = value
 
     @property
     def device(self) -> torch.device:
@@ -179,12 +263,14 @@ class Geometry:
 
     @property
     def is_periodic(self) -> bool:
-        """If there is any periodic boundary conditions."""
-        return False if self.cells is None else True
+        """If there is any periodicity boundary conditions."""
+        return False if self.periodicity is None else True
 
     @property
     def distances(self) -> Tensor:
         """Distance matrix between atoms in the system."""
+        # Todo: Modify to account for PBC
+
         dist = torch.cdist(self.positions, self.positions, p=2)
         # Ensure padding area is zeroed out
         dist[self._mask_dist] = 0
@@ -199,6 +285,7 @@ class Geometry:
     @property
     def distance_vectors(self) -> Tensor:
         """Distance vector matrix between atoms in the system."""
+        # Todo: Modify to account for PBC
         dist_vec = self.positions.unsqueeze(-2) - self.positions.unsqueeze(-3)
         dist_vec[self._mask_dist] = 0
         return dist_vec
@@ -210,8 +297,25 @@ class Geometry:
 
     @property
     def pbc(self) -> Union[bool, Tensor]:
-        """A string describing the type of pbc."""
-        return self._cell.pbc if self.cells is not None else False
+        """Directions along which the system is deemed to be periodicity."""
+        return self.periodicity.pbc if self.periodicity is not None else False
+
+    @property
+    def _mask_dist(self):
+        """Mask for clearing padding values in the distance matrix."""
+
+        # Identify which atoms are not padding atoms. It is assumed that the
+        # value "0" is used for padding that atomic number tensor.
+        mask = self.atomic_numbers != 0
+
+        # If no padding atoms are present then no masking is needed, thus the
+        # value `False` is returned; i.e. mask out no parts of a tensor.
+        if (mask != 0).all():
+            return False
+        # If padding values are found then expand the mask into a 2D slice for
+        # each system present in the current `Geometry` instance.
+        else:
+            return ~(mask.unsqueeze(-2) * mask.unsqueeze(-1))
 
     def unique_atomic_numbers(self) -> Tensor:
         """Identifies and returns a tensor of unique atomic numbers.
@@ -246,7 +350,7 @@ class Geometry:
 
         Raises:
             NotImplementedError: If there is a mixing of `ase.Atoms` objects
-            that have both periodic boundary conditions and non-periodic
+            that have both periodicity boundary conditions and non-periodicity
             boundary conditions.
         """
         # If not specified by the user; ensure that the default dtype is used,
@@ -254,9 +358,9 @@ class Geometry:
         # *very* hard to diagnose errors.
         dtype = torch.get_default_dtype() if dtype is None else dtype
 
-        # Check periodic systems
+        # Check periodicity systems
         def check_not_periodic(atom_instance):
-            """Check whether a system is periodic."""
+            """Check whether a system is periodicity."""
             return True if atom_instance.pbc.any() else False
 
         if not isinstance(atoms, list):  # If a single system
@@ -327,38 +431,38 @@ class Geometry:
         if not isinstance(source, list):
             # Read & parse a datasets from the database into a System instance
             # & return the result.
-            if 'cells' not in source.keys():  # Check PBC systems
-                return cls(torch.tensor(source['atomic_numbers'],
+            if 'lattice_vector' not in source.keys():  # Check PBC systems
+                return cls(torch.tensor(source['atomic_numbers'][()],
                                         device=device),
-                           torch.tensor(source['positions'],
+                           torch.tensor(source['positions'][()],
                                         dtype=dtype, device=device),
                            units=units)
             else:
-                return cls(torch.tensor(source['atomic_numbers'],
+                return cls(torch.tensor(source['atomic_numbers'][()],
                                         device=device),
-                           torch.tensor(source['positions'],
+                           torch.tensor(source['positions'][()],
                                         dtype=dtype, device=device),
-                           torch.tensor(source['cells'],
+                           torch.tensor(source['lattice_vector'][()],
                                         dtype=dtype, device=device),
                            units=units)
 
         else:
             # Check PBC systems
-            _pbc = ['cells' in s.keys() for s in source]
+            _pbc = ['lattice_vector' in s.keys() for s in source]
             if not torch.any(torch.tensor(_pbc)):  # -> A batch of non-PBC
                 return cls(  # Create a batched Geometry instance and return it
-                    [torch.tensor(s['atomic_numbers'], device=device)
+                    [torch.tensor(s['atomic_numbers'][()], device=device)
                      for s in source],
-                    [torch.tensor(s['positions'], device=device, dtype=dtype)
+                    [torch.tensor(s['positions'][()], device=device, dtype=dtype)
                      for s in source],
                     units=units)
             elif torch.all(torch.tensor(_pbc)):  # -> A batch of PBC:
                 return cls(  # Create a batched Geometry instance and return it
-                    [torch.tensor(s['atomic_numbers'], device=device)
+                    [torch.tensor(s['atomic_numbers'][()], device=device)
                      for s in source],
-                    [torch.tensor(s['positions'], device=device, dtype=dtype)
+                    [torch.tensor(s['positions'][()], device=device, dtype=dtype)
                      for s in source],
-                    [torch.tensor(s['cells'], device=device, dtype=dtype)
+                    [torch.tensor(s['lattice_vector'][()], device=device, dtype=dtype)
                      for s in source],
                     units=units)
             else:
@@ -381,9 +485,9 @@ class Geometry:
         # Add datasets for atomic_numbers, positions, lattice, and pbc
         add_data('atomic_numbers', data=self.atomic_numbers.cpu().numpy())
         pos = add_data('positions', data=self.positions.cpu().numpy())
-        if self.cells is not None:
-            cell = add_data('cells', data=self.cells.cpu().numpy())
-            cell.attrs['pbc'] = self.pbc.cpu().numpy()
+        if self.periodicity is not None:
+            add_data(
+                'lattice_vector', data=self.periodicity.lattice.cpu().numpy())
 
         # Add units meta-data to the atomic positions
         pos.attrs['unit'] = 'bohr'
@@ -411,13 +515,13 @@ class Geometry:
         if self.atomic_numbers.device == device:
             return self
         else:
-            if self.cells is None:
+            if self.periodicity is None:
                 return self.__class__(self.atomic_numbers.to(device=device),
                                       self.positions.to(device=device))
             else:
                 return self.__class__(self.atomic_numbers.to(device=device),
                                       self.positions.to(device=device),
-                                      self.cells.to(device=device))
+                                      self.lattice.to(device=device))
 
     def __getitem__(self, selector) -> 'Geometry':
         """Permits batched Geometry instances to be sliced as needed."""
@@ -430,10 +534,11 @@ class Geometry:
         # to remove any unnecessary padding.
         new_zs = deflate(self.atomic_numbers[selector, ...])
         new_pos = self.positions[selector, ...][..., :new_zs.shape[-1], :]
-        new_cells = self.cells[selector, ...] \
-            if self.cells is not None else self.cells
+        new_lattice = self.lattice[selector, ...] \
+            if self.lattice is not None else self.lattice
 
-        return self.__class__(new_zs, new_pos, new_cells, cutoff=self._cutoff)
+        return self.__class__(
+            new_zs, new_pos, new_lattice, cutoff=self._cutoff)
 
     def __add__(self, other: 'Geometry') -> 'Geometry':
         """Combine two `Geometry` objects together."""
@@ -451,8 +556,8 @@ class Geometry:
         pos_1 = self.positions
         pos_2 = other.positions
 
-        cells_1 = self.cells
-        cells_2 = other.cells
+        cell_1 = self.lattice
+        cell_2 = other.lattice
 
         cutoff_1 = self._cutoff
         cutoff_2 = other._cutoff
@@ -460,15 +565,20 @@ class Geometry:
         pos_1 = pos_1 if s_batch else pos_1.unsqueeze(0)
         pos_2 = pos_2 if o_batch else pos_2.unsqueeze(0)
 
-        if (cells_1 is None and cells_2 is None):  # -> Two non-PBC objects
+        if cell_1 is not None and not s_batch:
+            cell_1 = cell_1.unsqueeze(0)
+
+        if cell_2 is not None and not o_batch:
+            cell_2 = cell_2.unsqueeze(0)
+
+        if cell_1 is None and cell_2 is None:  # -> Two non-PBC objects
             return self.__class__(merge([an_1, an_2]), merge([pos_1, pos_2]))
-        elif (cells_1 is not None and
-              cells_2 is not None):  # -> Two PBC objects
-            cells_1 = cells_1 if s_batch else cells_1.unsqueeze(0)
-            cells_2 = cells_2 if o_batch else cells_2.unsqueeze(0)
-            return self.__class__(merge([an_1, an_2]), merge([pos_1, pos_2]),
-                                  merge([cells_1, cells_2]),
-                                  cutoff=torch.max(cutoff_1, cutoff_2))
+        elif (cell_1 is not None and
+              cell_2 is not None):  # -> Two PBC objects
+
+            return self.__class__(
+                merge([an_1, an_2]), merge([pos_1, pos_2]),
+                merge([cell_1, cell_2]), cutoff=torch.max(cutoff_1, cutoff_2))
         else:  # -> One PBC object and one non-PBC object
             raise TypeError(
                 'Addition can not take place between a PBC object and '
@@ -494,7 +604,7 @@ class Geometry:
         return all([
             shape_and_value(self.atomic_numbers, other.atomic_numbers),
             shape_and_value(self.positions, other.positions),
-            shape_and_value(self.cells, other.cells)
+            shape_and_value(self.lattice, other.lattice)
         ])
 
     def __repr__(self) -> str:
@@ -532,17 +642,17 @@ class Geometry:
                             self.atomic_numbers[[0, 1, -2, -1]]]
                 formula = '{}, {}, ..., {}, {}'.format(*formulas)
 
-        if self.cells is None:
+        if self.periodicity is None:
             # Wrap the formula(s) in the class name and return
             return f'{self.__class__.__name__}({formula})'
         else:  # Add PBC information
-            if self.pbc.ndim == 1:  # If same periodic direction
+            if self.pbc.ndim == 1:  # If same periodicity direction
                 formula_pbc = 'pbc=' + str(self.pbc.tolist())
             else:  # If multiple directions
                 if self.pbc.shape[0] <= 4:  # Show all
                     formula_pbc = 'pbc=' + str(self.pbc.tolist())
                 else:  # Show only the first and last two systems
-                    formulas_pbc = [str((pd)) for pd in
+                    formulas_pbc = [str(pd) for pd in
                                     self.pbc[[0, 1, -2, -1]].tolist()]
                     formula_pbc = 'pbc={}, {}, ..., {}, {}'.format(
                         *formulas_pbc)
@@ -609,3 +719,4 @@ def unique_atom_pairs(geometry: Geometry) -> Tensor:
     n_global = len(uan)
     return torch.stack([uan.repeat(n_global),
                         uan.repeat_interleave(n_global)]).T
+
