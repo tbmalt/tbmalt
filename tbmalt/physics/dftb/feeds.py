@@ -26,6 +26,7 @@ Array = np.ndarray
 interp_dict = {'polynomial': PolyInterpU, 'spline': CSpline,
                'bicubic': BicubInterp}
 
+
 def _enforce_numpy(v):
     """Helper function to ensure entity is a numpy array."""
     if isinstance(v, np.ndarray):
@@ -405,7 +406,7 @@ class ScipySkFeed(IntegralFeed):
             instances.
 
             This method will not instantiate `ScipySkFeed` instances directly
-            from human readable skf files, or a directory thereof. Thus, any
+            from human-readable skf files, or a directory thereof. Thus, any
             such files must first be converted into their binary equivalent.
             This reduces overhead & file format error instabilities. The code
             block provide below shows how this can be done:
@@ -423,6 +424,7 @@ class ScipySkFeed(IntegralFeed):
             >>> import urllib
             >>> import tarfile
             >>> from os.path import join
+            >>> import torch
             >>> torch.set_default_dtype(torch.float64)
 
             # Link to the auorg-1-1 parameter set
@@ -463,7 +465,7 @@ class ScipySkFeed(IntegralFeed):
 
         """
         # As C-H & C-H interactions are the same only one needs to be loaded.
-        # Thus only off-site interactions where z₁≤z₂ are generated. However,
+        # Thus, only off-site interactions where z₁≤z₂ are generated. However,
         # integrals are split over the two Slater-Koster tables, thus both must
         # be loaded.
 
@@ -499,7 +501,7 @@ class ScipySkFeed(IntegralFeed):
                             *clip(skf_2.grid, value), extrapolate=False)
 
             else:  # Construct the onsite interactions
-                # Repeated so theres 1 value per orbital not just per shell.
+                # Repeated so there's 1 value per orbital not just per shell.
                 on_sites_vals = skf.on_sites.repeat_interleave(
                     torch.arange(len(skf.on_sites)) * 2 + 1).to(device)
 
@@ -591,8 +593,10 @@ class SkFeed(IntegralFeed):
     def _off_site_blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
                          geometry: Geometry, orbs: OrbitalInfo, **kwargs) -> Tensor:
         """Compute atomic interaction blocks (off-site only).
+
         Constructs the off-site atomic blocks using Slater-Koster integral
         tables.
+
         Arguments:
               atomic_idx_1: Indices of the 1'st atom associated with each
                 desired interaction block.
@@ -616,6 +620,8 @@ class SkFeed(IntegralFeed):
                     - geometry.positions[atomic_idx_1.T])
         dist = torch.linalg.norm(dist_vec, dim=-1)
         u_vec = (dist_vec.T / dist).T
+
+        # `BicubInterp` interpolation works for VCR
         if self.interpolation is BicubInterp:
             cr = torch.stack([self.vcr[atomic_idx_1.T], self.vcr[atomic_idx_2.T]]).T
 
@@ -909,6 +915,7 @@ class SkFeed(IntegralFeed):
             >>> import urllib
             >>> import tarfile
             >>> from os.path import join
+            >>> import torch
             >>> torch.set_default_dtype(torch.float64)
 
             # Link to the auorg-1-1 parameter set
@@ -949,7 +956,7 @@ class SkFeed(IntegralFeed):
 
         """
         # As C-H & C-H interactions are the same only one needs to be loaded.
-        # Thus only off-site interactions where z₁≤z₂ are generated. However,
+        # Thus, only off-site interactions where z₁≤z₂ are generated. However,
         # integrals are split over the two Slater-Koster tables, thus both must
         # be loaded.
 
@@ -1008,7 +1015,7 @@ class SkFeed(IntegralFeed):
                     off_sites[pair + key].abcd.requires_grad_(True)
 
             else:  # Construct the onsite interactions
-                # Repeated so theres 1 value per orbital not just per shell.
+                # Repeated so there's 1 value per orbital not just per shell.
                 on_sites_vals = skf.on_sites.repeat_interleave(
                     torch.arange(len(skf.on_sites)) * 2 + 1).to(device)
 
@@ -1273,7 +1280,6 @@ class HubbardFeed(Feed):
 
         # Divide the occupancy by the number of shells
         return hubbard_us
-
 
     @classmethod
     def from_database(cls, path: str, species: List[int], **kwargs

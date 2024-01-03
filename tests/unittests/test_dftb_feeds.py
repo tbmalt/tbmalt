@@ -1,17 +1,17 @@
+import os
 from os.path import join, dirname
 import pytest
-import urllib
 import torch
-import tarfile
 from typing import List
 import numpy as np
-from tbmalt.io.skf import Skf
-from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed, HubbardFeed
+from ase.build import molecule
+
+from tbmalt.physics.dftb.feeds import ScipySkFeed, SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.common.batch import pack
 from functools import reduce
 
-from tests.test_utils import skf_file
+from tests.test_utils import skf_file, skf_file_vcr
 
 torch.set_default_dtype(torch.float64)
 
@@ -19,7 +19,7 @@ torch.set_default_dtype(torch.float64)
 def molecules(device) -> List[Geometry]:
     """Returns a selection of `Geometry` entities for testing.
 
-    Currently returned systems are H2, CH4, and C2H2Au2S3. The last of which
+    Currently, returned systems are H2, CH4, and C2H2Au2S3. The last of which
     is designed to ensure most possible interaction types are checked.
 
     Arguments:
@@ -65,8 +65,6 @@ def molecules(device) -> List[Geometry]:
 
 def hamiltonians(device):
     matrices = []
-    # join(dirname(tbmalt.__file__), '..', ''
-    # path = 'tests/unittests/data/skfeed'
     path = join(dirname(__file__), 'data/skfeed')
     for system in ['H2', 'CH4', 'C2H2Au2S3']:
         matrices.append(torch.tensor(np.loadtxt(
@@ -77,7 +75,6 @@ def hamiltonians(device):
 
 def overlaps(device):
     matrices = []
-    # path = 'tests/unittests/data/skfeed'
     path = join(dirname(__file__), 'data/skfeed')
     for system in ['H2', 'CH4', 'C2H2Au2S3']:
         matrices.append(torch.tensor(np.loadtxt(
@@ -89,8 +86,6 @@ def overlaps(device):
 #########################################
 # tbmalt.physics.dftb.feeds.ScipySkFeed #
 #########################################
-# General
-
 # Single
 def test_scipyskfeed_single(skf_file: str, device):
     """ScipySkFeed matrix single system operability tolerance test"""
@@ -115,10 +110,10 @@ def test_scipyskfeed_single(skf_file: str, device):
 
 
 # Batch
-def test_scipyskfeed_batch(skf_file:str, device):
+def test_scipyskfeed_batch(skf_file: str, device):
     """ScipySkFeed matrix batch operability tolerance test"""
     H_feed = ScipySkFeed.from_database(
-        skf_file, [1, 6, 16, 79], 'hamiltonian',device=device)
+        skf_file, [1, 6, 16, 79], 'hamiltonian', device=device)
     S_feed = ScipySkFeed.from_database(
         skf_file, [1, 6, 16, 79], 'overlap', device=device)
 
@@ -144,11 +139,172 @@ def test_scipyskfeed_batch(skf_file:str, device):
 # Note that gradient tests are not performed on the ScipySkFeed as it is not
 # backpropagatable due to its use of Scipy splines for interpolation.
 
+#########################################
+# tbmalt.physics.dftb.feeds.SkFeed #
+#########################################
+# Hamiltonian and overlap data for CH4 and H2O
+H_ref_ch4 = torch.tensor(
+    [[-5.048917654803000E-01, 0.000000000000000E+00, 0.000000000000000E+00,
+      0.000000000000000E+00, -3.235506247119279E-01, -3.235506247119279E-01,
+      -3.235506247119279E-01, -3.235506247119279E-01],
+     [0.000000000000000E+00, -1.943551799182000E-01, 0.000000000000000E+00,
+      0.000000000000000E+00, -1.644218947194303E-01, 1.644218947194303E-01,
+      1.644218947194303E-01, -1.644218947194303E-01],
+     [0.000000000000000E+00, 0.000000000000000E+00, -1.943551799182000E-01,
+      0.000000000000000E+00, -1.644218947194303E-01, -1.644218947194303E-01,
+      1.644218947194303E-01, 1.644218947194303E-01],
+     [0.000000000000000E+00, 0.000000000000000E+00, 0.000000000000000E+00,
+      -1.943551799182000E-01, -1.644218947194303E-01, 1.644218947194303E-01,
+      -1.644218947194303E-01, 1.644218947194303E-01],
+     [-3.235506247119279E-01, -1.644218947194303E-01, -1.644218947194303E-01,
+      -1.644218947194303E-01, -2.386005440483000E-01, -6.680097953235961E-02,
+      -6.680097953235961E-02, -6.680097953235961E-02],
+     [-3.235506247119279E-01, 1.644218947194303E-01, -1.644218947194303E-01,
+      1.644218947194303E-01, -6.680097953235961E-02, -2.386005440483000E-01,
+      -6.680097953235961E-02, -6.680097953235961E-02],
+     [-3.235506247119279E-01, 1.644218947194303E-01, 1.644218947194303E-01,
+      -1.644218947194303E-01, -6.680097953235961E-02, -6.680097953235961E-02,
+      -2.386005440483000E-01, -6.680097953235961E-02],
+     [-3.235506247119279E-01, -1.644218947194303E-01, 1.644218947194303E-01,
+      1.644218947194303E-01, -6.680097953235961E-02, -6.680097953235961E-02,
+      -6.680097953235961E-02, -2.386005440483000E-01]])
+
+S_ref_ch4 = torch.tensor(
+    [[1.000000000000000E+00, 0.000000000000000E+00, 0.000000000000000E+00,
+      0.000000000000000E+00, 4.084679411526629E-01, 4.084679411526629E-01,
+      4.084679411526629E-01, 4.084679411526629E-01],
+     [0.000000000000000E+00, 1.000000000000000E+00, 0.000000000000000E+00,
+      0.000000000000000E+00, 2.598016488988212E-01, -2.598016488988212E-01,
+      -2.598016488988212E-01, 2.598016488988212E-01],
+     [0.000000000000000E+00, 0.000000000000000E+00, 1.000000000000000E+00,
+      0.000000000000000E+00, 2.598016488988212E-01, 2.598016488988212E-01,
+      -2.598016488988212E-01, -2.598016488988212E-01],
+     [0.000000000000000E+00, 0.000000000000000E+00, 0.000000000000000E+00,
+      1.000000000000000E+00, 2.598016488988212E-01, -2.598016488988212E-01,
+      2.598016488988212E-01, -2.598016488988212E-01],
+     [4.084679411526629E-01, 2.598016488988212E-01, 2.598016488988212E-01,
+      2.598016488988212E-01, 1.000000000000000E+00, 8.616232232870227E-02,
+      8.616232232870227E-02, 8.616232232870227E-02],
+     [4.084679411526629E-01, -2.598016488988212E-01, 2.598016488988212E-01,
+      -2.598016488988212E-01, 8.616232232870227E-02, 1.000000000000000E+00,
+      8.616232232870227E-02, 8.616232232870227E-02],
+     [4.084679411526629E-01, -2.598016488988212E-01, -2.598016488988212E-01,
+      2.598016488988212E-01, 8.616232232870227E-02, 8.616232232870227E-02,
+      1.000000000000000E+00, 8.616232232870227E-02],
+     [4.084679411526629E-01, 2.598016488988212E-01, -2.598016488988212E-01,
+      -2.598016488988212E-01, 8.616232232870227E-02, 8.616232232870227E-02,
+      8.616232232870227E-02, 1.000000000000000E+00]])
+
+H_ref_h2o = torch.tensor(
+    [[-8.788325840766993E-01, 0.000000000000000E+00, 0.000000000000000E+00,
+      0.000000000000000E+00, -4.882459882956572E-01, -4.882459882956572E-01],
+     [0.000000000000000E+00, -3.321317735287993E-01, 0.000000000000000E+00,
+      0.000000000000000E+00, -2.760418336133891E-01, 2.760418336133891E-01],
+     [0.000000000000000E+00, 0.000000000000000E+00, -3.321317735287993E-01,
+      0.000000000000000E+00, 2.156680014519258E-01, 2.156680014519258E-01],
+     [0.000000000000000E+00, 0.000000000000000E+00, 0.000000000000000E+00,
+      -3.321317735287993E-01, 0.000000000000000E+00, 0.000000000000000E+00],
+     [-4.882459882956572E-01, -2.760418336133891E-01, 2.156680014519258E-01,
+      0.000000000000000E+00, -2.386005440482994E-01, -1.056313505954941E-01],
+     [-4.882459882956572E-01, 2.760418336133891E-01, 2.156680014519258E-01,
+      0.000000000000000E+00, -1.056313505954941E-01, -2.386005440482994E-01]])
+
+S_ref_h2o = torch.tensor(
+    [[1.000000000000000E+00, 0.000000000000000E+00, 0.000000000000000E+00,
+      0.000000000000000E+00, 4.090587540889245E-01, 4.090587540889245E-01],
+     [0.000000000000000E+00, 1.000000000000000E+00, 0.000000000000000E+00,
+      0.000000000000000E+00, 3.165866606110211E-01, -3.165866606110211E-01],
+     [0.000000000000000E+00, 0.000000000000000E+00, 1.000000000000000E+00,
+      0.000000000000000E+00, -2.473451631825645E-01, -2.473451631825645E-01],
+     [0.000000000000000E+00, 0.000000000000000E+00, 0.000000000000000E+00,
+      1.000000000000000E+00, 0.000000000000000E+00, 0.000000000000000E+00],
+     [4.090587540889245E-01, 3.165866606110211E-01, -2.473451631825645E-01,
+      0.000000000000000E+00, 1.000000000000000E+00, 1.554584894565836E-01],
+     [4.090587540889245E-01, -3.165866606110211E-01, -2.473451631825645E-01,
+      0.000000000000000E+00, 1.554584894565836E-01, 1.000000000000000E+00]])
+
+
+def test_skfeed_single(device):
+    """SkFeed matrix single system operability tolerance test"""
+    species = [1, 6, 7, 8]
+    path_to_file = 'example_dftb_vcr.h5'
+    b_def = {1: [0], 6: [0, 1], 7: [0, 1], 8: [0, 1]}
+
+    skf_file_vcr(path_to_file)
+
+    # Load the Hamiltonian, overlap feed model
+    h_feed = SkFeed.from_database(path_to_file, species, 'hamiltonian',
+                                  interpolation='bicubic')
+    s_feed = SkFeed.from_database(path_to_file, species, 'overlap',
+                                  interpolation='bicubic')
+
+    # Define (wave-function) compression radii, keep s and p the same
+    vcrs = [torch.tensor([2.7, 2.5, 2.5, 2.5, 2.5], device=device),
+            torch.tensor([2.3, 2.5, 2.5], device=device)]
+    H_ref = [H_ref_ch4, H_ref_h2o]
+    S_ref = [S_ref_ch4, S_ref_h2o]
+
+    for ii, mol in enumerate([molecule('CH4'), molecule('H2O')]):
+        mol = Geometry.from_ase_atoms(mol)
+        h_feed.vcr = vcrs[ii]
+        s_feed.vcr = vcrs[ii]
+
+        H = h_feed.matrix(mol, OrbitalInfo(mol.atomic_numbers, b_def))
+        S = s_feed.matrix(mol, OrbitalInfo(mol.atomic_numbers, b_def))
+
+        check_1 = torch.allclose(H, H_ref[ii], atol=2E-5)
+        check_2 = torch.allclose(S, S_ref[ii], atol=1E-4)
+        check_3 = H.device == device
+
+        assert check_1, f'SkFeed H matrix outside of tolerance ({mol})'
+        assert check_2, f'SkFeed S matrix outside of tolerance ({mol})'
+        assert check_3, 'SkFeed.matrix returned on incorrect device'
+
+    os.system(f'rm {path_to_file}')
+
+
+# Batch
+def test_skfeed_batch(device):
+    """SkFeed matrix batch system operability tolerance test"""
+    species = [1, 6, 7, 8]
+    path_to_file = 'example_dftb_vcr.h5'
+    b_def = {1: [0], 6: [0, 1], 7: [0, 1], 8: [0, 1]}
+
+    skf_file_vcr(path_to_file)
+
+    # Load the Hamiltonian, overlap feed model
+    h_feed = SkFeed.from_database(path_to_file, species, 'hamiltonian',
+                                  interpolation='bicubic')
+    s_feed = SkFeed.from_database(path_to_file, species, 'overlap',
+                                  interpolation='bicubic')
+
+    # Define (wave-function) compression radii, keep s and p the same
+    vcrs = torch.tensor([[2.7, 2.5, 2.5, 2.5, 2.5], [2.3, 2.5, 2.5, 0, 0]],
+                        device=device)
+    H_ref = pack([H_ref_ch4, H_ref_h2o])
+    S_ref = pack([S_ref_ch4, S_ref_h2o])
+
+    mol = Geometry.from_ase_atoms([molecule('CH4'), molecule('H2O')])
+    h_feed.vcr = vcrs
+    s_feed.vcr = vcrs
+
+    H = h_feed.matrix(mol, OrbitalInfo(mol.atomic_numbers, b_def))
+    S = s_feed.matrix(mol, OrbitalInfo(mol.atomic_numbers, b_def))
+
+    check_1 = torch.allclose(H, H_ref, atol=2E-5)
+    check_2 = torch.allclose(S, S_ref, atol=1E-4)
+    check_3 = H.device == device
+
+    assert check_1, f'SkFeed H matrix outside of tolerance ({mol})'
+    assert check_2, f'SkFeed S matrix outside of tolerance ({mol})'
+    assert check_3, 'SkFeed.matrix returned on incorrect device'
+
+    os.system(f'rm {path_to_file}')
+
+
 ###############################################
 # tbmalt.physics.dftb.feeds.SkfOccupationFeed #
 ###############################################
-
-
 # General
 def test_skfoccupationfeed_general(device, skf_file):
 
@@ -236,8 +392,6 @@ def test_skfoccupationfeed_batch(device, skf_file):
 ###############################################
 # tbmalt.physics.dftb.feeds.HubbardFeed #
 ###############################################
-
-
 # General
 def test_hubbardfeed_general(device, skf_file):
 
