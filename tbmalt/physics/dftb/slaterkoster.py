@@ -19,18 +19,54 @@ def sub_block_rot(l_pair: Tensor, u_vec: Tensor,
                   integrals: Tensor) -> Tensor:
     """Diatomic sub-block rotated into the reference frame of the system.
 
-    This takes the unit distance vector and slater-koster integrals between a
+    This takes the unit distance vector and Slater-Koster integrals between a
     pair of orbitals and constructs the associated diatomic block which has
     been rotated into the reference frame of the system.
 
     Args:
         l_pair: Azimuthal quantum numbers associated with the orbitals.
-        u_vec: Unit distance vector between the orbitals.
+        u_vec: Unit distance vector between the atoms.
         integrals: Slater-Koster integrals between the orbitals, in order of
             σ, π, δ, γ, etc.
 
     Returns:
         block: Diatomic block(s)
+
+    Examples:
+        >>> import torch
+        >>> from tbmalt.physics.dftb.slaterkoster import sub_block_rot
+
+        # Slater-Koster transformation for single system
+        >>> l_pair = torch.tensor([0, 0])  # s-s orbital
+        >>> u_vecs = torch.tensor([0.7001, 0.6992, 0.1449])
+        >>> integrals = torch.tensor([-0.1610])
+        >>> pred = sub_block_rot(l_pair, u_vecs, integrals)
+        >>> print(pred)
+        tensor([[-0.1610]])
+
+        # Slater-Koster transformation for batch system
+        >>> l_pair = torch.tensor([0, 1])  # s-p orbital
+        >>> u_vecs  = torch.tensor([
+        [0.7001, 0.6992, 0.1449], [0.8199, 0.5235, 0.2317],
+        [0.1408, 0.7220, 0.6774], [0.5945, 0.6138, 0.5195],
+        [0.5749, 0.6112, 0.5440], [0.4976, 0.5884, 0.6374],
+        [0.0075, 0.5677, 0.8232], [0.7632, 0.4264, 0.4856],
+        [0.3923, 0.3178, 0.8632], [0.0278, 0.6896, 0.7237]])
+        >>> integrals = torch.tensor([
+        [-0.1011], [-0.1011], [-0.1011], [-0.1011], [-0.1011],
+        [-0.1011], [-0.1011], [-0.1011], [-0.1011], [-0.1011]])
+        >>> pred = sub_block_rot(l_pair, u_vecs, integrals)
+        >>> print(pred)
+        tensor([[[-0.0707, -0.0146, -0.0708]],
+                [[-0.0529, -0.0234, -0.0829]],
+                [[-0.0730, -0.0685, -0.0142]],
+                [[-0.0621, -0.0525, -0.0601]],
+                [[-0.0618, -0.0550, -0.0581]],
+                [[-0.0595, -0.0644, -0.0503]],
+                [[-0.0574, -0.0832, -0.0008]],
+                [[-0.0431, -0.0491, -0.0772]],
+                [[-0.0321, -0.0873, -0.0397]],
+                [[-0.0697, -0.0732, -0.0028]]])
 
     """
     if u_vec.device != integrals.device:
@@ -87,7 +123,7 @@ def sub_block_ref(l_pair: Tensor, integrals: Tensor):
         block: Diatomic sub-block in the reference frame of the integrals.
 
     Notes:
-        Each row of ``integrals`` should represent a separate system; i.e.
+        Each row of ``integrals`` should represent a separate system; i.e.,
         a 3x1 matrix would indicate a batch of size 3, each with one integral.
         Whereas a matrix of size 1x3 or a vector of size 3 would indicate one
         system with three integral values.
@@ -124,14 +160,14 @@ def sub_block_ref(l_pair: Tensor, integrals: Tensor):
 #################################
 # Slater-Koster Transformations #
 #################################
-# Note that the internal slater-koster transformation functions "_skt_*" are
+# Note that the internal Slater-Koster transformation functions "_skt_*" are
 # able to handle batches of systems, not just one system at a time.
 def _rot_yz_s(unit_vector: Tensor) -> Tensor:
     r"""s-block transformation matrix rotating about the y and z axes.
 
     Transformation matrix for rotating s-orbital blocks, about the y & z axes,
     from the integration frame to the molecular frame. Multiple transformation
-    matrices can be produces simultaneously.
+    matrices can be produced simultaneously.
 
     Arguments:
         unit_vector: Unit vector(s) between pair(s) of orbitals.
@@ -140,7 +176,7 @@ def _rot_yz_s(unit_vector: Tensor) -> Tensor:
         rot: Transformation matrix.
 
     Notes:
-        This function acts as a dummy subroutine as s integrals do not require
+        This function acts as a dummy subroutine, as integrals do not
         require transformation operations. This exists primarily to maintain
         functional consistency.
     """
@@ -154,7 +190,7 @@ def _rot_xy_s(unit_vector: Tensor) -> Tensor:
 
     Transformation matrix for rotating s-orbital blocks, about the x & y axes,
     from the integration frame to the molecular frame. Multiple transformation
-    matrices can be produces simultaneously.
+    matrices can be produced simultaneously.
 
     Arguments:
         unit_vector: Unit vector(s) between pair(s) of orbitals.
@@ -163,7 +199,7 @@ def _rot_xy_s(unit_vector: Tensor) -> Tensor:
         rot: Transformation matrix.
 
     Notes:
-        This function acts as a dummy subroutine as s integrals do not require
+        This function acts as a dummy subroutine, as integrals do not
         require transformation operations. This exists primarily to maintain
         functional consistency.
     """
@@ -177,7 +213,7 @@ def _rot_yz_p(unit_vector: Tensor) -> Tensor:
 
     Transformation matrix for rotating p-orbital blocks, about the y & z axes,
     from the integration frame to the molecular frame. Multiple transformation
-    matrices can be produces simultaneously.
+    matrices can be produced simultaneously.
 
     Arguments:
         unit_vector: Unit vector(s) between pair(s) of orbitals.
@@ -186,7 +222,7 @@ def _rot_yz_p(unit_vector: Tensor) -> Tensor:
         rot: Transformation matrix.
 
     Warnings:
-        The resulting transformation matrix becomes numerically ill defined
+        The resulting transformation matrix becomes numerically ill-defined
         when z≈1.
     """
     x, y, z = unit_vector.T
@@ -204,7 +240,7 @@ def _rot_xy_p(unit_vector: Tensor) -> Tensor:
 
     Transformation matrix for rotating p-orbital blocks, about the x & y axes,
     from the integration frame to the molecular frame. Multiple transformation
-    matrices can be produces simultaneously.
+    matrices can be produced simultaneously.
 
     Arguments:
         unit_vector: Unit vector(s) between pair(s) of orbitals.
@@ -213,7 +249,7 @@ def _rot_xy_p(unit_vector: Tensor) -> Tensor:
         rot: Transformation matrix.
 
     Warnings:
-        The resulting transformation matrix becomes numerically ill defined
+        The resulting transformation matrix becomes numerically ill-defined
         when y≈1.
     """
     x, y, z = unit_vector.T
@@ -231,7 +267,7 @@ def _rot_yz_d(unit_vector: Tensor) -> Tensor:
 
     Transformation matrix for rotating d-orbital blocks, about the y & z axes,
     from the integration frame to the molecular frame. Multiple transformation
-    matrices can be produces simultaneously.
+    matrices can be produced simultaneously.
 
     Arguments:
         unit_vector: Unit vector(s) between pair(s) of orbitals.
@@ -240,7 +276,7 @@ def _rot_yz_d(unit_vector: Tensor) -> Tensor:
         rot: Transformation matrix.
 
     Warnings:
-        The resulting transformation matrix becomes numerically ill defined
+        The resulting transformation matrix becomes numerically ill-defined
         when z≈1.
     """
     x, y, z = unit_vector.T
@@ -268,7 +304,7 @@ def _rot_xy_d(unit_vector: Tensor) -> Tensor:
 
     Transformation matrix for rotating d-orbital blocks, about the x & y axes,
     from the integration frame to the molecular frame. Multiple transformation
-    matrices can be produces simultaneously.
+    matrices can be produced simultaneously.
 
     Arguments:
         unit_vector: Unit vector(s) between pair(s) of orbitals.
@@ -277,7 +313,7 @@ def _rot_xy_d(unit_vector: Tensor) -> Tensor:
         rot: Transformation matrix.
 
     Warnings:
-        The resulting transformation matrix becomes numerically ill defined
+        The resulting transformation matrix becomes numerically ill-defined
         when y≈1.
     """
     x, y, z = unit_vector.T
@@ -304,7 +340,7 @@ def _rot_yz_f(unit_vector: Tensor) -> Tensor:
 
     Transformation matrix for rotating f-orbital blocks, about the y & z axes,
     from the integration frame to the molecular frame. Multiple transformation
-    matrices can be produces simultaneously.
+    matrices can be produced simultaneously.
 
     Arguments:
         unit_vector: Unit vector(s) between pair(s) of orbitals.
@@ -313,7 +349,7 @@ def _rot_yz_f(unit_vector: Tensor) -> Tensor:
         rot: Transformation matrix.
 
     Warnings:
-        The resulting transformation matrix becomes numerically ill defined
+        The resulting transformation matrix becomes numerically ill-defined
         when z≈1.
     """
     x, y, z = unit_vector.T
@@ -396,7 +432,7 @@ def _rot_xy_f(unit_vector: Tensor) -> Tensor:
 
     Transformation matrix for rotating f-orbital blocks, about the x & y axes,
     from the integration frame to the molecular frame. Multiple transformation
-    matrices can be produces simultaneously.
+    matrices can be produced simultaneously.
 
     Arguments:
         unit_vector: Unit vector(s) between pair(s) of orbitals.
@@ -405,7 +441,7 @@ def _rot_xy_f(unit_vector: Tensor) -> Tensor:
         rot: Transformation matrix.
 
     Warnings:
-        The resulting transformation matrix becomes numerically ill defined
+        The resulting transformation matrix becomes numerically ill-defined
         when y≈1.
     """
     x, y, z = unit_vector.T

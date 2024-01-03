@@ -1,21 +1,19 @@
 # -*- coding: utf-8 -*-
 """Unit tests associated with `tbmalt.physics.dftb.slaterkoster`."""
 from typing import Tuple, List, Callable, Optional, Union
-import numpy as np
 from re import findall
+
+import numpy as np
 import pytest
-from numpy.random import choice
 import torch
 from torch import Tensor
 from torch.autograd import gradcheck
-from tests.test_utils import fix_seed
-from tbmalt.common.batch import pack
+
 from tbmalt.physics.dftb.slaterkoster import (
     _rot_yz_s, _rot_xy_s, _rot_yz_p, _rot_xy_p, _rot_yz_d,
     _rot_xy_d, _rot_yz_f, _rot_xy_f,
     sub_block_ref, sub_block_rot
 )
-
 from tbmalt import Geometry
 
 ####################
@@ -35,7 +33,7 @@ def from_file(path: str, **kwargs) -> Tensor:
     Arguments:
         path: Path to the target numpy text file.
         **kwargs: Passed to `torch.tensor` as keyword arguments. Allows for
-            device on which the tensor is placed to be controlled.
+            the device on which the tensor is placed to be controlled.
 
     Returns:
         tensor: Data from the specified file.
@@ -53,7 +51,7 @@ def build_geom(*atomic_numbers: int, **kwargs) -> Geometry:
     Arguments:
         *atomic_numbers: An arbitrary number atomic numbers.
         **kwargs: Passed to `torch.tensor` as keyword arguments. Allows for
-            device on which the tensor is placed to be controlled.
+            the device on which the tensor is placed to be controlled.
 
     Returns:
         geometry: `Geometry` object with the desired atoms at random positions.
@@ -118,7 +116,7 @@ def sk_rotation_data(batch: bool = False, **kwargs
                      ) -> Tuple[Callable, Tensor, Tensor]:
     """Slater-Koster rotation matrix data.
 
-    This function returns data required to run and validate the slater koster
+    This function returns data required to run and validate the Slater-Koster
     rotation sub-blocks.
 
     Arguments:

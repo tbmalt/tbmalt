@@ -4,6 +4,8 @@ from typing import Any, List
 
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 import numpy as np
 import h5py
 
@@ -16,8 +18,7 @@ from tbmalt.io.dataset import DataSetIM
 from tbmalt.physics.dftb.properties import dos
 import tbmalt.common.maths as tb_math
 from tbmalt.common.batch import pack
-from torch.utils.data import DataLoader, Dataset
-from torch.utils.data.distributed import DistributedSampler
+from tbmalt.data.units import energy_units
 
 from ase.build import molecule
 
@@ -239,16 +240,16 @@ def loss_fn(results, ref_dos, ibatch):
     loss = 0.
     # Get type of loss function.
     if loss_function == 'MSELoss':
-        criterion = torch.nn.MSELoss(reduction='mean')
+        criterion = nn.MSELoss(reduction='mean')
     elif loss_function == 'Hellinger':
         criterion = HellingerLoss()
 
     # Calculate the loss
     ref = ref_dos[..., 1][ibatch] if ref_dos.ndim == 3 else ref_dos[..., 1]
-    fermi_dftb = getattr(results, 'homo_lumo').mean(dim=-1)
+    fermi_dftb = getattr(results, 'homo_lumo').mean(dim=-1) / energy_units['ev']
     energies_dftb = fermi_dftb.unsqueeze(-1) + points.unsqueeze(0).repeat_interleave(
         n_batch, 0)
-    dos_dftb = dos((getattr(results, 'eigenvalue')),
+    dos_dftb = dos((getattr(results, 'eigenvalue')) / energy_units['ev'],
                    energies_dftb, 0.09)
     loss = loss + criterion(dos_dftb, ref)
 
@@ -340,10 +341,10 @@ def test(rank, world_size, test_dataset):
     for ibatch, data in enumerate(test_data):
         scc_pred = dftb_results(data['number'], data['position'],
                                 data['lattice'])
-        fermi_pred = getattr(scc_pred, 'fermi_energy').detach()
-        hl_pred = getattr(scc_pred, 'homo_lumo').detach()
+        fermi_pred = getattr(scc_pred, 'fermi_energy').detach() / energy_units['ev']
+        hl_pred = getattr(scc_pred, 'homo_lumo').detach() / energy_units['ev']
         hl_pred_tot.append(hl_pred)
-        eigval_pred = getattr(scc_pred, 'eigenvalue').detach()
+        eigval_pred = getattr(scc_pred, 'eigenvalue').detach() / energy_units['ev']
         dos_pred = dos((eigval_pred), energies_test, 0.09)
         f = open('./result/test/Pred_fermi' + str(ibatch + 1) + '.dat', 'w')
         np.savetxt(f, fermi_pred)
@@ -383,10 +384,10 @@ def test(rank, world_size, test_dataset):
         scc_dftb = dftb_results(data['number'], data['position'],
                                 data['lattice'], dftb=True)
         # dftb
-        fermi_dftb = getattr(scc_dftb, 'fermi_energy').detach()
-        hl_dftb = getattr(scc_dftb, 'homo_lumo').detach()
+        fermi_dftb = getattr(scc_dftb, 'fermi_energy').detach() / energy_units['ev']
+        hl_dftb = getattr(scc_dftb, 'homo_lumo').detach() / energy_units['ev']
         hl_dftb_tot.append(hl_dftb)
-        eigval_dftb = getattr(scc_dftb, 'eigenvalue').detach()
+        eigval_dftb = getattr(scc_dftb, 'eigenvalue').detach() / energy_units['ev']
         dos_dftb = dos((eigval_dftb), energies_test, 0.09)
         f = open('./result/test/dftb_fermi' + str(ibatch + 1) + '.dat', 'w')
         np.savetxt(f, fermi_dftb)

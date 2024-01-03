@@ -4,6 +4,11 @@ from typing import Any, List
 
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.multiprocessing as mp
 import numpy as np
 import h5py
 
@@ -16,11 +21,7 @@ from tbmalt.io.dataset import DataSetIM
 from tbmalt.physics.dftb.properties import dos
 import tbmalt.common.maths as tb_math
 from tbmalt.common.batch import pack
-from torch.utils.data import DataLoader, Dataset
-from torch.utils.data.distributed import DistributedSampler
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-import torch.multiprocessing as mp
+from tbmalt.data.units import energy_units
 
 
 Tensor = torch.Tensor
@@ -237,7 +238,7 @@ def loss_fn(results, ref_dos, ibatch):
     loss = 0.
     # Get type of loss function.
     if loss_function == 'MSELoss':
-        criterion = torch.nn.MSELoss(reduction='mean')
+        criterion = nn.MSELoss(reduction='mean')
     elif loss_function == 'Hellinger':
         criterion = HellingerLoss()
 
@@ -275,7 +276,7 @@ def setup(rank, world_size):
     dist.init_process_group('gloo', rank=rank, world_size=world_size)
 
 
-class DFTB_DDP(torch.nn.Module):
+class DFTB_DDP(nn.Module):
     """Implement DFTB calculation within the framework of nn.Module."""
 
     def __init__(self):
@@ -284,8 +285,8 @@ class DFTB_DDP(torch.nn.Module):
         s_var = [val.abcd for key, val in s_feed.off_sites.items()]
         variable = h_var + s_var
 
-        self.parameters = torch.nn.ParameterList([torch.nn.Parameter(ivar)
-                                                  for ivar in variable])
+        self.parameters = nn.ParameterList([nn.Parameter(ivar)
+                                            for ivar in variable])
 
     def forward(self, data):
         h_feed_p = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
@@ -306,10 +307,10 @@ class DFTB_DDP(torch.nn.Module):
 
         scc = dftb_results(data['number'], data['position'],
                            data['lattice'], h_feed_p, s_feed_p)
-        fermi_dftb = getattr(scc, 'homo_lumo').mean(dim=-1)
+        fermi_dftb = getattr(scc, 'homo_lumo').mean(dim=-1) / energy_units['ev']
         energies_dftb = fermi_dftb.unsqueeze(-1) + points.unsqueeze(
             0).repeat_interleave(n_batch, 0)
-        dos_dftb = dos((getattr(scc, 'eigenvalue')),
+        dos_dftb = dos((getattr(scc, 'eigenvalue')) / energy_units['ev'],
                        energies_dftb, 0.09)
         return dos_dftb
 
@@ -389,9 +390,9 @@ def test(rank, world_size, test_dataset, h_feed_p, s_feed_p):
     for ibatch, data in enumerate(test_data):
         scc_pred = dftb_results(data['number'], data['position'],
                                 data['lattice'], h_feed_p, s_feed_p)
-        hl_pred = getattr(scc_pred, 'homo_lumo').detach()
+        hl_pred = getattr(scc_pred, 'homo_lumo').detach() / energy_units['ev']
         hl_pred_tot.append(hl_pred)
-        eigval_pred = getattr(scc_pred, 'eigenvalue').detach()
+        eigval_pred = getattr(scc_pred, 'eigenvalue').detach() / energy_units['ev']
         dos_pred = dos((eigval_pred), energies_test, 0.09)
         f = open('./result/test/Pred_homo_lumo' + str(ibatch + 1) + '.dat', 'w')
         np.savetxt(f, hl_pred)
@@ -432,9 +433,9 @@ def test(rank, world_size, test_dataset, h_feed_p, s_feed_p):
     for ibatch, data in enumerate(test_data):
         scc_dftb = dftb_results(data['number'], data['position'],
                                 data['lattice'], h_feed_o, s_feed_o)
-        hl_dftb = getattr(scc_dftb, 'homo_lumo').detach()
+        hl_dftb = getattr(scc_dftb, 'homo_lumo').detach() / energy_units['ev']
         hl_dftb_tot.append(hl_dftb)
-        eigval_dftb = getattr(scc_dftb, 'eigenvalue').detach()
+        eigval_dftb = getattr(scc_dftb, 'eigenvalue').detach() / energy_units['ev']
         dos_dftb = dos((eigval_dftb), energies_test, 0.09)
         f = open('./result/test/dftb_homo_lumo' + str(ibatch + 1) + '.dat', 'w')
         np.savetxt(f, hl_dftb)

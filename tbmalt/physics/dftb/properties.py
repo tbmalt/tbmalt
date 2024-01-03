@@ -81,7 +81,7 @@ def dos(eps: Tensor, energies: Tensor, sigma: Union[Real, Tensor] = 0.0,
         .. math::
             \delta(E-\epsilon)=\frac{
                 erf\left(\frac{E-\epsilon+\frac{\Delta E}{2}}{\sqrt{2}\sigma}\right)-
-                erf\left(\frac{E-\epsilon+\frac{\Delta E}{2}}{\sqrt{2}\sigma}\right)}
+                erf\left(\frac{E-\epsilon-\frac{\Delta E}{2}}{\sqrt{2}\sigma}\right)}
                 {2\Delta E}
 
         Where ΔE is the difference in energy between neighbouring points.
@@ -108,6 +108,7 @@ def dos(eps: Tensor, energies: Tensor, sigma: Union[Real, Tensor] = 0.0,
 
         >>> from tests.unittests.data.properties.dos import H2
         >>> from tbmalt.physics.dftb.properties import dos
+        >>> import matplotlib.pyplot as plt
         >>> eps = H2['eigenvalues']
         >>> energies = H2['dos']['energy']
         >>> sigma = H2['sigma']

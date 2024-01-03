@@ -397,12 +397,12 @@ class Dftb1(Calculator):
 
     @property
     def eigenvalue(self):
-        """Eigenvalue in unit eV"""
-        return self.eig_values / energy_units['ev']
+        """Eigenvalue in unit hartree"""
+        return self.eig_values
 
     @property
     def homo_lumo(self):
-        """Highest occupied and lowest unoccupied energy level in unit eV"""
+        """Highest occupied and lowest unoccupied energy level in unit hartree"""
         # Number of occupied states
         nocc = (~(self.occupancy - 0 < 1E-10)).long().sum(-1)
 
@@ -417,8 +417,8 @@ class Dftb1(Calculator):
         return homo_lumo
 
     @property
-    def dos_energy(self, ext=1, grid=1000):
-        """Energy distribution of (p)DOS in unit eV"""
+    def dos_energy(self, ext=energy_units['ev'], grid=1000):
+        """Energy distribution of (p)DOS in unit hartree"""
         e_min = torch.min(self.eigenvalue.detach(), dim=-1).values - ext
         e_max = torch.max(self.eigenvalue.detach(), dim=-1).values + ext
         dos_energy = torch.linspace(
@@ -434,7 +434,8 @@ class Dftb1(Calculator):
         """Electronic density of states"""
         # Mask to remove padding values.
         mask = torch.where(self.eigenvalue == 0, False, True)
-        return dos(self.eigenvalue, self.dos_energy, sigma=0.1, mask=mask)
+        sigma = 0.1 * energy_units['ev']
+        return dos(self.eigenvalue, self.dos_energy, sigma=sigma, mask=mask)
 
     def reset(self):
         """Reset all attributes and cached properties."""
