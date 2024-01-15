@@ -310,7 +310,7 @@ def gamma_exponential_pbc(geometry: Geometry, orbs: OrbitalInfo,
     """
 
     # Read geometry information
-    r = geometry.periodic.periodic_distances
+    r = geometry.periodicity.periodic_distances
     U = torch.clone(hubbard_Us).repeat(r.size(-3), 1, 1).transpose(0, 1)
     z = geometry.atomic_numbers
     U = U.squeeze(0) if z.ndim == 1 else U
