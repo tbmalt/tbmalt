@@ -8,6 +8,7 @@ import pytest
 from tbmalt import Geometry
 from tbmalt.physics.dftb.coulomb import Ewald3d, build_coulomb_matrix
 from tbmalt.common.batch import pack
+from tbmalt.data.units import length_units
 torch.set_default_dtype(torch.float64)
 
 
@@ -17,9 +18,9 @@ def test_get_alpha(device):
                           device=device)
     positions = torch.tensor([[0., 0., 0.], [0., 2., 0.]], device=device)
     numbers = torch.tensor([1, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device) / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    periodic = system.periodic
+    periodic = system.periodicity
     coulomb = Ewald3d(system, periodic, method='search')
 
     # Check the tolerance and device
@@ -45,9 +46,9 @@ def test_get_alpha_batch(device):
     numbers = [torch.tensor([1, 1], device=device),
                torch.tensor([1, 1], device=device),
                torch.tensor([1, 1], device=device)]
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device)  / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
-    periodic = system.periodic
+    periodic = system.periodicity
     coulomb = Ewald3d(system, periodic, method='search')
 
     # Check the tolerance and device
@@ -67,7 +68,7 @@ def test_coulomb_3d(device):
         [3., 3., 3.], [3.6, 3.6, 3.6], [2.4, 3.6, 3.6],
         [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device)  / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     invrmat = build_coulomb_matrix(system, method='search')
 
@@ -97,7 +98,7 @@ def test_coulomb_3d_batch(device):
     numbers = [torch.tensor([6, 1, 1, 1, 1], device=device),
                torch.tensor([1, 1], device=device),
                torch.tensor([1, 8, 1], device=device)]
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device) / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     invrmat = build_coulomb_matrix(system, method='search')
 
@@ -118,7 +119,7 @@ def test_coulomb_2d_ch4(device):
         [3., 3., 3.], [3.6, 3.6, 3.6], [2.4, 3.6, 3.6],
         [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device) / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     invrmat = build_coulomb_matrix(system)
 
@@ -137,7 +138,7 @@ def test_coulomb_2d_h2(device):
                           device=device)
     positions = torch.tensor([[0., 0., 0.], [0., 0., 2.]], device=device)
     numbers = torch.tensor([1, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device) / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     invrmat = build_coulomb_matrix(system)
 
@@ -157,7 +158,7 @@ def test_coulomb_2d_h2o(device):
     positions = torch.tensor([[0.965, 0.075, 0.088], [1.954, 0.047, 0.056],
                               [2.244, 0.660, 0.778]], device=device)
     numbers = torch.tensor([1, 8, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device) / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     invrmat = build_coulomb_matrix(system)
 
@@ -187,7 +188,7 @@ def test_coulomb_2d_batch(device):
     numbers = [torch.tensor([6, 1, 1, 1, 1], device=device),
                torch.tensor([1, 1], device=device),
                torch.tensor([1, 8, 1], device=device)]
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device) / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     invrmat = build_coulomb_matrix(system)
 
@@ -208,7 +209,7 @@ def test_coulomb_1d_ch4(device):
         [3., 3., 3.], [3.6, 3.6, 3.6], [2.4, 3.6, 3.6],
         [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device) / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     invrmat = build_coulomb_matrix(system)
 
@@ -227,7 +228,7 @@ def test_coulomb_1d_h2(device):
                           device=device)
     positions = torch.tensor([[0., 0., 0.], [2., 0., 0.]], device=device)
     numbers = torch.tensor([1, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device) / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     invrmat = build_coulomb_matrix(system)
 
@@ -247,7 +248,7 @@ def test_coulomb_1d_h2o(device):
     positions = torch.tensor([[0.965, 0.075, 0.088], [1.954, 0.047, 0.056],
                               [2.244, 0.660, 0.778]], device=device)
     numbers = torch.tensor([1, 8, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device) / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     invrmat = build_coulomb_matrix(system)
 
@@ -277,7 +278,7 @@ def test_coulomb_1d_batch(device):
     numbers = [torch.tensor([6, 1, 1, 1, 1], device=device),
                torch.tensor([1, 1], device=device),
                torch.tensor([1, 8, 1], device=device)]
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device) / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     invrmat = build_coulomb_matrix(system)
 
@@ -298,7 +299,7 @@ def test_coulomb_3d_convergence(device):
         [3., 3., 3.], [3.6, 3.6, 3.6], [2.4, 3.6, 3.6],
         [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device) / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     invrmat = build_coulomb_matrix(system, method='search')
 
@@ -327,7 +328,7 @@ def test_coulomb_2d_convergence(device):
         [3., 3., 3.], [3.6, 3.6, 3.6], [2.4, 3.6, 3.6],
         [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device) / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     invrmat = build_coulomb_matrix(system)
 
@@ -356,7 +357,7 @@ def test_coulomb_1d_convergence(device):
         [3., 3., 3.], [3.6, 3.6, 3.6], [2.4, 3.6, 3.6],
         [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([9.98], device=device) / length_units['a']
     system = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     invrmat = build_coulomb_matrix(system)
 

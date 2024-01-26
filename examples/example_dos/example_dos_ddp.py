@@ -160,7 +160,7 @@ class SiliconDataset(Dataset):
         latvec = self.latvecs[idx]
         homo_lumo = self.homo_lumos[idx]
         eigenvalue = self.eigenvalues[idx]
-        system = {"number": number, "position": position, "latvec": latvec,
+        system = {"number": number, "position": position, "lattice": latvec,
                   "homo_lumo": homo_lumo, "eigenvalue": eigenvalue, "idx": idx}
 
         return system
@@ -306,7 +306,7 @@ class DFTB_DDP(nn.Module):
             ii = ii + 1
 
         scc = dftb_results(data['number'], data['position'],
-                           data['latvec'], h_feed_p, s_feed_p)
+                           data['lattice'], h_feed_p, s_feed_p)
         fermi_dftb = getattr(scc, 'homo_lumo').mean(dim=-1) / energy_units['ev']
         energies_dftb = fermi_dftb.unsqueeze(-1) + points.unsqueeze(
             0).repeat_interleave(n_batch, 0)
@@ -389,7 +389,7 @@ def test(rank, world_size, test_dataset, h_feed_p, s_feed_p):
     # Pred
     for ibatch, data in enumerate(test_data):
         scc_pred = dftb_results(data['number'], data['position'],
-                                data['latvec'], h_feed_p, s_feed_p)
+                                data['lattice'], h_feed_p, s_feed_p)
         hl_pred = getattr(scc_pred, 'homo_lumo').detach() / energy_units['ev']
         hl_pred_tot.append(hl_pred)
         eigval_pred = getattr(scc_pred, 'eigenvalue').detach() / energy_units['ev']
@@ -432,7 +432,7 @@ def test(rank, world_size, test_dataset, h_feed_p, s_feed_p):
                                     interpolation='spline')
     for ibatch, data in enumerate(test_data):
         scc_dftb = dftb_results(data['number'], data['position'],
-                                data['latvec'], h_feed_o, s_feed_o)
+                                data['lattice'], h_feed_o, s_feed_o)
         hl_dftb = getattr(scc_dftb, 'homo_lumo').detach() / energy_units['ev']
         hl_dftb_tot.append(hl_dftb)
         eigval_dftb = getattr(scc_dftb, 'eigenvalue').detach() / energy_units['ev']

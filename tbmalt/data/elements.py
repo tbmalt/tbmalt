@@ -63,7 +63,7 @@ atomic_numbers: Dict[str, int] = {sym: z for z, sym in
 # Dictionary of pre-calculated cutoff values of atom pairs for shortgamma
 # calculations. These are used exclusively by the `gamma_exponential_pbc`
 # function; which constructs the gamma term via the exponential method when
-# operating upon periodic systems.
+# operating upon periodicity systems.
 gamma_cutoff: Dict[tuple, Tensor] = {
     (1, 1, 'cutoff'): torch.tensor([20.024999999999999]),
     (1, 6, 'cutoff'): torch.tensor([22.037500000000001]),

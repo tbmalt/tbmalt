@@ -453,7 +453,7 @@ def fermi_search(
             from "fake" ones. This is Mandatory when using smearing on batched
             systems. This may be a `Tensor` that is `True` for real states or
             a `OrbitalInfo` object. [DEFAULT=None]
-        k_weights: If periodic systems are supplied then k-point wights can be
+        k_weights: If periodicity systems are supplied then k-point wights can be
             given via this argument.
 
     Returns:
@@ -532,7 +532,7 @@ def fermi_search(
             e_mask = e_mask != -1
 
     # Scaling factor is the max № of electrons that can occupancy each state;
-    # 2/1 for restricted/unrestricted molecular systems. For periodic systems
+    # 2/1 for restricted/unrestricted molecular systems. For periodicity systems
     # this is then multiplied by the k-point weights.
     pf = 5 - eigenvalues.ndim - [k_weights, e_mask].count(None)
     scale_factor = pf if k_weights is None else pf * k_weights
@@ -676,7 +676,7 @@ def aufbau_filling(
             from "fake" ones. This is Mandatory when using smearing on batched
             systems. This may be a `Tensor` that is `True` for real states or
             a `OrbitalInfo` object. [DEFAULT=None]
-        k_weights: If periodic systems are supplied then k-point wights can be
+        k_weights: If periodicity systems are supplied then k-point wights can be
             given via this argument.
 
     Returns:

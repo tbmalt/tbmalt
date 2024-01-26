@@ -673,7 +673,7 @@ class Dftb2(Dftb1):
     def invr(self):
         """1/R matrix"""
         if self._invr is None:
-            if self.geometry.periodic is not None:
+            if self.geometry.periodicity is not None:
                 self._invr = build_coulomb_matrix(self.geometry,
                                                   method=self.coulomb_scheme)
             else:
