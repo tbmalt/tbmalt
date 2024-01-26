@@ -19,7 +19,7 @@ import torch
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml import Feed
 from tbmalt.ml.integralfeeds import IntegralFeed
-from tbmalt.ml.module import require_args
+from tbmalt.ml.module import Calculator
 
 try:
     from external.dxtb.origin.dxtb.ncoord import get_coordination_number, exp_count
@@ -147,7 +147,6 @@ class XtbOverlapFeed(IntegralFeed):
         super().__init__(dtype, device)
         self.par = par
 
-    @require_args("geometry")
     def matrix(self, geometry: Geometry):
         """
         Construct the overlap matrix.
@@ -180,6 +179,9 @@ class XtbOverlapFeed(IntegralFeed):
         )
         return s.build(positions)
 
+    def matrix_from_calculator(self, calculator: Calculator, **kwargs):
+        self.matrix(calculator.geometry)
+
 
 class XtbHamiltonianFeed(IntegralFeed):
     """
@@ -195,7 +197,6 @@ class XtbHamiltonianFeed(IntegralFeed):
         super().__init__(dtype, device)
         self.par = par
 
-    @require_args("geometry", "overlap")
     def matrix(self, geometry: Geometry, overlap: torch.Tensor) -> torch.Tensor:
         """
         Construct the Hamiltonian matrix.
@@ -229,6 +230,10 @@ class XtbHamiltonianFeed(IntegralFeed):
             dtype=self.dtype,
         )
         return h0.build(positions, overlap, cn=cn)
+
+    def matrix_from_calculator(self, calculator: Calculator, **kwargs):
+        self.matrix(calculator.geometry, calculator.overlap, **kwargs)
+
 
 
 class Gfn1OverlapFeed(XtbOverlapFeed):

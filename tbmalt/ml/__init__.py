@@ -7,5 +7,5 @@ module.
 
 
 class Feed:
-    def __call(self, *args, **kwargs):
+    def __call__(self, *args, **kwargs):
         pass

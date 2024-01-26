@@ -18,6 +18,7 @@ from h5py import Group
 from numpy import ndarray as Array
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml import Feed
+from tbmalt.ml.module import Calculator
 from torch import Tensor
 
 
@@ -253,6 +254,43 @@ class IntegralFeed(ABC, Feed):
             mat[blk_idx] = blks
 
         return mat
+
+    def matrix_from_calculator(self, calculator: Calculator, **kwargs):
+        """Construct the hermitian matrix associated with this feed.
+
+        This method extracts the required arguments from the supplied
+        ``calculator`` argument & redirects to the `matrix` method. This allows
+        for a `Calculator` to call a feeds `matrix` method in a call signature
+        agnostic manner.
+
+        Args:
+            calculator: a calculator object from which the necessary data can
+                be extracted.
+
+        Keyword Arguments:
+            kwargs: Any keyword arguments provided are passed during calls to
+                the `blocks` method.
+
+        Returns:
+            matrix: The resulting matrices.
+
+        Notes:
+                Each `IntegralFeed` object's `matrix` method may require any
+                number of arbitrary arguments. Consequently, it is unreasonable
+                to expect a `Calculator` instance to know how to correctly
+                invoke the `matrix` method for any given feed, particularly
+                without resorting to introspection and reflection, which would
+                introduce an unnecessary degree of complexity. Therefore, this
+                pseudo-overload method is established, enabling `Calculator`s
+                to simply pass themselves in as the sole argument. This
+                approach allows the feed to extract the necessary data
+                independently and make the call to `matrix` itself. While this
+                is potentially more prone to errors, the errors that may arise
+                are expected to be clearer and easier to resolve, thus
+                enhancing the overall maintainability and debuggability.
+        """
+
+        return self.matrix(calculator.geometry, calculator.orbs, **kwargs)
 
     def atomic_block_indices(self, atomic_idx_1: Array, atomic_idx_2: Array,
                              orbs: OrbitalInfo) -> Array:
