@@ -9,6 +9,7 @@ from tbmalt.io.skf import Skf
 from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed, SkFeed
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.common.batch import pack
+from tbmalt.data.units import length_units
 from functools import reduce
 
 from tests.test_utils import skf_file
@@ -30,6 +31,7 @@ def systems(device) -> List[Geometry]:
         geometries: A list of `Geometry` objects.
     """
 
+    # Cutoff in bohr
     cutoff = torch.tensor([9.98], device=device)
     cutoff2 = torch.tensor([18.38], device=device)  # Au-Au cutoff
 
@@ -58,7 +60,8 @@ def systems(device) -> List[Geometry]:
                         [0.0, 5.0, 0.0],
                         [0.0, 0.0, 6.0]],
                        device=device),
-                   units='angstrom', cutoff=cutoff)
+                   units='angstrom',
+                   cutoff = cutoff / length_units['angstrom'])
 
     H2O = Geometry(torch.tensor([1, 8, 1], device=device),
                    torch.tensor([
@@ -71,7 +74,8 @@ def systems(device) -> List[Geometry]:
                         [0.0, 5.0, 0.0],
                         [0.0, 0.0, 6.0]],
                        device=device),
-                   units='angstrom', cutoff=cutoff)
+                   units='angstrom',
+                   cutoff = cutoff / length_units['angstrom'])
 
     C2H6 = Geometry(torch.tensor([6, 6, 1, 1, 1, 1, 1, 1], device=device),
                     torch.tensor([
@@ -89,7 +93,8 @@ def systems(device) -> List[Geometry]:
                         [0.0, 5.0, 0.0],
                         [0.0, 4.0, 4.0]],
                        device=device),
-                    units='angstrom', cutoff=cutoff)
+                    units='angstrom',
+                    cutoff = cutoff / length_units['angstrom'])
 
     C2H2Au2S3 = Geometry(torch.tensor([1, 6, 16, 79, 16, 79, 16, 6, 1], device=device),
                          torch.tensor([
@@ -108,7 +113,8 @@ def systems(device) -> List[Geometry]:
                               [0.0, 5.0, 0.0],
                               [0.0, 0.0, 5.0]],
                              device=device),
-                         units='angstrom', cutoff=cutoff2)
+                         units='angstrom',
+                         cutoff = cutoff2 / length_units['angstrom'])
 
     return [H2, CH4, H2O, C2H6, C2H2Au2S3]
 
@@ -240,4 +246,3 @@ def test_skffeed_pbc_batch(skf_file: str, device):
     assert check_2, 'SkFeed S matrix outside of tolerance (batch)'
     assert check_3, 'SkFeed.matrix returned on incorrect device'
     assert check_4, 'Failure to operate on batches of size "one"'
-
