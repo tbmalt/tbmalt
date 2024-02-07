@@ -406,13 +406,17 @@ class Dftb1(Calculator):
         # Number of occupied states
         nocc = (~(self.occupancy - 0 < 1E-10)).long().sum(-1)
 
-        # Mask of HOMO and LUMO
-        mask = torch.zeros_like(
-            self.occupancy, device=self.device, dtype=self.dtype).scatter_(
-            -1, nocc.unsqueeze(-1), 1).scatter_(
-                -1, nocc.unsqueeze(-1) - 1, 1).bool()
-        homo_lumo = self.eigenvalue[mask] if self.occupancy.ndim == 1 else\
-            self.eigenvalue[mask].view(self.occupancy.size(0), -1)
+        # Check if HOMO&LUMO well defined
+        if self.occupancy.size(dim=-1) <= nocc.max():
+            raise ValueError('Warning: HOMO&LUMO are not defined properly!')
+        else:
+            # Mask of HOMO and LUMO
+            mask = torch.zeros_like(
+                self.occupancy, device=self.device, dtype=self.dtype).scatter_(
+                -1, nocc.unsqueeze(-1), 1).scatter_(
+                    -1, nocc.unsqueeze(-1) - 1, 1).bool()
+            homo_lumo = self.eigenvalue[mask] if self.occupancy.ndim == 1 else\
+                self.eigenvalue[mask].view(self.occupancy.size(0), -1)
 
         return homo_lumo
 

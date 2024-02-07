@@ -355,9 +355,12 @@ class ScipySkFeed(IntegralFeed):
 
         # Identify which are on-site blocks and which are off-site
         on_site = self._partition_blocks(atomic_idx_1, atomic_idx_2)
+        mask_shell = torch.zeros_like(self.on_sites[int(z_1)]).bool()
+        mask_shell[:(torch.arange(len(orbs.shell_dict[int(z_1)]))
+                     * 2 + 1).sum()] = True
 
         if any(on_site):  # Construct the on-site blocks (if any are present)
-            blks[on_site] = torch.diag(self.on_sites[int(z_1)])
+            blks[on_site] = torch.diag(self.on_sites[int(z_1)][mask_shell])
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
@@ -841,14 +844,17 @@ class SkFeed(IntegralFeed):
 
         # Identify which are on-site blocks and which are off-site
         on_site = self._partition_blocks(atomic_idx_1, atomic_idx_2)
+        mask_shell = torch.zeros_like(self.on_sites[int(z_1)]).bool()
+        mask_shell[:(torch.arange(len(orbs.shell_dict[int(z_1)]))
+                     * 2 + 1).sum()] = True
 
         # Construct the on-site blocks (if any are present)
         if any(on_site):
             if not self.is_local_onsite:
-                blks[on_site] = torch.diag(self.on_sites[int(z_1)])
+                blks[on_site] = torch.diag(self.on_sites[int(z_1)][mask_shell])
             elif self.is_local_onsite:
                 blks[on_site] = torch.diag_embed(
-                    self.on_sites[int(z_1)], dim1=-2, dim2=-1)
+                    self.on_sites[int(z_1)][mask_shell], dim1=-2, dim2=-1)
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
