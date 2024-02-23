@@ -7,6 +7,7 @@ from tbmalt import Geometry, OrbitalInfo
 from tbmalt.physics.dftb import Dftb1, Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.batch import pack
+from tbmalt.data.units import length_units
 
 from tests.test_utils import skf_file
 
@@ -114,7 +115,8 @@ def CH4(device):
             [4.0, 4.0, 0.0],
             [5.0, 0.0, 5.0],
             [0.0, 6.0, 6.0]],
-            device=device), units='a', cutoff=cutoff)
+            device=device), units='a',
+        cutoff = cutoff / length_units['angstrom'])
 
     orbs = OrbitalInfo(geometry.atomic_numbers, {1: [0], 6: [0, 1]})
 
@@ -147,7 +149,8 @@ def CH4_scc(device):
             [4.0, 4.0, 0.0],
             [5.0, 0.0, 5.0],
             [0.0, 6.0, 6.0]],
-            device=device), units='a', cutoff=cutoff)
+            device=device), units='a',
+        cutoff = cutoff / length_units['angstrom'])
 
     orbs = OrbitalInfo(geometry.atomic_numbers, {1: [0], 6: [0, 1]})
 
@@ -178,7 +181,8 @@ def H2O(device):
             [4.0, 0.0, 0.0],
             [0.0, 5.0, 0.0],
             [0.0, 0.0, 6.0]],
-            device=device), units='a', cutoff=cutoff)
+            device=device), units='a',
+        cutoff = cutoff / length_units['angstrom'])
 
     orbs = OrbitalInfo(geometry.atomic_numbers, {1: [0], 8: [0, 1]})
 
@@ -208,7 +212,8 @@ def H2O_scc(device):
             [4.0, 0.0, 0.0],
             [0.0, 5.0, 0.0],
             [0.0, 0.0, 6.0]],
-            device=device), units='a', cutoff=cutoff)
+            device=device), units='a',
+        cutoff = cutoff / length_units['angstrom'])
 
     orbs = OrbitalInfo(geometry.atomic_numbers, {1: [0], 8: [0, 1]})
 
@@ -243,7 +248,8 @@ def C2H6(device):
             [5.0, 0.0, 0.0],
             [0.0, 5.0, 0.0],
             [0.0, 0.0, 5.0]],
-            device=device), units='a', cutoff=cutoff)
+            device=device), units='a',
+        cutoff = cutoff / length_units['angstrom'])
 
     orbs = OrbitalInfo(geometry.atomic_numbers, {1: [0], 6: [0, 1]})
 
@@ -280,7 +286,8 @@ def C2H6_scc(device):
             [5.0, 0.0, 0.0],
             [0.0, 5.0, 0.0],
             [0.0, 0.0, 5.0]],
-            device=device), units='a', cutoff=cutoff)
+            device=device), units='a',
+        cutoff = cutoff / length_units['angstrom'])
 
     orbs = OrbitalInfo(geometry.atomic_numbers, {1: [0], 6: [0, 1]})
 

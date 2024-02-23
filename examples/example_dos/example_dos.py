@@ -18,7 +18,7 @@ from tbmalt.io.dataset import DataSetIM
 from tbmalt.physics.dftb.properties import dos
 import tbmalt.common.maths as tb_math
 from tbmalt.common.batch import pack
-from tbmalt.data.units import energy_units
+from tbmalt.data.units import energy_units, length_units
 
 from ase.build import molecule
 
@@ -61,7 +61,7 @@ fit_model = True
 test = True
 
 # Number of fitting cycles, number of batch size each cycle
-number_of_epochs = 1800
+number_of_epochs = 500
 n_batch = 1
 
 # learning rate
@@ -132,6 +132,13 @@ def load_target_data(path: str, group1: str, group2: str, properties: List,
     # discretion here. A dictionary might be the best object in which to store
     # the target data.
 
+    # To adjust the new Geometry
+    with h5py.File(path, 'a') as f:
+        for igroup1 in ['run1', 'run2', 'run3', 'run_transfer']:
+            for igroup2 in ['train', 'test']:
+                if 'lattice_vector' not in f[igroup1][igroup2].keys():
+                    f[igroup1][igroup2]['lattice_vector'] = f[igroup1][igroup2]['cells']
+
     # To adjust the new dataloader
     with h5py.File(path, 'a') as f:
         attrs = f[group1][group2].attrs
@@ -185,11 +192,11 @@ def prepare_data(run):
 
     numbers_train, positions_train, cells_train = (data_train.geometry.atomic_numbers,
                                                    data_train.geometry.positions,
-                                                   data_train.geometry.cells)
+                                                   data_train.geometry.lattice)
 
     numbers_test, positions_test, cells_test = (data_test.geometry.atomic_numbers,
                                                 data_test.geometry.positions,
-                                                data_test.geometry.cells)
+                                                data_test.geometry.lattice)
     # Build datasets
     dataset_train = SiliconDataset(numbers_train, positions_train, cells_train,
                                    data_train.data['homo_lumos'],
@@ -263,7 +270,7 @@ def dftb_results(numbers, positions, cells, **kwargs):
 
     # Build objects for DFTB calculations
     geometry = Geometry(numbers, positions, cells, units='a',
-                        cutoff=torch.tensor([18.0]))
+                        cutoff=torch.tensor([18.0])/length_units['angstrom'])
     orbs = OrbitalInfo(geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
     if not dftb:

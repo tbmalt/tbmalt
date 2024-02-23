@@ -302,12 +302,11 @@ def _load_structure(group: Union[Group, File], pbc, **kwargs):
         return Geometry.from_hdf5(group, **kwargs)
     # With pbc.
     elif 'atomic_numbers' in group and 'positions' in group \
-        and 'cells' in group and pbc:
+        and 'lattice_vector' in group and pbc:
         return Geometry.from_hdf5(group, **kwargs)
     # If neither is true, then throw an error.
     else:
         raise NameError(f'Could not load geometry information from the group '
                         f'{group}. Could not find either i) a subgroup named '
                         '"geometry" or the ii) datasets "atomic_numbers" and '
-                        '"positions" and/or "cells".')
-
+                        '"positions" and/or "lattice_vector".')
