@@ -5,7 +5,7 @@ import torch
 
 from typing import Optional, Dict, Any, Literal, Union
 
-from tbmalt.ml.module import Calculator, requires_args, call_with_required_args
+from tbmalt.ml.module import Calculator
 from tbmalt.ml.integralfeeds import IntegralFeed
 from tbmalt import OrbitalInfo
 from tbmalt.physics.dftb.feeds import Feed, SkfOccupationFeed
@@ -226,15 +226,7 @@ class Dftb1(Calculator):
         # Check to see if the overlap matrix has already been constructed. If
         # not then construct it.
         if self._overlap is None:
-            # Check if special arguments are required by the s_feed.matrix
-            # method.
-            if requires_args(self.s_feed.matrix):
-                # If so then make the call via `call_with_required_args`
-                self._overlap = call_with_required_args(
-                    self.s_feed.matrix, self)
-            else:
-                # Otherwise just make the default call
-                self._overlap = self.s_feed.matrix(self.geometry, self.orbs)
+            self._overlap = self.s_feed.matrix_from_calculator(self)
 
         # Return the cached overlap matrix.
         return self._overlap
@@ -249,12 +241,7 @@ class Dftb1(Calculator):
 
         # See `Dftb1.overlap` for an explanation of what this code does.
         if self._hamiltonian is None:
-            if requires_args(self.h_feed.matrix):
-                self._hamiltonian = call_with_required_args(
-                    self.h_feed.matrix, self)
-            else:
-                self._hamiltonian = self.h_feed.matrix(
-                    self.geometry, self.orbs)
+            self._hamiltonian = self.h_feed.matrix_from_calculator(self)
 
         return self._hamiltonian
 
@@ -660,12 +647,8 @@ class Dftb2(Dftb1):
         """First order core Hamiltonian matrix as built by the `h_feed`
         entity"""
         if self._core_hamiltonian is None:
-            if requires_args(self.h_feed.matrix):
-                self._core_hamiltonian = call_with_required_args(
-                    self.h_feed.matrix, self)
-            else:
-                self._core_hamiltonian = self.h_feed.matrix(
-                    self.geometry, self.orbs)
+            self._core_hamiltonian = self.h_feed.matrix_from_calculator(self)
+
 
         return self._core_hamiltonian
 
