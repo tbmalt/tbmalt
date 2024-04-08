@@ -1,6 +1,6 @@
 from tbmalt.ml.module import Calculator
 import tbmalt.common.maths as tb_math
-from typing import Callable, Optional, Union, Any
+from typing import Callable, Optional, Union, Any, Dict, Tuple
 from warnings import warn
 import torch
 from torch.utils.data import Dataset
@@ -10,7 +10,7 @@ Tensor = torch.Tensor
 
 LossFunction = Callable[[Tensor, Tensor, Optional[Tensor]], Tensor]
 
-DataDelegate = Callable[[Calculator, Dataset, Any], dict[str, Tensor]]
+DataDelegate = Callable[[Calculator, Dataset, Any], Dict[str, Tensor]]
 
 WeightDelegate = Callable[[Calculator, Dataset, Any], Tensor]
 
@@ -178,8 +178,8 @@ class Loss:
             self, prediction_data_delegate: DataDelegate,
             reference_data_delegate: DataDelegate,
             system_weight_delegate: Optional[WeightDelegate] = None,
-            loss_functions: Union[LossFunction, dict[str, LossFunction]] = l1_loss,
-            loss_weights: dict[str, float] = None,
+            loss_functions: Union[LossFunction, Dict[str, LossFunction]] = l1_loss,
+            loss_weights: Dict[str, float] = None,
             reduction: Optional[str] = None):
 
 
@@ -220,7 +220,7 @@ class Loss:
 
 
     def __call__(self, calculator: Calculator, dataset: Dataset, **kwargs
-                 ) -> tuple[Tensor, dict[str, Tensor]]:
+                 ) -> Tuple[Tensor, Dict[str, Tensor]]:
         """Evaluate the total loss.
 
         This method calls out to the class delegate functions to retrieve both
