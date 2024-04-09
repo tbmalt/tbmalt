@@ -137,15 +137,15 @@ class RepulsiveSplineFeed_batch():
    
     @classmethod
     def _exponential_head(cls, distance, coeffs):
-        a1 = coeffs[0]
-        a2 = coeffs[1]
-        a3 = coeffs[2]
+        a1 = coeffs[0].clone()
+        a2 = coeffs[1].clone()
+        a3 = coeffs[2].clone()
 
         return np.exp(-a1*distance + a2) + a3
 
     @classmethod 
     def _spline(cls, distance, start, coeffs):
-        energy = coeffs[0]
+        energy = coeffs[0].clone()
         rDiff = distance - start
         for coeff in coeffs[1:]:
             energy += coeff*rDiff
