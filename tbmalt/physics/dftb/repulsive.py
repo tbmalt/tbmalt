@@ -130,7 +130,7 @@ class RepulsiveSplineFeed_batch():
             elif distance > exp_head_cutoff:
                 for ind in range(len(spline.grid)):
                     if distance < spline.grid[ind]:
-                        return self._spline(distance, spline.grid[ind - 1], spline.spline_coef[ind])
+                        return self._spline(distance, spline.grid[ind], spline.spline_coef[ind])
             else:
                 return self._exponential_head(distance, spline.exp_coef)
         return 0
@@ -157,53 +157,53 @@ class RepulsiveSplineFeed_batch():
         interaction_pairs = combinations_with_replacement(species, r=2)
         return cls({interaction_pair: skf.Skf.read(path, interaction_pair).r_spline for interaction_pair in interaction_pairs})
 
-
-geometry_batch = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
-geometry_single = Geometry.from_ase_atoms(molecule('CH4'))
-
-spline_1 = skf.Skf.RSpline(
-        grid = torch.Tensor([10, 12.0, 14.0]),
-        cutoff = torch.Tensor([16.0]),
-        spline_coef = torch.Tensor([[2.1, 5.3, 7.6],
-                                    [3.2, 8.9, 1.0],
-                                    [7.2, 10.2, 0.6]]),
-        exp_coef = torch.Tensor([1.0, 0.8, 1.2]),
-        tail_coef = torch.Tensor([2.0, 5.3, 6.7, 1.3, 0.8]),
-        )
-
-spline_6 = skf.Skf.RSpline(
-        grid = torch.Tensor([10, 12.0, 14.0]),
-        cutoff = torch.Tensor([16.0]),
-        spline_coef = torch.Tensor([[2.1, 5.3, 7.6],
-                                    [3.2, 8.9, 1.0],
-                                    [7.2, 10.2, 0.6]]),
-        exp_coef = torch.Tensor([1.0, 0.8, 1.2]),
-        tail_coef = torch.Tensor([2.0, 5.3, 6.7, 1.3, 0.8]),
-        )
-
-spline_8 = skf.Skf.RSpline(
-        grid = torch.Tensor([10, 12.0, 14.0]),
-        cutoff = torch.Tensor([16.0]),
-        spline_coef = torch.Tensor([[2.1, 5.3, 7.6],
-                                    [3.2, 8.9, 1.0],
-                                    [7.2, 10.2, 0.6]]),
-        exp_coef = torch.Tensor([1.0, 0.8, 1.2]),
-        tail_coef = torch.Tensor([2.0, 5.3, 6.7, 1.3, 0.8]),
-        )
-
-spline_data = {(1, 1): spline_1, (6, 1): spline_6, (8, 1): spline_8}
-
-#feed = RepulsiveSplineFeed_batch(spline_data) 
-#print(feed(geometry_single))
+#
+#geometry_batch = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
+#geometry_single = Geometry.from_ase_atoms(molecule('CH4'))
+#
+#spline_1 = skf.Skf.RSpline(
+#        grid = torch.Tensor([10, 12.0, 14.0]),
+#        cutoff = torch.Tensor([16.0]),
+#        spline_coef = torch.Tensor([[2.1, 5.3, 7.6],
+#                                    [3.2, 8.9, 1.0],
+#                                    [7.2, 10.2, 0.6]]),
+#        exp_coef = torch.Tensor([1.0, 0.8, 1.2]),
+#        tail_coef = torch.Tensor([2.0, 5.3, 6.7, 1.3, 0.8]),
+#        )
+#
+#spline_6 = skf.Skf.RSpline(
+#        grid = torch.Tensor([10, 12.0, 14.0]),
+#        cutoff = torch.Tensor([16.0]),
+#        spline_coef = torch.Tensor([[2.1, 5.3, 7.6],
+#                                    [3.2, 8.9, 1.0],
+#                                    [7.2, 10.2, 0.6]]),
+#        exp_coef = torch.Tensor([1.0, 0.8, 1.2]),
+#        tail_coef = torch.Tensor([2.0, 5.3, 6.7, 1.3, 0.8]),
+#        )
+#
+#spline_8 = skf.Skf.RSpline(
+#        grid = torch.Tensor([10, 12.0, 14.0]),
+#        cutoff = torch.Tensor([16.0]),
+#        spline_coef = torch.Tensor([[2.1, 5.3, 7.6],
+#                                    [3.2, 8.9, 1.0],
+#                                    [7.2, 10.2, 0.6]]),
+#        exp_coef = torch.Tensor([1.0, 0.8, 1.2]),
+#        tail_coef = torch.Tensor([2.0, 5.3, 6.7, 1.3, 0.8]),
+#        )
+#
+#spline_data = {(1, 1): spline_1, (6, 1): spline_6, (8, 1): spline_8}
+#
+##feed = RepulsiveSplineFeed_batch(spline_data) 
+##print(feed(geometry_single))
+##print(feed(geometry_batch))
+#
+#atoms = geometry_batch.atomic_numbers
+#print(atoms)
+#
+#atoms = [8, 6, 1]
+#print(atoms)
+#
+#feed = RepulsiveSplineFeed_batch.from_database('skf/auorg-1-1.hdf5', species=atoms)
 #print(feed(geometry_batch))
-
-atoms = geometry_batch.atomic_numbers
-print(atoms)
-
-atoms = [8, 6, 1]
-print(atoms)
-
-feed = RepulsiveSplineFeed_batch.from_database('skf/auorg-1-1.hdf5', species=atoms)
-print(feed(geometry_batch))
-
+#
                                                                          
