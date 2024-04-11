@@ -1,7 +1,7 @@
 import pytest
 from typing import List
 import torch
-from tbmalt.physics.dftb.repulsive import RepulsiveSplineFeed_batch
+from tbmalt.physics.dftb.repulsive import RepulsiveSplineFeed
 from tbmalt import Geometry, OrbitalInfo
 from functools import reduce
 
@@ -60,15 +60,12 @@ references = [0.0058374104, 0.0130941359, 48.3655419077] #H2, CH4, C2H2Au2S3 in 
 def test_repulsivefeed_single(skf_file: str, device):
 
     b_def = {1: [0], 6: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
-    repulsive_feed = RepulsiveSplineFeed_batch.from_database(skf_file, species=[1, 6, 16, 79])
+    repulsive_feed = RepulsiveSplineFeed.from_database(skf_file, species=[1, 6, 16, 79])
 
     for mol, repulsive_ref in zip(molecules(device), references):
         repulsive_energy = repulsive_feed(mol)
-        print(repulsive_energy)
         
         check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), atol=0, rtol=1.1E-2)
-        #check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), atol=0, rtol=1.1E-3)
-        #check_1 = torch.allclose(torch.tensor([repulsive_ref]), repulsive_energy, atol=0, rtol=1E-2)
         check_2 = repulsive_energy.device == device
 
         assert check_1, f'RepulsiveSplineFeed repulsive energy outside of tolerance (Geometry: {mol}, Energy: {repulsive_energy}, Reference: {repulsive_ref})'
@@ -76,7 +73,7 @@ def test_repulsivefeed_single(skf_file: str, device):
 
 # Batch
 def test_repulsivefeed_batch(skf_file: str, device):
-    repulsive_feed = RepulsiveSplineFeed_batch.from_database(skf_file, species=[1, 6, 16, 79])
+    repulsive_feed = RepulsiveSplineFeed.from_database(skf_file, species=[1, 6, 16, 79])
     mols = reduce(lambda i, j: i+j, molecules(device))
 
     repulsive_energy = repulsive_feed(mols)
