@@ -8,6 +8,8 @@ from functools import reduce
 from tests.test_utils import skf_file
 
 torch.set_default_dtype(torch.float64)
+torch.set_printoptions(precision=9)
+
 
 def molecules(device) -> List[Geometry]:
     """Returns a selection of `Geometry` entities for testing.
@@ -55,7 +57,7 @@ def molecules(device) -> List[Geometry]:
 
     return [H2, CH4, C2H2Au2S3]
 
-references = [0.0058374104, 0.0130941359, 48.3655419077] #H2, CH4, C2H2Au2S3 in Hartree
+references = [0.0058374104, 0.0130941359, 47.8705446288] #H2, CH4, C2H2Au2S3 in Hartree
 # Single
 def test_repulsivefeed_single(skf_file: str, device):
 
@@ -65,7 +67,7 @@ def test_repulsivefeed_single(skf_file: str, device):
     for mol, repulsive_ref in zip(molecules(device), references):
         repulsive_energy = repulsive_feed(mol)
         
-        check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), atol=0, rtol=1.1E-2)
+        check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), atol=0, rtol=1E-3)
         check_2 = repulsive_energy.device == device
 
         assert check_1, f'RepulsiveSplineFeed repulsive energy outside of tolerance (Geometry: {mol}, Energy: {repulsive_energy}, Reference: {repulsive_ref})'
