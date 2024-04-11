@@ -58,7 +58,7 @@ class RepulsiveSplineFeed():
         a2 = coeffs[1].clone()
         a3 = coeffs[2].clone()
 
-        return np.exp(-a1*distance + a2) + a3
+        return torch.exp(-a1*distance + a2) + a3
 
     @classmethod 
     def _spline(cls, distance, start, coeffs):
