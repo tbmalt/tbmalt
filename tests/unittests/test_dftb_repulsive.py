@@ -56,8 +56,14 @@ def molecules(device) -> List[Geometry]:
                          units='angstrom')
 
     return [H2, CH4, C2H2Au2S3]
+    #return [H2]
+    #return [CH4]
+    #return [C2H2Au2S3]
 
 references = [0.0058374104, 0.0130941359, 47.8705446288] #H2, CH4, C2H2Au2S3 in Hartree
+#references = [0.0058374104]
+#references = [0.0130941359] #H2, CH4, C2H2Au2S3 in Hartree
+#references = [47.8705446288] #H2, CH4, C2H2Au2S3 in Hartree
 # Single
 def test_repulsivefeed_single(skf_file: str, device):
 
@@ -67,7 +73,14 @@ def test_repulsivefeed_single(skf_file: str, device):
     for mol, repulsive_ref in zip(molecules(device), references):
         repulsive_energy = repulsive_feed(mol)
         
-        check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), atol=0, rtol=1E-3)
+#        check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), atol=0, rtol=1E-5) #Works for H2
+#        check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), atol=1E-20) #works for H2
+#        check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), atol=0, rtol=1E-3) #Works for H2 and CH4 and C2H2Au2S3
+#        check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), atol=1E-5) #works for H2 and CH4 
+#        check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), atol=0, rtol=1E-4) #Works for H2 and C2H2Au2S3
+#        check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), atol=1E-2) #works for H2 and CH4 and C2H2Au2S3
+        #check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), atol=1E-5, rtol=1E-4) 
+        check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), atol=1E-6)
         check_2 = repulsive_energy.device == device
 
         assert check_1, f'RepulsiveSplineFeed repulsive energy outside of tolerance (Geometry: {mol}, Energy: {repulsive_energy}, Reference: {repulsive_ref})'

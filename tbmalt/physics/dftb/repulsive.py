@@ -43,7 +43,7 @@ class RepulsiveSplineFeed():
 
         if distance < spline.cutoff:
             if distance > tail_start:
-                return self._spline(distance, tail_start, spline.tail_coef)
+                return self._tail(distance, tail_start, spline.tail_coef)
             elif distance > exp_head_cutoff:
                 for ind in range(len(spline.grid)):
                     if distance < spline.grid[ind]:
@@ -60,17 +60,32 @@ class RepulsiveSplineFeed():
 
         return torch.exp(-a1*distance + a2) + a3
 
+#For some reason this spline method is less accurate than the ones below for spline and tail spline
+#    @classmethod 
+#    def _spline(cls, distance, start, coeffs):
+#        energy = coeffs[0].clone()
+#        rDiff = distance - start
+#        for coeff in coeffs[1:]:
+#            energy += coeff*rDiff
+#            rDiff *= rDiff
+#        return energy
+
     @classmethod 
     def _spline(cls, distance, start, coeffs):
-        energy = coeffs[0].clone()
         rDiff = distance - start
-        for coeff in coeffs[1:]:
-            energy += coeff*rDiff
-            rDiff *= rDiff
+        energy = coeffs[0] + coeffs[1]*rDiff + coeffs[2]*rDiff**2 + coeffs[3]*rDiff**3
         return energy
 
+    @classmethod 
+    def _tail(cls, distance, start, coeffs):
+        rDiff = distance - start
+        energy = coeffs[0] + coeffs[1]*rDiff + coeffs[2]*rDiff**2 + coeffs[3]*rDiff**3 + coeffs[4]*rDiff**4 + coeffs[5]*rDiff**5
+        return energy
+
+
+
     @classmethod
-    def from_database(cls, path: str, species: List[int], **kwargs) -> 'RepulsiveSplineFeed_batch':
+    def from_database(cls, path: str, species: List[int], **kwargs) -> 'RepulsiveSplineFeed':
         interaction_pairs = combinations_with_replacement(species, r=2)
         return cls({interaction_pair: skf.Skf.read(path, interaction_pair).r_spline for interaction_pair in interaction_pairs})
 
