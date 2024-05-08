@@ -101,9 +101,9 @@ class RepulsiveSplineFeed():
             energy: The energy value of the exponential head.
                 The energy is calculated as :math:`\exp(-coeffs[0] \cdot r + coeffs[1]) + coeffs[2]`.
         """
-        a1 = coeffs[0].clone()
-        a2 = coeffs[1].clone()
-        a3 = coeffs[2].clone()
+        a1 = coeffs[0]
+        a2 = coeffs[1]
+        a3 = coeffs[2]
 
         return torch.exp(-a1*distance + a2) + a3
 
