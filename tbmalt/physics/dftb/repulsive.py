@@ -19,8 +19,18 @@ class RepulsiveSplineFeed():
         spline_data: Dictionary containing the the tuples of atomic number pairs as keys and the corresponding spline data as values.
     """
 
-    def __init__(self, spline_data: Dict[Tuple, Tensor], device: Optional[torch.device] = None):
+    def __init__(self, spline_data: Dict[Tuple, Tensor]):
         self.spline_data = {frozenset(interaction_pairs):data for interaction_pairs,data in spline_data.items()}
+
+    @property
+    def dtype(self) -> torch.dtype:
+        """Floating point dtype used by `RepulsiveSplineFeed` object."""
+        return list(self.spline_data.values())[0].grid.dtype
+
+    @property
+    def device(self) -> torch.device:
+        """The device on which the `RepulsiveSplineFeed` object resides."""
+        return list(self.spline_data.values())[0].grid.device
 
     def __call__(self, geo: Union[Geometry, Tensor]) -> Tensor:
         r"""Calculate the repulsive energy of a Geometry.
@@ -31,15 +41,15 @@ class RepulsiveSplineFeed():
         Returns:
             Erep: The repulsive energy of the Geometry object(s).
         """
-        if geo.atomic_numbers.dim() == 1: #this means its not a batch
+        if geo.atomic_numbers.dim() == 1: #this means it is not a batch
             batch_size = 1
         else:
             batch_size = geo.atomic_numbers.size(dim=0)
 
-        indxs = torch.tensor(range(geo.atomic_numbers.size(dim=-1))) #TODO add device   
+        indxs = torch.tensor(range(geo.atomic_numbers.size(dim=-1)), device=self.device)
         indx_pairs = torch.combinations(indxs)
         
-        Erep = torch.zeros((batch_size))
+        Erep = torch.zeros((batch_size), device=self.device, dtype=self.dtype)
         for indx_pair in indx_pairs:
             atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
             atomnum2 = geo.atomic_numbers[..., indx_pair[1]].reshape((batch_size, ))
@@ -134,7 +144,7 @@ class RepulsiveSplineFeed():
 
 
     @classmethod
-    def from_database(cls, path: str, species: List[int], device: Optional[torch.device] = None) -> 'RepulsiveSplineFeed':
+    def from_database(cls, path: str, species: List[int], dtype: Optional[torch.dtype] = None, device: Optional[torch.device] = None) -> 'RepulsiveSplineFeed':
         r"""Instantiate instance from a HDF5 database of Slater-Koster files.
 
         Instantiate a `RepulsiveSplineFeed` instance from a HDF5 database for the specified elements.
@@ -160,5 +170,5 @@ class RepulsiveSplineFeed():
             >>>     Skf.read(file).write('my_skf.hdf5')
         """
         interaction_pairs = combinations_with_replacement(species, r=2)
-        return cls({interaction_pair: skf.Skf.read(path, interaction_pair).r_spline for interaction_pair in interaction_pairs})
+        return cls({interaction_pair: skf.Skf.read(path, interaction_pair, device=device, dtype=dtype).r_spline for interaction_pair in interaction_pairs})
 

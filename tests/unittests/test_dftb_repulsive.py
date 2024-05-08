@@ -59,6 +59,17 @@ def molecules(device) -> List[Geometry]:
 
 references = [0.0058374104, 0.0130941359, 47.8705446288] #H2, CH4, C2H2Au2S3 in Hartree
 
+# General
+def test_repulsivefeed_general(skf_file: str, device):
+
+    # Check 0: ensure that the feed can be constructed fro a HDF5 skf database
+    # without encountering an error.
+    repulsive_feed = RepulsiveSplineFeed.from_database(skf_file, species=[1, 6, 16, 79], device=device)
+
+    # Check 1: ensure that the feed is contructed on the correct device.
+    check_1 = repulsive_feed.device == device == list(repulsive_feed.spline_data.values())[0].grid.device
+    assert check_1, f'RepulsiveSplineFeed has been placed on the incorrect device'
+
 # Single
 def test_repulsivefeed_single(skf_file: str, device):
 
@@ -68,11 +79,11 @@ def test_repulsivefeed_single(skf_file: str, device):
     for mol, repulsive_ref in zip(molecules(device), references):
         repulsive_energy = repulsive_feed(mol)
         
-        check_1 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), rtol=0, atol=1E-10)
-        check_2 = repulsive_energy.device == device #TODO add device to repulsive_feed
+        check_1 = repulsive_energy.device == device 
+        check_2 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), rtol=0, atol=1E-10)
 
-        assert check_1, f'RepulsiveSplineFeed repulsive energy outside of tolerance (Geometry: {mol}, Energy: {repulsive_energy}, Reference: {repulsive_ref})'
-        assert check_2
+        assert check_1, 'Results were places on the wrong device'
+        assert check_2, f'RepulsiveSplineFeed repulsive energy outside of tolerance (Geometry: {mol}, Energy: {repulsive_energy}, Reference: {repulsive_ref})'
 
 # Batch
 def test_repulsivefeed_batch(skf_file: str, device):
@@ -85,10 +96,11 @@ def test_repulsivefeed_batch(skf_file: str, device):
     for mol in molecules(device):
         repulsive_ref_single = torch.cat((repulsive_ref_single, repulsive_feed(mol)))
 
-    check_1 = torch.allclose(repulsive_energy, repulsive_ref_single, atol=1e-9, rtol=0)
-    check_2 = repulsive_energy.device == device #TODO add device to repulsive_feed
+    check_1 = repulsive_energy.device == device 
+    check_2 = torch.allclose(repulsive_energy, repulsive_ref_single, atol=1e-9, rtol=0)
 
-    assert check_1, f'RepulsiveSplineFeed batch energy difference to single calculation outside of tolerance (Batch: {repulsive_energy}, Single: {repulsive_ref_single}) '
+    assert check_1, 'Results were places on the wrong device'
+    assert check_2, f'RepulsiveSplineFeed batch energy difference to single calculation outside of tolerance (Batch: {repulsive_energy}, Single: {repulsive_ref_single}) '
 
 
 
