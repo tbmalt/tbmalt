@@ -74,30 +74,30 @@ def test_repulsivefeed_general(skf_file: str, device):
 def test_repulsivefeed_single(skf_file: str, device):
 
     b_def = {1: [0], 6: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
-    repulsive_feed = RepulsiveSplineFeed.from_database(skf_file, species=[1, 6, 16, 79])
+    repulsive_feed = RepulsiveSplineFeed.from_database(skf_file, species=[1, 6, 16, 79], device=device)
 
     for mol, repulsive_ref in zip(molecules(device), references):
         repulsive_energy = repulsive_feed(mol)
         
         check_1 = repulsive_energy.device == device 
-        check_2 = torch.allclose(repulsive_energy, torch.tensor([repulsive_ref]), rtol=0, atol=1E-10)
+        check_2 = torch.allclose(repulsive_energy.detach().cpu(), torch.tensor([repulsive_ref]), rtol=0, atol=1E-10)
 
         assert check_1, 'Results were places on the wrong device'
         assert check_2, f'RepulsiveSplineFeed repulsive energy outside of tolerance (Geometry: {mol}, Energy: {repulsive_energy}, Reference: {repulsive_ref})'
 
 # Batch
 def test_repulsivefeed_batch(skf_file: str, device):
-    repulsive_feed = RepulsiveSplineFeed.from_database(skf_file, species=[1, 6, 16, 79])
+    repulsive_feed = RepulsiveSplineFeed.from_database(skf_file, species=[1, 6, 16, 79], device=device)
     mols = reduce(lambda i, j: i+j, molecules(device))
 
     repulsive_energy = repulsive_feed(mols)
     
     repulsive_ref_single = torch.tensor([])
     for mol in molecules(device):
-        repulsive_ref_single = torch.cat((repulsive_ref_single, repulsive_feed(mol)))
+        repulsive_ref_single = torch.cat((repulsive_ref_single, repulsive_feed(mol).detach().cpu()))
 
-    check_1 = repulsive_energy.device == device 
-    check_2 = torch.allclose(repulsive_energy, repulsive_ref_single, atol=1e-9, rtol=0)
+    check_1 = repulsive_energy.device == device
+    check_2 = torch.allclose(repulsive_energy.detach().cpu(), repulsive_ref_single, atol=1e-9, rtol=0)
 
     assert check_1, 'Results were places on the wrong device'
     assert check_2, f'RepulsiveSplineFeed batch energy difference to single calculation outside of tolerance (Batch: {repulsive_energy}, Single: {repulsive_ref_single}) '
