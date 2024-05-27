@@ -234,18 +234,18 @@ def test_skfeed_single(device):
 
     # Load the Hamiltonian, overlap feed model
     h_feed = SkFeed.from_database(path_to_file, species, 'hamiltonian',
-                                  interpolation='bicubic')
+                                  interpolation='bicubic', device=device)
     s_feed = SkFeed.from_database(path_to_file, species, 'overlap',
-                                  interpolation='bicubic')
+                                  interpolation='bicubic', device=device)
 
     # Define (wave-function) compression radii, keep s and p the same
     vcrs = [torch.tensor([2.7, 2.5, 2.5, 2.5, 2.5], device=device),
             torch.tensor([2.3, 2.5, 2.5], device=device)]
-    H_ref = [H_ref_ch4, H_ref_h2o]
-    S_ref = [S_ref_ch4, S_ref_h2o]
+    H_ref = [H_ref_ch4.to(device), H_ref_h2o.to(device)]
+    S_ref = [S_ref_ch4.to(device), S_ref_h2o.to(device)]
 
     for ii, mol in enumerate([molecule('CH4'), molecule('H2O')]):
-        mol = Geometry.from_ase_atoms(mol)
+        mol = Geometry.from_ase_atoms(mol, device=device)
         h_feed.vcr = vcrs[ii]
         s_feed.vcr = vcrs[ii]
 
@@ -274,17 +274,17 @@ def test_skfeed_batch(device):
 
     # Load the Hamiltonian, overlap feed model
     h_feed = SkFeed.from_database(path_to_file, species, 'hamiltonian',
-                                  interpolation='bicubic')
+                                  interpolation='bicubic', device=device)
     s_feed = SkFeed.from_database(path_to_file, species, 'overlap',
-                                  interpolation='bicubic')
+                                  interpolation='bicubic', device=device)
 
     # Define (wave-function) compression radii, keep s and p the same
     vcrs = torch.tensor([[2.7, 2.5, 2.5, 2.5, 2.5], [2.3, 2.5, 2.5, 0, 0]],
                         device=device)
-    H_ref = pack([H_ref_ch4, H_ref_h2o])
-    S_ref = pack([S_ref_ch4, S_ref_h2o])
+    H_ref = pack([H_ref_ch4.to(device), H_ref_h2o.to(device)])
+    S_ref = pack([S_ref_ch4.to(device), S_ref_h2o.to(device)])
 
-    mol = Geometry.from_ase_atoms([molecule('CH4'), molecule('H2O')])
+    mol = Geometry.from_ase_atoms([molecule('CH4'), molecule('H2O')], device=device)
     h_feed.vcr = vcrs
     s_feed.vcr = vcrs
 

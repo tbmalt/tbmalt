@@ -202,7 +202,7 @@ def test_dataset_general(device):
 
     geometry = Geometry(
         arange_of_shape(6, 5, device=device),
-        torch.rand(6, 5, 3)
+        torch.rand(6, 5, 3, device=device)
     )
 
     labels = ['a', 'b', 'c', 'd', 'e', 'f']
