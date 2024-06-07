@@ -16,6 +16,46 @@ __sort = namedtuple('sort', ('values', 'indices'))
 Sliceable = Union[List[Tensor], Tuple[Tensor]]
 
 
+def bT(tensor: Tensor) -> Tensor:
+    """Dimensionally agnostic "transpose".
+
+    Reverses the dimensions of a tensor like so [m, n, o] -> [o, n, m]. This is
+    designed to preserve the original functionality of the `torch.T` operator
+    in an effort to maintain dimensional/batch agnosticism. Recent versions of
+    PyTorch will only permit the transpose operator to be used on 2D matrices
+    which makes dimensionally agnostic treatment of tensors difficult in some
+    situations.
+
+    Arguments:
+        tensor: the tensor whose dimensions are to be flipped.
+
+    Returns:
+        flipped_tensor: the tensor with its dimensions reversed.
+
+    """
+    return tensor.permute(*torch.arange(tensor.ndim - 1, -1, -1))
+
+
+def bT2(tensor: Tensor) -> Tensor:
+    """Transposes a tensor and expands it to two dimensions.
+
+    This method performs a transpose on a target tensor via a call to `bT` then
+    invokes `torch.atleast_2d` to ensure that the tensor is at least two-
+    dimensional. This helps promote batch agnostic programming.
+
+    Note that this is the same as calling `torch.atleast_2d(bT(tensor))` or
+    `torch.atleast_2d(tensor.permute(*torch.arange(tensor.ndim - 1, -1, -1)))`.
+
+    Arguments:
+        tensor: tensor whose dimensions are to be flipped and expanded.
+
+    Returns:
+        modified_tensor: the modified tensor.
+
+    """
+    return torch.atleast_2d(bT(tensor))
+
+
 def pack(tensors: Sliceable, axis: int = 0,
          value: Any = 0, size: Optional[Union[Tuple[int], torch.Size]] = None,
          return_mask: bool = False) -> Union[Tensor, Optional[Tensor]]:

@@ -17,7 +17,7 @@ from tbmalt.io.skf import Skf, VCRSkf
 from tbmalt.physics.dftb.slaterkoster import sub_block_rot
 from tbmalt.data.elements import chemical_symbols
 from tbmalt.ml import Feed
-from tbmalt.common.batch import pack, prepeat_interleave
+from tbmalt.common.batch import pack, prepeat_interleave, bT, bT2
 from tbmalt.common.maths.interpolation import PolyInterpU, BicubInterp
 from tbmalt.common.maths.interpolation import CubicSpline as CSpline
 
@@ -124,17 +124,16 @@ class ScipySkFeed(IntegralFeed):
           Returns:
               blocks: Requested atomic interaction sub-blocks.
         """
-
         # Identify atomic numbers associated with the interaction
-        z_1 = int(geometry.atomic_numbers[atomic_idx_1[0: 1].T])
-        z_2 = int(geometry.atomic_numbers[atomic_idx_2[0: 1].T])
+        z_1 = int(geometry.atomic_numbers[*bT(atomic_idx_1[0: 1])])
+        z_2 = int(geometry.atomic_numbers[*bT(atomic_idx_2[0: 1])])
 
         # Get the species' shell lists (basically a list of azimuthal numbers)
         shells_1, shells_2 = orbs.shell_dict[z_1], orbs.shell_dict[z_2]
 
         # Inter-atomic distance and distance vector calculator.
-        dist_vec = (geometry.positions[atomic_idx_2.T]
-                    - geometry.positions[atomic_idx_1.T])
+        dist_vec = (geometry.positions[*torch.atleast_2d(bT(atomic_idx_2))]
+                    - geometry.positions[*torch.atleast_2d(bT(atomic_idx_1))])
         dist = torch.linalg.norm(dist_vec, dim=-1)
         u_vec = (dist_vec.T / dist).T
 
@@ -294,7 +293,7 @@ class ScipySkFeed(IntegralFeed):
 
         return blks
 
-    def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
+    def blocks(self, atomic_idx_1: Tensor, atomic_idx_2: Tensor,
                geometry: Geometry, orbs: OrbitalInfo, **kwargs) -> Tensor:
         r"""Compute atomic interaction blocks using SK-integral tables.
 
@@ -320,13 +319,10 @@ class ScipySkFeed(IntegralFeed):
               This is not backpropagatable.
 
         """
-        # Atomic index arrays must be numpy arrays
-        atomic_idx_1 = _enforce_numpy(atomic_idx_1)
-        atomic_idx_2 = _enforce_numpy(atomic_idx_2)
-
         # Get the atomic numbers of the atoms
-        zs_1 = (zs := geometry.atomic_numbers)[atomic_idx_1.T]
-        zs_2 = zs[atomic_idx_2.T]
+        zs = geometry.atomic_numbers
+        zs_1 = zs[*torch.atleast_2d(bT(atomic_idx_1))]
+        zs_2 = zs[*torch.atleast_2d(bT(atomic_idx_2))]
 
         # Ensure all interactions are between identical species pairs.
         if len(zs_1.unique()) != 1:
@@ -613,23 +609,22 @@ class SkFeed(IntegralFeed):
           Returns:
               blocks: Requested atomic interaction sub-blocks.
         """
-
         # Identify atomic numbers associated with the interaction
-        z_1 = int(geometry.atomic_numbers[atomic_idx_1[0: 1].T])
-        z_2 = int(geometry.atomic_numbers[atomic_idx_2[0: 1].T])
+        z_1 = int(geometry.atomic_numbers[*bT(atomic_idx_1[0: 1])])
+        z_2 = int(geometry.atomic_numbers[*bT(atomic_idx_2[0: 1])])
 
         # Get the species' shell lists (basically a list of azimuthal numbers)
         shells_1, shells_2 = orbs.shell_dict[z_1], orbs.shell_dict[z_2]
 
         # Inter-atomic distance and distance vector calculator.
-        dist_vec = (geometry.positions[atomic_idx_2.T]
-                    - geometry.positions[atomic_idx_1.T])
+        dist_vec = (geometry.positions[*torch.atleast_2d(bT(atomic_idx_2))]
+                    - geometry.positions[*torch.atleast_2d(bT(atomic_idx_1))])
         dist = torch.linalg.norm(dist_vec, dim=-1)
         u_vec = (dist_vec.T / dist).T
 
         # `BicubInterp` interpolation works for VCR
         if self.interpolation is BicubInterp:
-            cr = torch.stack([self.vcr[atomic_idx_1.T], self.vcr[atomic_idx_2.T]]).T
+            cr = torch.stack([self.vcr[*bT2(atomic_idx_1)], self.vcr[*bT2(atomic_idx_2)]]).T
 
         # Work out the width of each sub-block then use it to get the row and
         # column index slicers for placing sub-blocks into their atom-blocks.
@@ -787,7 +782,7 @@ class SkFeed(IntegralFeed):
 
         return blks
 
-    def blocks(self, atomic_idx_1: Array, atomic_idx_2: Array,
+    def blocks(self, atomic_idx_1: Tensor, atomic_idx_2: Tensor,
                geometry: Geometry, orbs: OrbitalInfo, **kwargs) -> Tensor:
         r"""Compute atomic interaction blocks using SK-integral tables.
 
@@ -809,13 +804,10 @@ class SkFeed(IntegralFeed):
             blocks: Requested atomic interaction sub-blocks.
 
         """
-        # Atomic index arrays must be numpy arrays
-        atomic_idx_1 = _enforce_numpy(atomic_idx_1)
-        atomic_idx_2 = _enforce_numpy(atomic_idx_2)
-
         # Get the atomic numbers of the atoms
-        zs_1 = (zs := geometry.atomic_numbers)[atomic_idx_1.T]
-        zs_2 = zs[atomic_idx_2.T]
+        zs = geometry.atomic_numbers
+        zs_1 = zs[*torch.atleast_2d(bT(atomic_idx_1))]
+        zs_2 = zs[*torch.atleast_2d(bT(atomic_idx_2))]
 
         # Ensure all interactions are between identical species pairs.
         if len(zs_1.unique()) != 1:

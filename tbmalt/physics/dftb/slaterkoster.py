@@ -8,7 +8,7 @@ parametrisation set, [0,0,1], into that required by the calculation.
 import numpy as np
 import torch
 from torch import Tensor, stack
-
+from tbmalt.common.batch import bT
 
 # Static module-level constants (used for SK transformation operations)
 _SQR3, _SQR6, _SQR10, _SQR15 = np.sqrt(np.array([3., 6., 10., 15.])).tolist()
@@ -225,7 +225,7 @@ def _rot_yz_p(unit_vector: Tensor) -> Tensor:
         The resulting transformation matrix becomes numerically ill-defined
         when z≈1.
     """
-    x, y, z = unit_vector.T
+    x, y, z = bT(unit_vector)
     zeros = torch.zeros_like(x)
     alpha = torch.sqrt(1.0 - z * z)
     rot = stack([
@@ -252,7 +252,7 @@ def _rot_xy_p(unit_vector: Tensor) -> Tensor:
         The resulting transformation matrix becomes numerically ill-defined
         when y≈1.
     """
-    x, y, z = unit_vector.T
+    x, y, z = bT(unit_vector)
     zeros = torch.zeros_like(x)
     alpha = torch.sqrt(1.0 - y * y)
     rot = stack([
@@ -279,11 +279,12 @@ def _rot_yz_d(unit_vector: Tensor) -> Tensor:
         The resulting transformation matrix becomes numerically ill-defined
         when z≈1.
     """
-    x, y, z = unit_vector.T
+    unit_vector_t = bT(unit_vector)
+    x, y, z = unit_vector_t
     zeros = torch.zeros_like(x)
     a = 1.0 - z * z
     b = torch.sqrt(a)
-    xz, xy, yz = unit_vector.T * unit_vector.roll(1, -1).T
+    xz, xy, yz = unit_vector_t * bT(unit_vector.roll(1, -1))
     xyz = x * yz
     x2 = x * x
     rot = stack([
@@ -316,10 +317,11 @@ def _rot_xy_d(unit_vector: Tensor) -> Tensor:
         The resulting transformation matrix becomes numerically ill-defined
         when y≈1.
     """
-    x, y, z = unit_vector.T
+    unit_vector_t = bT(unit_vector)
+    x, y, z = unit_vector_t
     a = 1.0 - y * y
     b = torch.sqrt(a)
-    xz, xy, yz = unit_vector.T * unit_vector.roll(1, -1).T
+    xz, xy, yz = unit_vector_t * bT(unit_vector.roll(1, -1))
     xyz = x * yz
     z2 = z * z
     rot = stack([
@@ -352,8 +354,9 @@ def _rot_yz_f(unit_vector: Tensor) -> Tensor:
         The resulting transformation matrix becomes numerically ill-defined
         when z≈1.
     """
-    x, y, z = unit_vector.T
-    xz, xy, yz = unit_vector.T * unit_vector.roll(1, -1).T
+    unit_vector_t = bT(unit_vector)
+    x, y, z = unit_vector_t
+    xz, xy, yz = unit_vector_t * bT(unit_vector.roll(1, -1))
     xyz = x * yz
     zeros = torch.zeros_like(x)
     a = 1.0 - z * z
@@ -444,8 +447,9 @@ def _rot_xy_f(unit_vector: Tensor) -> Tensor:
         The resulting transformation matrix becomes numerically ill-defined
         when y≈1.
     """
-    x, y, z = unit_vector.T
-    xz, xy, yz = unit_vector.T * unit_vector.roll(1, -1).T
+    unit_vector_t = bT(unit_vector)
+    x, y, z = unit_vector_t
+    xz, xy, yz = unit_vector_t * bT(unit_vector.roll(1, -1))
     xyz = x * yz
     a = 1.0 - y * y
     b = torch.sqrt(a)
