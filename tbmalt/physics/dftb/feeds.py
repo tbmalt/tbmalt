@@ -132,8 +132,8 @@ class ScipySkFeed(IntegralFeed):
         shells_1, shells_2 = orbs.shell_dict[z_1], orbs.shell_dict[z_2]
 
         # Inter-atomic distance and distance vector calculator.
-        dist_vec = (geometry.positions[*torch.atleast_2d(bT(atomic_idx_2))]
-                    - geometry.positions[*torch.atleast_2d(bT(atomic_idx_1))])
+        dist_vec = (geometry.positions[*bT2(atomic_idx_2)]
+                    - geometry.positions[*bT2(atomic_idx_1)])
         dist = torch.linalg.norm(dist_vec, dim=-1)
         u_vec = (dist_vec.T / dist).T
 
@@ -321,8 +321,8 @@ class ScipySkFeed(IntegralFeed):
         """
         # Get the atomic numbers of the atoms
         zs = geometry.atomic_numbers
-        zs_1 = zs[*torch.atleast_2d(bT(atomic_idx_1))]
-        zs_2 = zs[*torch.atleast_2d(bT(atomic_idx_2))]
+        zs_1 = zs[*bT2(atomic_idx_1)]
+        zs_2 = zs[*bT2(atomic_idx_2)]
 
         # Ensure all interactions are between identical species pairs.
         if len(zs_1.unique()) != 1:
@@ -617,8 +617,8 @@ class SkFeed(IntegralFeed):
         shells_1, shells_2 = orbs.shell_dict[z_1], orbs.shell_dict[z_2]
 
         # Inter-atomic distance and distance vector calculator.
-        dist_vec = (geometry.positions[*torch.atleast_2d(bT(atomic_idx_2))]
-                    - geometry.positions[*torch.atleast_2d(bT(atomic_idx_1))])
+        dist_vec = (geometry.positions[*bT2(atomic_idx_2)]
+                    - geometry.positions[*bT2(atomic_idx_1)])
         dist = torch.linalg.norm(dist_vec, dim=-1)
         u_vec = (dist_vec.T / dist).T
 
@@ -806,8 +806,8 @@ class SkFeed(IntegralFeed):
         """
         # Get the atomic numbers of the atoms
         zs = geometry.atomic_numbers
-        zs_1 = zs[*torch.atleast_2d(bT(atomic_idx_1))]
-        zs_2 = zs[*torch.atleast_2d(bT(atomic_idx_2))]
+        zs_1 = zs[*bT2(atomic_idx_1)]
+        zs_2 = zs[*bT2(atomic_idx_2)]
 
         # Ensure all interactions are between identical species pairs.
         if len(zs_1.unique()) != 1:
