@@ -996,7 +996,9 @@ class SkFeed(IntegralFeed):
 
                 if interpolation is BicubInterp:
                     off_sites[pair + key] = interpolation(
-                        skf.compression_radii, value.transpose(0, 1), skf.grid, **params)
+                        skf.compression_radii.to(device),
+                        value.transpose(0, 1).to(device),
+                        skf.grid.to(device), **params)
                 else:
                     off_sites[pair + key] = interpolation(
                         *clip(skf.grid.to(device), value.to(device)), **params)
