@@ -1,7 +1,7 @@
 import pytest
 from typing import List
 import torch
-from tbmalt.physics.dftb.repulsive import RepulsiveSplineFeed
+from tbmalt.physics.dftb.feeds import RepulsiveSplineFeed
 from tbmalt import Geometry, OrbitalInfo
 from functools import reduce
 
