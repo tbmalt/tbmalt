@@ -12,8 +12,6 @@ from tbmalt.physics.dftb.coulomb import build_coulomb_matrix
 from tbmalt.physics.dftb.feeds import HubbardFeed
 from tbmalt.common.batch import pack
 
-from tests.test_utils import skf_file
-
 torch.set_default_dtype(torch.float64)
 
 

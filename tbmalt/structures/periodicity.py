@@ -9,7 +9,7 @@ from typing import Union, Tuple, Optional
 from abc import ABC, abstractmethod
 import torch
 import numpy as np
-from tbmalt.common.batch import pack, merge
+from tbmalt.common.batch import pack, merge, bT, bT2
 from tbmalt.common import cached_property
 from tbmalt.data.units import length_units
 
@@ -371,7 +371,7 @@ class Periodicity(ABC):
               'device': inverse_lattice_vector.device}
 
         # Ranges of cell translation on three dimensions
-        _tmp = torch.floor(cutoff * torch.norm(inverse_lattice_vector, dim=-1).T).T
+        _tmp = bT(torch.floor(cutoff * bT(torch.norm(inverse_lattice_vector, dim=-1))))
 
         ranges = torch.stack([-(negative_extension + _tmp),
                                 positive_extension + _tmp])

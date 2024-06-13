@@ -9,7 +9,6 @@ from tbmalt.physics.dftb import Dftb1, Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.batch import pack
 
-from tests.test_utils import skf_file
 
 torch.set_default_dtype(torch.float64)
 

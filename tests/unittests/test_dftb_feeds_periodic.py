@@ -12,8 +12,6 @@ from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
 from functools import reduce
 
-from tests.test_utils import skf_file
-
 torch.set_default_dtype(torch.float64)
 
 
@@ -144,8 +142,11 @@ def overlaps(device):
 #########################################
 
 # Single
-def test_scipyskfeed_pbc_single(skf_file: str, device):
+def test_scipyskfeed_pbc_single(device, skf_file: str):
     """ScipySkFeed matrix single system operability tolerance test"""
+    if device.type == "cuda":
+        pytest.skip("Scipy splines do not support CUDA.")
+
     b_def = {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
     H_feed = ScipySkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
@@ -166,8 +167,12 @@ def test_scipyskfeed_pbc_single(skf_file: str, device):
 
 
 # Batch
-def test_scipyskfeed_pbc_batch(skf_file: str, device):
+def test_scipyskfeed_pbc_batch(device, skf_file: str):
     """ScipySkFeed matrix batch operability tolerance test"""
+
+    if device.type == "cuda":
+        pytest.skip("Scipy splines do not support CUDA.")
+
     H_feed = ScipySkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
     S_feed = ScipySkFeed.from_database(
@@ -193,13 +198,12 @@ def test_scipyskfeed_pbc_batch(skf_file: str, device):
     assert check_3, 'ScipySkFeed.matrix returned on incorrect device'
     assert check_4, 'Failure to operate on batches of size "one"'
 
-
 #########################################
 # tbmalt.physics.dftb.feeds.SkFeed #
 #########################################
 
 # Single
-def test_skffeed_pbc_single(skf_file: str, device):
+def test_skffeed_pbc_single(device, skf_file: str):
     """SkFeed matrix single system operability tolerance test"""
     b_def = {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
     H_feed = SkFeed.from_database(
@@ -221,7 +225,7 @@ def test_skffeed_pbc_single(skf_file: str, device):
 
 
 # Batch
-def test_skffeed_pbc_batch(skf_file: str, device):
+def test_skffeed_pbc_batch(device, skf_file: str):
     """SkFeed matrix batch operability tolerance test"""
     H_feed = SkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
@@ -246,3 +250,4 @@ def test_skffeed_pbc_batch(skf_file: str, device):
     assert check_2, 'SkFeed S matrix outside of tolerance (batch)'
     assert check_3, 'SkFeed.matrix returned on incorrect device'
     assert check_4, 'Failure to operate on batches of size "one"'
+

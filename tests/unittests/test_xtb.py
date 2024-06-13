@@ -34,9 +34,6 @@ except ModuleNotFoundError:
     dxtb = None
 
 
-# fixture
-from tests.test_utils import skf_file
-
 Sample = Dict[str, torch.Tensor]
 Samples = Dict[str, Sample]
 

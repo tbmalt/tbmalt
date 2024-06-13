@@ -656,11 +656,13 @@ class Ewald2d(Ewald):
     def _ewald_reciprocal(self, rr: Tensor, gvec: Tensor,
                           alpha: Tensor, length: Tensor) -> Tensor:
         """Calculate the reciprocal part of the Ewald sum."""
+
         # Mask of periodicity directions
         mask_pd = self.periodic.lattice.ne(0).any(-1)
 
         # Index to describe non-periodicity direction
-        index_npd = torch.tensor([0, 1, 2]).repeat(self._n_batch, 1)[~mask_pd]
+        index_npd = torch.tensor([0, 1, 2], device=self._device
+                                 ).repeat(self._n_batch, 1)[~mask_pd]
 
         # Lengths of lattice vectors of periodicity directions
         length_pd = self.length[mask_pd].reshape(self._n_batch, 2)
@@ -708,11 +710,12 @@ class Ewald2d(Ewald):
     def _ewald_reciprocal_single(self, rr: Tensor, gvec: Tensor, alpha:
                                  Tensor, length: Tensor) -> Tensor:
         """Calculate the reciprocal part of the Ewald sum."""
+
         # Mask of periodicity directions
         mask_pd = self.periodic.lattice.ne(0).any(-1)
 
         # Index to describe non-periodicity direction
-        index_npd = torch.tensor([0, 1, 2])[~mask_pd]
+        index_npd = torch.tensor([0, 1, 2], device=self._device)[~mask_pd]
 
         # Lengths of lattice vectors of periodicity directions
         length_pd = self.length[mask_pd]
@@ -793,7 +796,7 @@ class Ewald1d(Ewald):
         mask_pd = self.periodic.lattice.ne(0).any(-1)
 
         # Index of non-periodicity directions
-        index_npd = torch.tensor([0, 1, 2]).repeat(
+        index_npd = torch.tensor([0, 1, 2], device=self._device).repeat(
                 self._n_batch, 1)[~mask_pd].reshape(self._n_batch, 2)
 
         g2 = torch.sum(gvec ** 2, -1)
@@ -837,7 +840,7 @@ class Ewald1d(Ewald):
         mask_pd = self.periodic.lattice.ne(0).any(-1)
 
         # Index of non-periodicity directions
-        index_npd = torch.tensor([0, 1, 2])[~mask_pd]
+        index_npd = torch.tensor([0, 1, 2], device=self._device)[~mask_pd]
 
         g2 = torch.sum(gvec ** 2, -1)
         dot = torch.matmul(rr, gvec.transpose(-1, -2))

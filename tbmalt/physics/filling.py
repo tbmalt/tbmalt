@@ -9,7 +9,7 @@ from torch import Tensor
 from tbmalt import ConvergenceError
 from tbmalt import OrbitalInfo
 from tbmalt.common import float_like
-from tbmalt.common.batch import psort
+from tbmalt.common.batch import psort, bT
 
 _Scheme = Callable[[Tensor, Tensor, float_like], Tensor]
 
@@ -379,12 +379,12 @@ def _middle_gap_approximation(
                    ).gather(-1, srt)
 
     # Locate HOMO index, via the transition between under/over filled.
-    # A indirect method is used here as direct calls to ">" & "<" result in
+    # An indirect method is used here as direct calls to ">" & "<" result in
     # spurious behaviour when any noise is present in `n_electrons`.
-    occupations_cs = occupations.cumsum(-1).T - n_electrons
+    occupations_cs = bT(occupations.cumsum(-1)) - n_electrons
     r = torch.finfo(n_electrons.dtype).resolution * 5
     i_homo = torch.argmax(
-        torch.as_tensor(occupations_cs.ge(-r).T, dtype=torch.long),
+        torch.as_tensor(bT(occupations_cs.ge(-r)), dtype=torch.long),
         dim=-1).view(shape)
 
     # Identify the index of the LUMO. Care must be taken to catch the case
@@ -563,7 +563,7 @@ def fermi_search(
         raise ValueError('Number of electrons cannot exceed 2 * n states')
 
     # __Finite Temperature Disabled__
-    # Set the fermi energy to the mid point between the HOMO and LUMO.
+    # Set the fermi energy to the mid-point between the HOMO and LUMO.
     if kT is None:
         return _middle_gap_approximation(
             eigenvalues, n_electrons, scale_factor, e_mask)
@@ -588,7 +588,7 @@ def fermi_search(
                 res[~e_mask[m]] = 0.0
 
             # Sum up over all axes apart from the batch dimension
-            return (res * scale_factor).T.sum_to_size(n_electrons[m].shape)
+            return bT(res * scale_factor).sum_to_size(n_electrons[m].shape)
 
         # If there's an even, integer number of e⁻; try setting e_fermi to the
         # middle gap, i.e. fill according to the Aufbau principle. The modulus

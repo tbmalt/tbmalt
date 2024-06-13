@@ -780,10 +780,10 @@ class Dftb2(Dftb1):
                 # `system_indices` provides the indices of each system and is
                 # culled along with the other arrays so that one can identify
                 # which systems remain.
-                system_indices = torch.arange(self.geometry._n_batch)
+                system_indices = torch.arange(self.geometry._n_batch, device=self.device)
 
                 # Used to help the user track which systems have converged.
-                self.converged = torch.full(system_indices.shape, False)
+                self.converged = torch.full(system_indices.shape, False, device=self.device)
 
                 for step in range(1, self.max_scc_iter + 1):
                     q_current = self.mixer(self._scc_cycle(q_current),
@@ -801,7 +801,7 @@ class Dftb2(Dftb1):
                         if torch.all(c_mask):
                             break
                         # Otherwise there are still systems left to converge.
-                        # Thus the converged systems will now be culled to avoid
+                        # Thus, the converged systems will now be culled to avoid
                         # over-converging them.
                         else:
                             # The order in which things are done here matters

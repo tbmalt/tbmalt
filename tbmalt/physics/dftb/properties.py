@@ -8,7 +8,7 @@ import torch
 import numpy as np
 from numbers import Real
 from typing import Optional, Tuple, Union
-from tbmalt.common.batch import pack
+from tbmalt.common.batch import pack, bT
 
 Tensor = torch.Tensor
 
@@ -36,14 +36,14 @@ def _generate_broadening(energies: Tensor, eps: Tensor,
     def _gaussian_broadening(energy_in: Tensor, eps_in: Tensor, sigma: Real
                              ) -> Tensor:
         """Gaussian broadening factor used when calculating the DoS/PDoS."""
-        return torch.erf((energy_in[..., :, None] - eps_in[..., None, :]).T
-                         / (np.sqrt(2) * sigma)).T
+        return bT(torch.erf(bT(energy_in[..., :, None] - eps_in[..., None, :])
+                         / (np.sqrt(2) * sigma)))
 
     # Construct gaussian smearing terms.
     de = energies[..., 1] - energies[..., 0]
-    ga = _gaussian_broadening((energies.T - (de / 2)).T, eps, sigma)
-    gb = _gaussian_broadening((energies.T + (de / 2)).T, eps, sigma)
-    return ((gb - ga).T / (2.0 * de)).T
+    ga = _gaussian_broadening(bT(bT(energies) - (de / 2)), eps, sigma)
+    gb = _gaussian_broadening(bT(bT(energies) + (de / 2)), eps, sigma)
+    return bT(bT(gb - ga) / (2.0 * de))
 
 
 def dos(eps: Tensor, energies: Tensor, sigma: Union[Real, Tensor] = 0.0,
@@ -225,4 +225,4 @@ def band_pass_state_filter(eps: Tensor, n_homo: Union[int, Tensor],
         ril = torch.stack([index_list(e, f) for e, f in zip(eps, fermi)])
 
     # Create & return a mash that masks out states outside of the band filter
-    return ((-n_homo < ril.T) & (ril.T <= n_lumo)).T
+    return bT((-n_homo < bT(ril)) & (bT(ril) <= n_lumo))
