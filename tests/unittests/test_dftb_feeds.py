@@ -254,8 +254,8 @@ def test_skfeed_single(device, skf_file_vcr):
     # Define (wave-function) compression radii, keep s and p the same
     vcrs = [torch.tensor([2.7, 2.5, 2.5, 2.5, 2.5], device=device),
             torch.tensor([2.3, 2.5, 2.5], device=device)]
-    H_ref = [H_ref_ch4.to(device), H_ref_h2o.to(device)]
-    S_ref = [S_ref_ch4.to(device), S_ref_h2o.to(device)]
+    H_ref = [H_ref_ch4, H_ref_h2o]
+    S_ref = [S_ref_ch4, S_ref_h2o]
 
     for ii, mol in enumerate([molecule('CH4'), molecule('H2O')]):
         mol = Geometry.from_ase_atoms(mol, device=device)
@@ -294,10 +294,11 @@ def test_skfeed_batch(device, skf_file_vcr):
     # Define (wave-function) compression radii, keep s and p the same
     vcrs = torch.tensor([[2.7, 2.5, 2.5, 2.5, 2.5], [2.3, 2.5, 2.5, 0, 0]],
                         device=device)
-    H_ref = pack([H_ref_ch4.to(device), H_ref_h2o.to(device)])
-    S_ref = pack([S_ref_ch4.to(device), S_ref_h2o.to(device)])
+    H_ref = pack([H_ref_ch4, H_ref_h2o])
+    S_ref = pack([S_ref_ch4, S_ref_h2o])
 
-    mol = Geometry.from_ase_atoms([molecule('CH4'), molecule('H2O')], device=device)
+    mol = Geometry.from_ase_atoms(
+        [molecule('CH4'), molecule('H2O')], device=device)
     h_feed.vcr = vcrs
     s_feed.vcr = vcrs
 
