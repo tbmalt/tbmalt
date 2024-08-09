@@ -5,8 +5,6 @@ from tbmalt.physics.dftb.feeds import RepulsiveSplineFeed
 from tbmalt import Geometry, OrbitalInfo
 from functools import reduce
 
-from tests.test_utils import skf_file
-
 torch.set_default_dtype(torch.float64)
 torch.set_printoptions(precision=15, sci_mode=False, linewidth=200, profile="full")
 

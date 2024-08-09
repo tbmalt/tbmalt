@@ -3,8 +3,8 @@
 """Acsf module unit-tests."""
 import torch
 import pytest
-import pkg_resources
-from packaging import version
+from importlib.metadata import version
+from packaging.version import parse as parse_version
 from dscribe.descriptors import ACSF
 from ase.build import molecule
 from tbmalt.ml.acsf import Acsf
@@ -12,11 +12,10 @@ from tbmalt import Geometry
 from tbmalt.data.elements import chemical_symbols
 from tbmalt.common.batch import pack
 
-dscribe_version = version.parse(
-    pkg_resources.get_distribution('dscribe').version)
+dscribe_version = parse_version(version('dscribe'))
 
-
-if dscribe_version <= version.parse("1.2.2"):
+# TODO: resolve describe version update issue
+if dscribe_version <= parse_version("1.2.2"):
     pytestmark = pytest.mark.skip(
         "Skipping tests: Deprecated dscribe package detected")
 
@@ -45,7 +44,7 @@ def test_single_g1(device):
 
     # Get reference
     acsf_t = ACSF(rcut, species=species)
-    acsf_t_g = torch.from_numpy(acsf_t.create(ch4))
+    acsf_t_g = torch.tensor(acsf_t.create(ch4), device=device)
 
     assert torch.max(abs(acsf_t_g - acsf.g)) < 1E-6, text
     assert acsf.g.device == device, textd
@@ -182,6 +181,7 @@ def test_batch_g3(device):
     assert g.device == device, textd
 
 
+@pytest.mark.skip(reason="Element resolved ACSF, as required by TBMaLT, are not implemented in G4 and G5.")
 def test_single_g4(device):
     """Test G4 values in single geometry."""
     rcut = 6.0
@@ -198,6 +198,7 @@ def test_single_g4(device):
     assert g.device == device, textd
 
 
+@pytest.mark.skip(reason="Element resolved ACSF, as required by TBMaLT, are not implemented in G4 and G5.")
 def test_cho_g4(device):
     """Test G4 values in single geometry."""
     rcut = 6.0
@@ -215,6 +216,7 @@ def test_cho_g4(device):
     assert g.device == device, textd
 
 
+@pytest.mark.skip(reason="Element resolved ACSF, as required by TBMaLT, are not implemented in G4 and G5.")
 def test_batch_g4(device):
     """Test G4 values in batch geometry."""
     rcut = 6.0
@@ -235,6 +237,7 @@ def test_batch_g4(device):
     assert g.device == device, textd
 
 
+@pytest.mark.skip(reason="Element resolved ACSF, as required by TBMaLT, are not implemented in G4 and G5.")
 def test_single_g5(device):
     """Test G5 values in single geometry."""
     rcut = 6.0
@@ -254,6 +257,7 @@ def test_single_g5(device):
     assert acsf.g.device == device, textd
 
 
+@pytest.mark.skip(reason="Element resolved ACSF, as required by TBMaLT, are not implemented in G4 and G5.")
 def test_batch_g5(device):
     """Test G5 values in batch geometry."""
     rcut = 6.0

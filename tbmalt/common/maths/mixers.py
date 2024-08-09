@@ -153,7 +153,8 @@ class _Mixer(ABC):
         pass
 
     @abstractmethod
-    def cull(self, cull_list: Tensor):
+    def cull(self, cull_list: Tensor,
+             new_size: Optional[Union[torch.Size, List[int]]] = None):
         """Purge select systems form the mixer.
 
         This is useful when a subset of systems have converged during mixing.
@@ -161,6 +162,10 @@ class _Mixer(ABC):
         Arguments:
             cull_list: Tensor with booleans indicating which systems should be
                 culled (True) and which should remain (False).
+
+            new_size: New anticipated size of future inputs excluding the batch
+                dimension. This is used to allow superfluous padding values to
+                be removed form subsequent inputs.
 
         """
         # This code should carry out all the operations necessary to remove a

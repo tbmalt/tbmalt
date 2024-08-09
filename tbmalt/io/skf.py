@@ -693,7 +693,7 @@ class VCRSkf(Skf):
 
     @classmethod
     def from_hdf5(cls, source: Group, dtype: Optional[torch.dtype] = None,
-                  device: Optional[torch.device] = None) -> 'Skf':
+                  device: Optional[torch.device] = None) -> 'VCRSkf':
         """Instantiate a `VCRSkf` instances from an HDF5 group.
 
         Arguments:

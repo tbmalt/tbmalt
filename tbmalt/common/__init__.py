@@ -123,7 +123,7 @@ def cached_property(*dependency_names: str):
 
 
 def split_by_size(tensor: Tensor, sizes: Union[Tensor, List[int]],
-                  dim: int = 0) -> Tuple[Tensor]:
+                  dim: int = 0) -> Tuple[Tensor, ...]:
     """Splits a tensor into chunks of specified length.
 
     This function takes a tensor & splits it into `n` chunks, where `n` is the
@@ -175,3 +175,84 @@ def split_by_size(tensor: Tensor, sizes: Union[Tensor, List[int]],
     # Return the sliced tensor. use torch.narrow to avoid data duplication
     return tuple(torch.narrow(tensor, dim, start, length)
                  for start, length in zip(splits, sizes))
+
+
+def unique(x: Tensor, return_index=False, sorted=True, return_inverse=False,
+           return_counts=False, dim=None):
+    """Find the unique elements of a tensor.
+
+    Note that the code for this method is taken directly from a post provided
+    by user @wjaekim on PyTorch GitHub issue #36748, and the documentation is
+    taken directly from the numpy documentation. This function is intended to
+    act only a temporary fix until PyTorch supports the ``return_index`` key-
+    word argument in their internal method.
+
+    Returns the sorted unique elements of an array. There are three optional
+    outputs in addition to the unique elements:
+
+        - the indices of the input array that give the unique values.
+        - the indices of the unique array that reconstruct the input tensor.
+        - the number of times each unique value comes up in the input tensor.
+
+    Arguments:
+        x: Input array. Unless dims is specified, this will be flattened if it
+            is not already 1-D.
+        return_index: If True, also return the indices of ar (along the specified
+            dimension, if provided, or in the flattened tensor) that result in the
+            unique tensor.
+        return_inverse: If True, also return the indices of the unique tensor (for
+            the specified dimension, if provided) that can be used to reconstruct
+            the supplied tensor.
+        return_counts: If True, also return the number of times each unique item
+            appears in the input tensor.
+        dims: The dimension to operate on. If None, the tensor will be flattened.
+            If an integer, the sub-tensors indexed by the given dimension will be
+            flattened and treated as the elements of a 1-D tensor with the
+            dimension of the given dimension. The default is None.
+
+    Returns:
+        unique: The sorted unique values.
+        unique_indices: The indices of the first occurrences of the unique
+            values in the original tensor. Only provided if return_index is True.
+        unique_inverse: The indices to reconstruct the original array from
+            the unique tensor. Only provided if return_inverse is True.
+        unique_counts: The number of times each of the unique values comes up
+            in the original tensor. Only provided if return_counts is True.
+
+    """
+    if return_index or (not sorted and dim is not None):
+
+        unique_v, inverse, counts = torch.unique(
+            x, sorted=True, return_inverse=True, return_counts=True, dim=dim)
+
+        inv_sorted, inv_argsort = inverse.flatten().sort(stable=True)
+
+        tot_counts = torch.cat(
+            (counts.new_zeros(1), counts.cumsum(dim=0)))[:-1]
+
+        index = inv_argsort[tot_counts]
+
+        if not sorted:
+            index, idx_argsort = index.sort()
+            unique_v = (unique_v[idx_argsort] if dim is None else
+                        torch.index_select(unique_v, dim, idx_argsort))
+            if return_inverse:
+                idx_tmp = idx_argsort.argsort()
+                inverse.flatten().index_put_(
+                    (inv_argsort,), idx_tmp[inv_sorted])
+            if return_counts:
+                counts = counts[idx_argsort]
+
+        ret = (unique_v,)
+        if return_index:
+            ret += (index,)
+        if return_inverse:
+            ret += (inverse,)
+        if return_counts:
+            ret += (counts,)
+        return ret if len(ret) > 1 else ret[0]
+
+    else:
+        return torch.unique(
+            x, sorted=sorted, return_inverse=return_inverse,
+            return_counts=return_counts, dim=dim)

@@ -197,7 +197,7 @@ class DataSetIM(DataSet):
             # Load and pack the requested target datasets from each system.
             data = {
                 target_name: pack([
-                    torch.tensor(database[join(source, target)],
+                    torch.tensor(np.array(database[join(source, target)]),
                                  device=device)
                     for source in sources]
                 ) for target_name, target in targets.items()}

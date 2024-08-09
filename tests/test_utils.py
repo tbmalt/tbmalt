@@ -7,16 +7,10 @@ This module should be imported as:
 This ensures that the default dtype and autograd anomaly detection settings
 are all inherited.
 """
-
-from os.path import join
-import urllib, tempfile, tarfile
-
 import numpy as np
 import torch
 import functools
-import pytest
 
-from tbmalt.io.skf import Skf, VCRSkf
 
 
 def fix_seed(func):
@@ -101,75 +95,3 @@ def clean_zero_padding(m, sizes):
     cleaned = m - temp
 
     return cleaned
-
-
-@pytest.fixture
-def skf_file(tmpdir):
-    """Path to auorg-1-1 HDF5 database.
-
-    This fixture downloads the auorg-1-1 Slater-Koster parameter set, converts
-    it to HDF5, and returns the path to the resulting database.
-
-    Returns:
-         path: location of auorg-1-1 HDF5 database file.
-
-    Warnings:
-        This will fail i) without an internet connection, ii) if the auorg-1-1
-        parameter sets moves, or iii) it is used outside of a PyTest session.
-
-    """
-    # Link to the auorg-1-1 parameter set
-    link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
-
-    # Elements of interest
-    elements = ['H', 'C', 'O', 'Au', 'S']
-
-    # Download and extract the auorg parameter set to the temporary directory
-    urllib.request.urlretrieve(link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
-    with tarfile.open(path) as tar:
-        tar.extractall(tmpdir)
-
-    # Select the relevant skf files and place them into an HDF5 database
-    skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-                 for i in elements for j in elements]
-
-    for skf_file in skf_files:
-        Skf.read(skf_file).write(path := join(tmpdir, 'auorg.hdf5'))
-
-    return path
-
-
-def skf_file_vcr(output_path: str):
-    """Path to Slater-Koster files.
-
-    This function downloads the Slater-Koster parameter set & converts it to
-     HDF5 database stored at the path provided. Slater-Koster parameter set of
-     each atom has different compression radii.
-
-    Arguments:
-         output_path: location to where the database file should be stored.
-
-    Warnings:
-        This will fail without an internet connection.
-
-    """
-    # Link to the VCR Slater-Koster parameter set
-    link = 'https://zenodo.org/record/8109578/files/compr_wav.tar.gz?download=1'
-
-    # Elements of interest and compression radii grids
-    elements = ['H', 'C', 'N', 'O']
-    compr = ['01.00', '01.50', '02.00', '02.50', '03.00', '03.50', '04.00',
-             '04.50', '05.00', '06.00', '08.00', '10.00']
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-
-        # Download and extract the auorg parameter set to the temporary directory
-        urllib.request.urlretrieve(link, path := join(tmpdir, 'compr_wav.tar.gz'))
-
-        with tarfile.open(path, 'r:gz') as tar:
-            tar.extractall(tmpdir)
-
-        # Read all Slater-Koster parameter sets
-        [join(tmpdir, 'compr_wav', f'{i}-{j}.skf.{ic}.{jc}')
-         for i in elements for j in elements for ic in compr for jc in compr]
-        VCRSkf.from_dir(join(tmpdir, 'compr_wav'), output_path)

@@ -12,8 +12,6 @@ from tbmalt.ml.loss_function import Loss
 from tbmalt.ml.loss_function import l1_loss, mse_loss, hellinger_loss
 from tbmalt.common.batch import pack
 
-from tests.test_utils import skf_file
-
 torch.set_default_dtype(torch.float64)
 
 

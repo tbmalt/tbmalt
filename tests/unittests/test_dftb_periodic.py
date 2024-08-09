@@ -9,8 +9,6 @@ from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
 
-from tests.test_utils import skf_file
-
 torch.set_default_dtype(torch.float64)
 
 # Todo:

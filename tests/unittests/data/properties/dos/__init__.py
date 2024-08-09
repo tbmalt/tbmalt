@@ -56,7 +56,7 @@ def _load_pdos(path='./'):
     """Load projected density of states."""
     data = {}
     for f in glob(join(path, 'pdos_*.csv')):
-        element = search('(?<=pdos\_).*(?=\.csv)', basename(f)).group(0)
+        element = search(r'(?<=pdos_).*(?=\.csv)', basename(f)).group(0)
         keys = open(f, 'r').readline()[2:-1].split(', ')
         values = torch.tensor(loadtxt(f, delimiter=','))
         data[element] = {k: v for k, v in zip(keys, values.T)}

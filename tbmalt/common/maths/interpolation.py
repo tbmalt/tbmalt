@@ -3,7 +3,7 @@
 from typing import Tuple
 from numbers import Real
 import torch
-from tbmalt.common.batch import pack
+from tbmalt.common.batch import pack, bT
 Tensor = torch.Tensor
 
 
@@ -81,8 +81,11 @@ class BicubInterp:
         if self.hs_grid is not None:
             assert distances is not None, 'distances should not be None'
 
-        self.xi = rr if rr.dim() == 2 else rr.unsqueeze(0)
-        self.batch = self.xi.shape[0]
+        xi = rr if rr.dim() == 2 else rr.unsqueeze(0)
+        if not xi.is_contiguous():
+            xi = xi.contiguous()
+
+        self.batch = xi.shape[0]
         self.arange_batch = torch.arange(self.batch)
 
         if self.hs_grid is not None:  # with DFTB+ distance interpolation
@@ -104,10 +107,10 @@ class BicubInterp:
                                device=self._device)
 
         # get the nearest grid points, 1st and second neighbour indices of xi
-        self._get_indices()
+        self._get_indices(xi)
 
         # this is to transfer x to fraction and its square, cube
-        x_fra = (self.xi - self.compr[self._nx0]) / (
+        x_fra = (xi - self.compr[self._nx0]) / (
                 self.compr[self._nx1] - self.compr[self._nx0])
         xmat = torch.stack([x_fra ** 0, x_fra ** 1, x_fra ** 2, x_fra ** 3])
 
@@ -129,10 +132,10 @@ class BicubInterp:
             xmat[:, i, 0], a_mat[i]), xmat[:, i, 1]) for i in range(self.batch)])
         return znew
 
-    def _get_indices(self):
+    def _get_indices(self, xi):
         """Get indices and repeat indices."""
         # Note that this function assigns to _nx0, _nind, _nx1, _nx_1, & _nx2
-        self._nx0 = torch.searchsorted(self.compr, self.xi.detach()) - 1
+        self._nx0 = torch.searchsorted(self.compr, xi.detach()) - 1
 
         # get all surrounding 4 grid points indices and repeat indices
         self._nind = torch.tensor([ii for ii in range(self.batch)])
@@ -159,7 +162,7 @@ class BicubInterp:
             return zmesh[self.arange_batch, i[..., 0], j[..., 1]]
 
         def f2(f1, f2, n1, n2, i, j):
-            return ((f1 - f2).T / (n1[..., i] - n2[..., j])).T
+            return bT(bT(f1 - f2) / (n1[..., i] - n2[..., j]))
 
         # Bring class instance attributes into the local name space to avoid
         # repeatedly having to call `self`.
@@ -530,7 +533,7 @@ class CubicSpline(torch.nn.Module):
               + torch.arange(self.n_interp, device=self._device) - 1)
               * self.grid_step + self.xp[0])
 
-        yb = self.yp[..., ilast - self.n_interp - 1: ilast - 1].T
+        yb = bT(self.yp[..., ilast - self.n_interp - 1: ilast - 1])
         xa = xa.repeat(dr.shape[0]).reshape(dr.shape[0], -1)
         yb = yb.unsqueeze(0).repeat_interleave(dr.shape[0], dim=0)
 
