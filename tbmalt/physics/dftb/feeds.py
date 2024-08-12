@@ -1071,6 +1071,7 @@ class SkfOccupationFeed(Feed):
         the azimuthal number of the orbital & the species to which it belongs.
     """
     def __init__(self, occupancies: Dict[int, Tensor]):
+        super().__init__()
         # This class will be abstracted and extended to allow for specification
         # via shell number which will avoid the current limits which only allow
         # for minimal orbs sets.
@@ -1217,6 +1218,7 @@ class HubbardFeed(Feed):
         database should also instruct the loader whether it is shell-resolved.
     """
     def __init__(self, hubbard_u: Dict[int, Tensor]):
+        super().__init__()
         # This class will be abstracted and extended to allow for specification
         # via shell number which will avoid the current limits which only allow
         # for minimal orbs sets.
@@ -1350,6 +1352,7 @@ class RepulsiveSplineFeed(Feed):
     """
 
     def __init__(self, spline_data: Dict[Tuple, Tensor]):
+        super().__init__()
         self.spline_data = {frozenset(interaction_pairs):data for interaction_pairs,data in spline_data.items()}
 
     @property
