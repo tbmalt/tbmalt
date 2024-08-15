@@ -2,6 +2,7 @@ import os
 from os.path import join, dirname
 import pytest
 import torch
+from torch.nn import Parameter, ParameterDict
 from typing import List
 import numpy as np
 from ase.build import molecule
@@ -320,9 +321,40 @@ def test_skfeed_batch(device, skf_file_vcr):
 # General
 def test_skfoccupationfeed_general(device, skf_file):
 
+    # Verify that the occupancy feed can be instantiated without issue
+    occ_1 = SkfOccupationFeed(
+        {"1": torch.tensor([0.]), "6": torch.tensor([1., 2.])}
+    )
+
+    occ_2 = SkfOccupationFeed(
+        ParameterDict({"1": torch.tensor([0.]), "6": torch.tensor([1., 2.])})
+    )
+
+    # Confirm that the initialisation method enforces the condition that
+    # dictionary keys must be strings.
+    with pytest.raises(TypeError, match="Occupancy dictionary keys must be strings.*"):
+        SkfOccupationFeed({1: torch.tensor([0.])})
+
+    # Variety that a warning is given when autograd enabled tensors are used
+    # without warping them in a Parameter/ParameterDict structure.
+    with pytest.warns(Warning, match="One or more of the supplied occupancy values*"):
+        SkfOccupationFeed({"1": torch.tensor([0.], requires_grad=True)})
+
     # Check 0: ensure that the feed can be constructed from a HDF5 skf database
     # without encountering an error.
     o_feed = SkfOccupationFeed.from_database(skf_file, [1, 6], device=device)
+
+    # Varify that autograd capabilities can be enabled when loading from a database.
+    o_feed_grad = SkfOccupationFeed.from_database(
+        skf_file, [1, 6], device=device, requires_grad=True)
+
+    example_value = next(iter(o_feed_grad.occupancies.values()))
+
+    check = (isinstance(example_value, Parameter)
+             and example_value.requires_grad
+             and isinstance(o_feed_grad.occupancies, ParameterDict))
+
+    assert check, "from_database method failed to correctly enable autograd tracking"
 
     # Check 1: ensure the feed is constructed on the correct device.
     check_1 = o_feed.device == device == list(o_feed.occupancies.values())[0].device
@@ -352,7 +384,7 @@ def test_skfoccupationfeed_single(device, skf_file):
     shell_dict = {1: [0], 6: [0, 1], 8: [0, 1]}
 
     # Check 1: verify that results are returned on the correct device.
-    check_1 = device == o_feed(
+    check_1 = device == o_feed.forward(
         OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)).device
 
     assert check_1, 'Results were placed on the wrong device'
@@ -392,7 +424,7 @@ def test_skfoccupationfeed_batch(device, skf_file):
         [1, 1,   2,   4/3, 4/3, 4/3, 0, 0]
     ], device=device)
 
-    predicted = o_feed(orbs)
+    predicted = o_feed.forward(orbs)
 
     check_1 = predicted.device == device
     assert check_1, 'Results were placed on the wrong device'

@@ -252,7 +252,7 @@ class Dftb1(Calculator):
     @property
     def q_zero(self):
         """Initial orbital populations"""
-        return self.o_feed(self.orbs)
+        return self.o_feed.forward(self.orbs)
 
     @property
     def q_final(self):
