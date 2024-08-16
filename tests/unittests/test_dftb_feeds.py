@@ -391,15 +391,15 @@ def test_skfoccupationfeed_single(device, skf_file):
 
     # Check 2: ensure results are within tolerance
     check_2a = torch.allclose(
-        o_feed(OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)),
+        o_feed.forward(OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)),
         torch.tensor([1., 1], device=device))
 
     check_2b = torch.allclose(
-        o_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1], device=device), shell_dict)),
+        o_feed.forward(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1], device=device), shell_dict)),
         torch.tensor([2., 2/3, 2/3, 2/3, 1, 1, 1, 1], device=device))
 
     check_2c = torch.allclose(
-        o_feed(OrbitalInfo(torch.tensor([1, 1, 8], device=device), shell_dict)),
+        o_feed.forward(OrbitalInfo(torch.tensor([1, 1, 8], device=device), shell_dict)),
         torch.tensor([1., 1, 2, 4/3, 4/3, 4/3], device=device))
 
     check_2 = check_2a and check_2b and check_2c
@@ -439,12 +439,44 @@ def test_skfoccupationfeed_batch(device, skf_file):
 # General
 def test_hubbardfeed_general(device, skf_file):
 
+    # Verify that the Hubbard-U feed can be instantiated without issue
+    _ = HubbardFeed(
+        {"1": torch.tensor([0.]), "6": torch.tensor([1., 2.])}
+    )
+
+    _ = HubbardFeed(
+        ParameterDict({"1": torch.tensor([0.]), "6": torch.tensor([1., 2.])})
+    )
+
+    # Confirm that the initialisation method enforces the condition that
+    # dictionary keys must be strings.
+    with pytest.raises(TypeError, match="Hubbard-U dictionary keys must be strings.*"):
+        HubbardFeed({1: torch.tensor([0.])})
+
+    # Variety that a warning is given when autograd enabled tensors are used
+    # without warping them in a Parameter/ParameterDict structure.
+    with pytest.warns(Warning, match="One or more of the supplied Hubbard-U values*"):
+        HubbardFeed({"1": torch.tensor([0.], requires_grad=True)})
+
     # Check 0: ensure that the feed can be constructed from a HDF5 skf database
     # without encountering an error.
     u_feed = HubbardFeed.from_database(skf_file, [1, 6], device=device)
 
+    # Varify that autograd capabilities can be enabled when loading from a database.
+    u_feed_grad = HubbardFeed.from_database(
+        skf_file, [1, 6], device=device, requires_grad=True)
+
+    example_value = next(iter(u_feed_grad.hubbard_us.values()))
+
+    check = (isinstance(example_value, Parameter)
+             and example_value.requires_grad
+             and isinstance(u_feed_grad.hubbard_us, ParameterDict))
+
+    assert check, "from_database method failed to correctly enable autograd tracking"
+
+
     # Check 1: ensure the feed is constructed on the correct device.
-    check_1 = u_feed.device == device == list(u_feed.hubbard_u.values())[0].device
+    check_1 = u_feed.device == device == list(u_feed.hubbard_us.values())[0].device
     assert check_1, 'HubbardFeed has been placed on the incorrect device'
 
     # Check 2: verify that the '.to' method moves the feed and its contents to
@@ -471,23 +503,23 @@ def test_hubbardfeed_single(device, skf_file):
     shell_dict = {1: [0], 6: [0, 1], 8: [0, 1]}
 
     # Check 1: verify that results are returned on the correct device.
-    check_1 = device == u_feed(
+    check_1 = device == u_feed.forward(
         OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)).device
 
     assert check_1, 'Results were placed on the wrong device'
 
     # Check 2: ensure results are within tolerance
     check_2a = torch.allclose(
-        u_feed(OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)),
+        u_feed.forward(OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)),
         torch.tensor([0.4196174261, 0.4196174261], device=device))
 
     check_2b = torch.allclose(
-        u_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1], device=device), shell_dict)),
+        u_feed.forward(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1], device=device), shell_dict)),
         torch.tensor([0.3646664974, 0.4196174261, 0.4196174261,
                       0.4196174261, 0.4196174261], device=device))
 
     check_2c = torch.allclose(
-        u_feed(OrbitalInfo(torch.tensor([1, 1, 8], device=device), shell_dict)),
+        u_feed.forward(OrbitalInfo(torch.tensor([1, 1, 8], device=device), shell_dict)),
         torch.tensor([0.4196174261, 0.4196174261, 0.4954041702], device=device))
 
     check_2 = check_2a and check_2b and check_2c
@@ -512,7 +544,7 @@ def test_hubbardfeed_batch(device, skf_file):
         [0.4196174261, 0.4196174261, 0.4954041702, 0,            0]
     ], device=device)
 
-    predicted = u_feed(orbs)
+    predicted = u_feed.forward(orbs)
 
     check_1 = predicted.device == device
     assert check_1, 'Results were placed on the wrong device'
@@ -520,3 +552,18 @@ def test_hubbardfeed_batch(device, skf_file):
     check_2 = torch.allclose(predicted, reference)
     assert check_2, 'Predicted hubbard value errors exceed allowed tolerance'
 
+
+if __name__ == '__main__':
+    from os import remove
+    from os.path import isfile
+
+
+    target = "/home/ajmhpc/Projects/TBMaLT/Working/Clean/tbmalt_new/example_dftb_vcr.h5"
+    if isfile(target):
+        remove(target)
+
+    torch.set_default_dtype(torch.float64)
+    device = torch.device("cpu")
+    skf_file_path = "/home/ajmhpc/Projects/TBMaLT/Working/FeedUpdating/tbmalt_new/auorg.hdf5"
+
+    test_hubbardfeed_single(device, skf_file_path)
