@@ -552,18 +552,3 @@ def test_hubbardfeed_batch(device, skf_file):
     check_2 = torch.allclose(predicted, reference)
     assert check_2, 'Predicted hubbard value errors exceed allowed tolerance'
 
-
-if __name__ == '__main__':
-    from os import remove
-    from os.path import isfile
-
-
-    target = "/home/ajmhpc/Projects/TBMaLT/Working/Clean/tbmalt_new/example_dftb_vcr.h5"
-    if isfile(target):
-        remove(target)
-
-    torch.set_default_dtype(torch.float64)
-    device = torch.device("cpu")
-    skf_file_path = "/home/ajmhpc/Projects/TBMaLT/Working/FeedUpdating/tbmalt_new/auorg.hdf5"
-
-    test_hubbardfeed_single(device, skf_file_path)
