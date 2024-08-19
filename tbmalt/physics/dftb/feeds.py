@@ -5,11 +5,15 @@ This contains all Slater-Koster integral feed objects. These objects are
 responsible for generating the Slater-Koster integrals and for constructing
 the associated Hamiltonian and overlap matrices.
 """
+from __future__ import annotations
+import warnings
 import numpy as np
 from itertools import combinations_with_replacement
 from typing import List, Literal, Optional, Dict, Tuple, Union
 from scipy.interpolate import CubicSpline
 import torch
+from torch import Tensor
+from torch.nn import Parameter, ParameterDict
 
 from tbmalt import Geometry, OrbitalInfo, Periodicity
 from tbmalt.ml.integralfeeds import IntegralFeed
@@ -1056,27 +1060,62 @@ class SkfOccupationFeed(Feed):
     """Occupations feed entity that derives its data from a skf file.
 
     Arguments:
-        occupancies: a dictionary keyed by atomic numbers & valued by tensors
-            specifying the angular-momenta resolved occupancies. In each tensor
-            there should be one value for each angular momenta with the lowest
-            angular component first.
+        occupancies: A dictionary specifying the angular-momenta resolved
+            occupancies, keyed by atomic numbers (as strings) and valued by
+            tensors or parameters. When using occupancies as standard inputs,
+            provide a `Dict[str, Tensor]`. When using them as optimisation
+            targets, they should be specified as `ParameterDict[str, Parameter]`,
+            which enables PyTorch to automatically detect and optimise these
+            parameters. The dictionary keys must be strings to ensure
+            compatibility with PyTorch's `ParameterDict` structure.
 
     Examples:
         >>> from tbmalt.physics.dftb.feeds import SkfOccupationFeed
-        >>> #                                                 fs, fp, fd
-        >>> l_resolved = SkfOccupationFeed({79: torch.tensor([1., 0., 10.])})
+        >>> #                                                   fs, fp, fd
+        >>> l_resolved = SkfOccupationFeed({"79": torch.tensor([1., 0., 10.])})
 
     Notes:
         Note that this method discriminates between orbitals based only on
         the azimuthal number of the orbital & the species to which it belongs.
     """
-    def __init__(self, occupancies: Dict[int, Tensor]):
+
+    # Developer's Notes:
+    # This class will be abstracted and extended to allow for specification
+    # via shell number which will avoid the current limits which only allow
+    # for minimal orbs sets.
+
+    def __init__(self,
+                 occupancies: Union[
+                     Dict[str, Tensor],
+                     ParameterDict[str, Parameter]]
+                 ):
         super().__init__()
-        # This class will be abstracted and extended to allow for specification
-        # via shell number which will avoid the current limits which only allow
-        # for minimal orbs sets.
 
         self.occupancies = occupancies
+
+        # Ensure that all dictionary keys are strings
+        if not all(isinstance(key, str) for key in occupancies):
+            raise TypeError(
+                "Occupancy dictionary keys must be strings. This is required "
+                "to maintain consistency with the `torch.nn.ParameterDict` "
+                "type which enforces this behaviour."
+            )
+
+        # When the occupancies have autograd enabled then they are considered
+        # to be optimisation targets. In such a case they should be parameter
+        # instances stored in a parameter dictionary.
+        if (isinstance(occupancies, dict)
+                and any(value.requires_grad for value in occupancies.values())):
+            warnings.warn(
+                "One or more of the supplied occupancy values has `requires_grad` "
+                "set to `True`. In such cases one should supply the occupancies "
+                "as `torch.nn.Parameter` instances stored within a "
+                "`torch.nn.ParameterDict` entity. This allows PyTorch to "
+                "automatically detect valid optimisation targets. The current "
+                "type structure will compute gradients for the selected "
+                "occupancies but will not attempt to optimise them.",
+                Warning
+            )
 
     @property
     def dtype(self) -> torch.dtype:
@@ -1088,7 +1127,7 @@ class SkfOccupationFeed(Feed):
         """The device on which the `SkfOccupationFeed` object resides."""
         return list(self.occupancies.values())[0].device
 
-    def to(self, device: torch.device) -> 'SkfOccupationFeed':
+    def to(self, device: torch.device) -> SkfOccupationFeed:
         """Return a copy of the `SkfOccupationFeed` on the specified device.
 
         Arguments:
@@ -1099,10 +1138,11 @@ class SkfOccupationFeed(Feed):
                 on the specified device.
 
         """
-        return self.__class__({k: v.to(device=device)
-                               for k, v in self.occupancies.items()})
+        return self.__class__(self.occupancies.__class__(
+            {k: v.to(device=device) for k, v in self.occupancies.items()}
+        ))
 
-    def __call__(self, orbs: OrbitalInfo) -> Tensor:
+    def forward(self, orbs: OrbitalInfo) -> Tensor:
         """Shell resolved occupancies.
 
         This returns the shell resolved occupancies for the neutral atom in the
@@ -1125,8 +1165,12 @@ class SkfOccupationFeed(Feed):
         # Tensor into which the results will be placed
         occupancies = torch.zeros_like(zs, dtype=self.dtype)
 
-        # Loop over all avalible occupancy information
+        # Loop over all available occupancy information
         for z, occs in self.occupancies.items():
+            # As the atomic number keys in the occupancies dictionaries are
+            # stored as strings, for PyTorch compatability reasons, they need
+            # to be cast back into integers.
+            z = int(z)
             # Loop over each shell for species 'z'
             for l, occ in enumerate(occs):
                 # And assign the associated occupancy where appropriate
@@ -1135,19 +1179,28 @@ class SkfOccupationFeed(Feed):
         # Divide the occupancy by the number of shells
         return occupancies / (2 * ls + 1)
 
+    def __call__(self, *args, **kwargs):
+        warnings.warn(
+            "`SkfOccupationFeed` instances should be invoked via their "
+            "`.forward` method now.")
+        return self.forward(*args, **kwargs)
+
     @classmethod
     def from_database(cls, path: str, species: List[int], **kwargs
-                      ) ->'SkfOccupationFeed':
+                      ) -> SkfOccupationFeed:
         """Instantiate an `SkfOccupationFeed` instance from an HDF5 database.
 
         Arguments:
             path: path to the HDF5 file in which the skf file data is stored.
             species: species for which occupancies are to be loaded.
-            **kwargs:
 
         Keyword Arguments:
             device: Device on which to place tensors. [DEFAULT=None]
             dtype: dtype to be used for floating point tensors. [DEFAULT=None]
+            requires_grad: boolean indicating if gradient tracking should be
+                enabled for the occupancies. If enabled, the relevant
+                dictionaries and tensors will be converted into `ParameterDict`
+                and `Parameter` instances respectively. [DEFAULT=False]
 
         Returns:
             occupancy_feed: An `SkfOccupationFeed` instance containing the
@@ -1183,13 +1236,20 @@ class SkfOccupationFeed(Feed):
             >>> shell_dict = {1: [0], 6: [0, 1]}
 
             # Occupancy information of an example system
-            >>> o_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
+            >>> o_feed.forward(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
             tensor([2.0000, 0.6667, 0.6667, 0.6667,
                     1.0000, 1.0000, 1.0000, 1.0000])
 
         """
-        return cls({i: Skf.read(path, (i, i), **kwargs).occupations
-                    for i in species})
+        # If the "requires_grad" keyword argument is set to "True" then the
+        # occupancies are considered to be optimisable targets; and thus should
+        # be `Parameter` types stored in a `ParameterDict` rather than `Tensor`
+        # types stored in a `Dict`.
+        struct = ParameterDict if kwargs.pop("requires_grad", False) else dict
+
+        return cls(struct(
+            {str(i): Skf.read(path, (i, i), **kwargs).occupations
+             for i in species}))
 
 
 class HubbardFeed(Feed):
@@ -1250,9 +1310,9 @@ class HubbardFeed(Feed):
                                for k, v in self.hubbard_u.items()})
 
     def __call__(self, orbs: OrbitalInfo) -> Tensor:
-        """Shell resolved occupancies.
+        """Hubbard U values.
 
-        This returns the shell resolved Hubbard U for the atom.
+        This returns the Hubbard U values for the atom.
 
         Arguments:
             orbs: orbs objects for the target systems.
@@ -1504,4 +1564,6 @@ class RepulsiveSplineFeed(Feed):
         """
         interaction_pairs = combinations_with_replacement(species, r=2)
         return cls({interaction_pair: Skf.read(path, interaction_pair, device=device, dtype=dtype).r_spline for interaction_pair in interaction_pairs})
+
+
 
