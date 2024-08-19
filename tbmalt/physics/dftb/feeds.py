@@ -1158,9 +1158,9 @@ class SkfOccupationFeed(Feed):
 
         # Construct a pair of arrays, 'zs' & `ls`, that can be used to look up
         # the species and shell number for each orbital.
-        z, l = orbs.atomic_numbers, orbs.shell_ls
-        zs = prepeat_interleave(z, orbs.n_orbs_on_species(z), -1)
-        ls = prepeat_interleave(l, orbs.orbs_per_shell, -1)
+        z_list, l_list = orbs.atomic_numbers, orbs.shell_ls
+        zs = prepeat_interleave(z_list, orbs.n_orbs_on_species(z_list), -1)
+        ls = prepeat_interleave(l_list, orbs.orbs_per_shell, -1)
 
         # Tensor into which the results will be placed
         occupancies = torch.zeros_like(zs, dtype=self.dtype)
@@ -1255,47 +1255,76 @@ class SkfOccupationFeed(Feed):
 class HubbardFeed(Feed):
     """Hubbard U feed entity that derives its data from a skf file.
 
+    This provides a feed based method by which traditional DFTB Hubbard-U
+    values can be accessed.
+
     Arguments:
-        hubbard_u: a dictionary keyed by atomic numbers & valued by tensors
-            specifying the angular-momenta resolved Hubbard U. In each tensor
-            there should be one value for each angular momenta with the lowest
-            angular component first. Note that if the Hubbard U is not angular
-            -momenta resolved in a skf file, the tensors will be the same for
-            different angular-momenta.
+        hubbard_us: A dictionary specifying the angular-momenta resolved
+            Hubbard-Us, keyed by atomic numbers (as strings) and valued by
+            tensors or parameters. When using Hubbard-Us as standard inputs,
+            provide a `Dict[str, Tensor]`. When using them as optimisation
+            targets, they should be specified as `ParameterDict[str, Parameter]`,
+            which enables PyTorch to automatically detect and optimise these
+            parameters. The dictionary keys must be strings to ensure
+            compatibility with PyTorch's `ParameterDict` structure.
 
     Examples:
         >>> from tbmalt.physics.dftb.feeds import HubbardFeed
-        >>> #                                                 fs, fp, fd
-        >>> l_resolved = HubbardFeed.from_database(path_to_mio_skf, [1, 6])
+        >>> l_resolved = HubbardFeed({"1": torch.tensor([0.5])})
 
     Notes:
         Note that this method discriminates between orbitals based only on
         the azimuthal number of the orbital & the species to which it belongs.
 
     Todo:
-        At a test that throws an error if a shell resolved orbs is provided but
+        Add a test that throws an error if a shell resolved orbs is provided but
         `hubbard_u` is found to only be atom resolved; and vise versa. The skf
         database should also instruct the loader whether it is shell-resolved.
     """
-    def __init__(self, hubbard_u: Dict[int, Tensor]):
+    def __init__(self,
+                 hubbard_us: Union[
+                     Dict[str, Tensor],
+                     ParameterDict[str, Parameter]]
+                 ):
         super().__init__()
-        # This class will be abstracted and extended to allow for specification
-        # via shell number which will avoid the current limits which only allow
-        # for minimal orbs sets.
 
-        self.hubbard_u = hubbard_u
+        self.hubbard_us = hubbard_us
+
+        # Ensure that all dictionary keys are strings
+        if not all(isinstance(key, str) for key in hubbard_us):
+            raise TypeError(
+                "Hubbard-U dictionary keys must be strings. This is required "
+                "to maintain consistency with the `torch.nn.ParameterDict` "
+                "type which enforces this behaviour."
+            )
+
+        # When the Hubbard-Us have autograd enabled then they are considered
+        # to be optimisation targets. In such a case they should be parameter
+        # instances stored in a parameter dictionary.
+        if (isinstance(hubbard_us, dict)
+                and any(value.requires_grad for value in hubbard_us.values())):
+            warnings.warn(
+                "One or more of the supplied Hubbard-U values has `requires_grad` "
+                "set to `True`. In such cases one should supply the Hubbard-Us "
+                "as `torch.nn.Parameter` instances stored within a "
+                "`torch.nn.ParameterDict` entity. This allows PyTorch to "
+                "automatically detect valid optimisation targets. The current "
+                "type structure will compute gradients for the selected "
+                "Hubbard-Us but will not attempt to optimise them.",
+                Warning
+            )
 
     @property
     def dtype(self) -> torch.dtype:
-        """Floating point dtype used by `SkfOccupationFeed` object."""
-        return list(self.hubbard_u.values())[0].dtype
+        """Floating point dtype used by the `HubbardFeed` object."""
+        return list(self.hubbard_us.values())[0].dtype
 
     @property
     def device(self) -> torch.device:
-        """The device on which the `SkfOccupationFeed` object resides."""
-        return list(self.hubbard_u.values())[0].device
+        """The device on which the `HubbardFeed` object resides."""
+        return list(self.hubbard_us.values())[0].device
 
-    def to(self, device: torch.device) -> 'HubbardFeed':
+    def to(self, device: torch.device) -> HubbardFeed:
         """Return a copy of the `HubbardFeed` on the specified device.
 
         Arguments:
@@ -1306,10 +1335,11 @@ class HubbardFeed(Feed):
                 on the specified device.
 
         """
-        return self.__class__({k: v.to(device=device)
-                               for k, v in self.hubbard_u.items()})
+        return self.__class__(self.hubbard_us.__class__(
+            {k: v.to(device=device) for k, v in self.hubbard_us.items()}
+        ))
 
-    def __call__(self, orbs: OrbitalInfo) -> Tensor:
+    def forward(self, orbs: OrbitalInfo) -> Tensor:
         """Hubbard U values.
 
         This returns the Hubbard U values for the atom.
@@ -1324,46 +1354,54 @@ class HubbardFeed(Feed):
 
         # Construct a pair of arrays, 'zs' & `ls`, that can be used to look up
         # the species and shell number for each orbital.
-        z, l = orbs.atomic_numbers, orbs.shell_ls
+        z_list, ls = orbs.atomic_numbers, orbs.shell_ls
 
         if orbs.shell_resolved:
-            zs = prepeat_interleave(z, orbs.n_shells_on_species(z), -1)
-            ls = l
+            zs = prepeat_interleave(z_list, orbs.n_shells_on_species(z_list), -1)
 
             # Tensor into which the results will be placed
             hubbard_us = torch.zeros_like(zs, dtype=self.dtype)
 
-            # Loop over all available occupancy information
-            for num, us in self.hubbard_u.items():
+            # Loop over all available Hubbard-U information
+            for z, us in self.hubbard_us.items():
+                z = int(z)
                 # Loop over each shell for species 'z'
                 for l, u in enumerate(us):
-                    # And assign the associated occupancy where appropriate
-                    hubbard_us[(zs == num) & (ls == l)] = u
+                    # And assign the associated Hubbard-Us where appropriate
+                    hubbard_us[(zs == z) & (ls == l)] = u
         else:
-            hubbard_us = torch.zeros_like(z, dtype=self.dtype)
-            for num, us in self.hubbard_u.items():
-                hubbard_us[z == num] = us[0]
+            hubbard_us = torch.zeros_like(z_list, dtype=self.dtype)
+            for z, us in self.hubbard_us.items():
+                hubbard_us[z_list == int(z)] = us[0]
 
-        # Divide the occupancy by the number of shells
         return hubbard_us
+
+    def __call__(self, *args, **kwargs):
+        warnings.warn(
+            "`HubbardFeed` instances should be invoked via their "
+            "`.forward` method now.")
+        return self.forward(*args, **kwargs)
 
     @classmethod
     def from_database(cls, path: str, species: List[int], **kwargs
-                      ) ->'HubbardFeed':
+                      ) -> HubbardFeed:
         """Instantiate an `HubbardFeed` instance from an HDF5 database.
 
         Arguments:
             path: path to the HDF5 file in which the skf file data is stored.
-            species: species for which occupancies are to be loaded.
-            **kwargs:
+            species: species for which Hubbard-U values are to be loaded.
 
         Keyword Arguments:
             device: Device on which to place tensors. [DEFAULT=None]
             dtype: dtype to be used for floating point tensors. [DEFAULT=None]
+            requires_grad: boolean indicating if gradient tracking should be
+                enabled for the Hubbard-Us. If enabled, the relevant
+                dictionaries and tensors will be converted into `ParameterDict`
+                and `Parameter` instances respectively. [DEFAULT=False]
 
         Returns:
-            occupancy_feed: An `HubbardFeed` instance containing the
-                requested occupancy information.
+            hubbard_u_feed: A `HubbardFeed` instance containing the
+                Hubbard-U values for the requested species.
 
         Examples:
             >>> from tbmalt import OrbitalInfo
@@ -1395,12 +1433,20 @@ class HubbardFeed(Feed):
             >>> shell_dict = {1: [0], 6: [0, 1]}
 
             # Hubbard U values of an example system
-            >>> u_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
+            >>> u_feed.forward(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
             tensor([0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
 
         """
-        return cls({i: Skf.read(path, (i, i), **kwargs).hubbard_us
-                    for i in species})
+        # If the "requires_grad" keyword argument is set to "True" then the
+        # Hubbard-Us are considered to be optimisable targets; and thus should
+        # be `Parameter` types stored in a `ParameterDict` rather than `Tensor`
+        # types stored in a `Dict`.
+        struct = ParameterDict if kwargs.pop("requires_grad", False) else dict
+
+        return cls(struct(
+            {str(i): Skf.read(path, (i, i), **kwargs).hubbard_us
+             for i in species}))
+
 
 class RepulsiveSplineFeed(Feed):
     r"""Repulsive Feed using splines for DFTB calculations. Data is derived from a skf file.
