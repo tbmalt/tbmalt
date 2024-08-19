@@ -1236,7 +1236,7 @@ class SkfOccupationFeed(Feed):
             >>> shell_dict = {1: [0], 6: [0, 1]}
 
             # Occupancy information of an example system
-            >>> o_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
+            >>> o_feed.forward(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
             tensor([2.0000, 0.6667, 0.6667, 0.6667,
                     1.0000, 1.0000, 1.0000, 1.0000])
 
