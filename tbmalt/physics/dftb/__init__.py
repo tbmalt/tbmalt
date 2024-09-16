@@ -121,8 +121,6 @@ class Dftb1(Calculator):
         rho: density matrix.
         eig_values: eigen values.
         eig_vectors: eigen vectors.
-        scc_energy: energy contribution from charge fluctuation via the SCC
-            cycle.
 
     Notes:
         Currently energies and occupancies are not scaled correctly. Occupancies
@@ -206,10 +204,10 @@ class Dftb1(Calculator):
 
         self._overlap: Optional[Tensor] = None
         self._hamiltonian: Optional[Tensor] = None
+        self._scc_energy: Optional[Tensor] = None
         self.rho: Optional[Tensor] = None
         self.eig_values: Optional[Tensor] = None
         self.eig_vectors: Optional[Tensor] = None
-        self.scc_energy: Optional[Tensor] = None
 
         # Calculator Settings
         self.filling_temp = filling_temp
@@ -357,6 +355,17 @@ class Dftb1(Calculator):
         return torch.einsum('...i,...i->...', self.eig_values, self.occupancy)
 
     @property
+    def h0_energy(self):
+        """H0 energy"""
+        _h0 = self.h_feed.matrix_from_calculator(self)
+        return ((self.rho * _h0).sum(-1).sum(-1))
+
+    @property
+    def h2_energy(self):
+        """SCC energy"""
+        return 0.0 if self._scc_energy is None else self._scc_energy
+
+    @property
     def band_free_energy(self):
         """Band free energy; i.e. E_band-TS"""
         # Note that this scale factor assumes spin-restricted and will need to
@@ -371,17 +380,6 @@ class Dftb1(Calculator):
         return energy
 
     @property
-    def nonSCC_energy(self):
-        """Non SCC energy"""
-        self._hamiltonian = self.h_feed.matrix_from_calculator(self)
-        return ((self.rho * self._hamiltonian).sum(-1).sum(-1))
-
-    @property
-    def SCC_energy(self):
-        """SCC energy"""
-        return 0.0 if self.scc_energy is None else self.scc_energy
-
-    @property
     def repulsive_energy(self):
         """Repulsive energy; zero in the absence of a repulsive feed"""
         return 0.0 if self.r_feed is None else self.r_feed(self.geometry)
@@ -389,7 +387,7 @@ class Dftb1(Calculator):
     @property
     def total_energy(self):
         """Total system energy"""
-        return self.nonSCC_energy + self.SCC_energy + self.repulsive_energy
+        return self.h0_energy + self.h2_energy + self.repulsive_energy
 
     @property
     def mermin_energy(self):
