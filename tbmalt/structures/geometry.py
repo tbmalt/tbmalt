@@ -271,7 +271,7 @@ class Geometry:
         """Distance matrix between atoms in the system."""
         # Todo: Modify to account for PBC
 
-        dist = torch.cdist(self.positions, self.positions, p=2)
+        dist = torch.cdist(self.positions, self.positions, p=2).clone()
         # Ensure padding area is zeroed out
         dist[self._mask_dist] = 0
 
