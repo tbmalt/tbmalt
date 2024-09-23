@@ -8,9 +8,10 @@ the associated Hamiltonian and overlap matrices.
 from __future__ import annotations
 import warnings
 import numpy as np
+from numpy import ndarray as Array
 from itertools import combinations_with_replacement
-from typing import List, Literal, Optional, Dict, Tuple, Union
-from scipy.interpolate import CubicSpline
+from typing import List, Literal, Optional, Dict, Tuple, Union, Iterator, Callable
+from scipy.interpolate import CubicSpline as ScipyCubicSpline
 import torch
 from torch import Tensor
 from torch.nn import Parameter, ParameterDict
@@ -23,15 +24,13 @@ from tbmalt.data.elements import chemical_symbols
 from tbmalt.ml import Feed
 from tbmalt.common.batch import pack, prepeat_interleave, bT, bT2
 from tbmalt.common.maths.interpolation import PolyInterpU, BicubInterp
-from tbmalt.common.maths.interpolation import CubicSpline as CSpline
+from tbmalt.common.maths.interpolation import CubicSpline
 from tbmalt.common import unique
 
 # Todo:
 #   - Need to determine why this is so slow for periodic systems.
 
-Tensor = torch.Tensor
-Array = np.ndarray
-interp_dict = {'polynomial': PolyInterpU, 'spline': CSpline,
+interp_dict = {'polynomial': PolyInterpU, 'spline': CubicSpline,
                'bicubic': BicubInterp}
 
 
@@ -80,8 +79,10 @@ class ScipySkFeed(IntegralFeed):
 
     """
 
+    # TODO: Remove this class
+
     def __init__(self, on_sites: Dict[int, Tensor],
-                 off_sites: Dict[Tuple[int, int, int, int], CubicSpline],
+                 off_sites: Dict[Tuple[int, int, int, int], ScipyCubicSpline],
                  dtype: Optional[torch.dtype] = None,
                  device: Optional[torch.device] = None):
 
@@ -490,7 +491,7 @@ class ScipySkFeed(IntegralFeed):
             skf = Skf.read(path, pair, device=device)
             # Loop over the off-site interactions & construct the splines.
             for key, value in skf.__getattribute__(target).items():
-                off_sites[pair + key] = CubicSpline(
+                off_sites[pair + key] = ScipyCubicSpline(
                     *clip(skf.grid, value), extrapolate=False)
 
             # The X-Y.skf file may not contain all information. Thus some info
@@ -499,7 +500,7 @@ class ScipySkFeed(IntegralFeed):
                 skf_2 = Skf.read(path, tuple(reversed(pair)), device=device)
                 for key, value in skf_2.__getattribute__(target).items():
                     if key[0] < key[1]:
-                        off_sites[pair + (*reversed(key),)] = CubicSpline(
+                        off_sites[pair + (*reversed(key),)] = ScipyCubicSpline(
                             *clip(skf_2.grid, value), extrapolate=False)
 
             else:  # Construct the onsite interactions
@@ -552,7 +553,7 @@ class SkFeed(IntegralFeed):
         return a single value for the σ interaction whereas a d-d interaction
         should return three values when interpolated (σ,π & δ).
 
-        Furthermore it is critical that no duplicate interactions are present.
+        Furthermore, it is critical that no duplicate interactions are present.
         That is to say if there is a (1, 6, 0, 0) (H[s]-C[s]) key present then
         there must not also be a (6, 1, 0, 0) (H[s]-C[s]) key present as they
         are the same interaction. To help prevent this the class will raise an
@@ -566,9 +567,14 @@ class SkFeed(IntegralFeed):
 
     """
 
+    # TODO:
+    #   - Split into VCR and non-VCR versions.
+    #   - Ensure interpolation agnosticism.
+    #   - Fully integrate with PyTorch "Module" system.
+
     def __init__(self, on_sites: Dict[int, Tensor],
-                 off_sites: Dict[Tuple[int, int, int, int], CubicSpline],
-                 interpolation: Literal[CSpline, PolyInterpU, BicubInterp],
+                 off_sites: Dict[Tuple[int, int, int, int], Union[CubicSpline, PolyInterpU, BicubInterp]],
+                 interpolation: Literal[CubicSpline, PolyInterpU, BicubInterp],
                  dtype: Optional[torch.dtype] = None,
                  device: Optional[torch.device] = None):
 
@@ -903,7 +909,7 @@ class SkFeed(IntegralFeed):
 
         Notes:
             This method will not instantiate `SkFeed` instances directly
-            from human readable skf files, or a directory thereof. Thus, any
+            from human-readable skf files, or a directory thereof. Thus, any
             such files must first be converted into their binary equivalent.
             This reduces overhead & file format error instabilities. The code
             block provide below shows how this can be done:
@@ -1001,8 +1007,8 @@ class SkFeed(IntegralFeed):
                         *clip(skf.grid.to(device), value.to(device)), **params)
 
                     # Add variables for spline training
-                    if interpolation is CSpline and requires_grad:
-                        off_sites[pair + key].abcd.requires_grad_(True)
+                    if interpolation is CubicSpline and requires_grad:
+                        off_sites[pair + key].coefficients.requires_grad_(True)
 
             # The X-Y.skf file may not contain all information. Thus some info
             # must be loaded from its Y-X counterpart.
@@ -1014,13 +1020,13 @@ class SkFeed(IntegralFeed):
                             *clip(skf_2.grid.to(device), value.to(device)), **params)
 
                         # Add variables for spline training
-                        if interpolation is CSpline and requires_grad:
+                        if interpolation is CubicSpline and requires_grad:
                             off_sites[pair + (*reversed(key),)
-                                      ].abcd.requires_grad_(True)
+                                      ].coefficients.requires_grad_(True)
 
                 # Add variables for spline training
-                if interpolation is CSpline and requires_grad:
-                    off_sites[pair + key].abcd.requires_grad_(True)
+                if interpolation is CubicSpline and requires_grad:
+                    off_sites[pair + key].coefficients.requires_grad_(True)
 
             else:  # Construct the onsite interactions
                 # Repeated so there's 1 value per orbital not just per shell.

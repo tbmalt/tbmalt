@@ -1,11 +1,13 @@
 """Performs tests on functions in the tbmalt.common.maths.interpolator."""
 import torch
 from torch.autograd import gradcheck
+from torch.nn import Parameter
 from scipy.interpolate import CubicSpline as SciCubSpl
 import pytest
 from tests.test_utils import *
 from tbmalt.common.maths.interpolation import PolyInterpU, CubicSpline, BicubInterp
 from tbmalt import Geometry, OrbitalInfo
+from tbmalt.common.batch import bT
 torch.set_default_dtype(torch.float64)
 
 data = np.loadtxt('tests/unittests/data/polyinterp/HH.dat')
@@ -218,10 +220,12 @@ def test_spline_cubic(device):
     """Test distances interpolation in SK tables."""
     # Test interpolation with one dimension yy value
     xa0 = torch.linspace(0.2, 10, 50, device=device)
-    yb0 = torch.from_numpy(data[:, 9]).to(device)
+    yb0 = Parameter(torch.from_numpy(data[:, 9]).to(device),
+                    requires_grad=False)
 
     fit0 = CubicSpline(xa0, yb0)
-    pred0 = fit0(torch.tensor([2.0, 2.5, 3.5, 4.9, 5.5, 6.2], device=device))
+    pred0 = fit0.forward(
+        torch.tensor([2.0, 2.5, 3.5, 4.9, 5.5, 6.2], device=device))
 
     cs0 = SciCubSpl(xa0.cpu(), yb0.cpu())
     ref0 = torch.from_numpy(cs0(np.array([2.0, 2.5, 3.5, 4.9, 5.5, 6.2])))
@@ -234,10 +238,12 @@ def test_spline_cubic(device):
 
     # Test interpolation with two dimension yy value
     xa = torch.linspace(0.2, 10, 50, device=device)
-    yb = torch.from_numpy(data[:, [9, 19]]).to(device)
+    yb = Parameter(torch.from_numpy(data[:, [9, 19]]).to(device),
+                   requires_grad=False)
 
     fit = CubicSpline(xa, yb)
-    pred = fit(torch.tensor([2.0, 2.5, 3.5, 4.9, 5.5, 6.2], device=device))
+    pred = fit.forward(
+        torch.tensor([2.0, 2.5, 3.5, 4.9, 5.5, 6.2], device=device))
 
     cs = SciCubSpl(xa.cpu(), yb.cpu())
     ref = torch.from_numpy(cs(torch.tensor([2.0, 2.5, 3.5, 4.9, 5.5, 6.2])))
@@ -252,9 +258,10 @@ def test_spline_cubic(device):
 def test_cubic_spline_tail(device):
     """Test the smooth Hamiltonian to zero code in the tail."""
     xa = torch.linspace(0.2, 10, 50, device=device)
-    yb = torch.from_numpy(data[:, 9]).to(device)
+    yb = Parameter(torch.from_numpy(data[:, 9]).to(device),
+                   requires_grad=False)
     fit = CubicSpline(xa, yb)
-    pred = fit(torch.tensor([10.015547739468293], device=device))
+    pred = fit.forward(torch.tensor([10.015547739468293], device=device))
     ref = torch.tensor([1.2296664801642019E-005], device=device)
 
     assert (abs(ref - pred) < 1E-11).all(), 'tolerance check'
@@ -265,14 +272,14 @@ def test_cubic_spline_tail(device):
 
     # Check tail
     fit.tail = 0.6
-    pred2 = fit(torch.tensor([10.015547739468293], device=device))
+    pred2 = fit.forward(torch.tensor([10.015547739468293], device=device))
     ref2 = torch.tensor([9.760620707717307E-06], device=device)
 
     assert (abs(ref2 - pred2) < 1E-11).all(), 'tolerance check'
 
     # Check delta_r
     fit.tail, fit.delta_r = 1.0, 1E-4
-    pred3 = fit(torch.tensor([10.015547739468293], device=device))
+    pred3 = fit.forward(torch.tensor([10.015547739468293], device=device))
     ref3 = torch.tensor([1.229666474639370E-05], device=device)
 
     assert (abs(ref3 - pred3) < 1E-13).all(), 'tolerance check'
@@ -281,19 +288,16 @@ def test_cubic_spline_tail(device):
 @pytest.mark.grad
 def test_cubic_spline_grad(device):
     """Gradient evaluation of cubic spline interpolation."""
-    xa0 = torch.linspace(0.2, 10, 50, device=device)
-    yb0 = torch.from_numpy(data[:, 9]).to(device)
-    fit = CubicSpline(xa0, yb0)
-    xi = torch.tensor([0.6], requires_grad=True, device=device)
-    grad_is_safe = gradcheck(fit, xi, raise_exception=False)
 
-    assert grad_is_safe, 'Gradient stability test'
+    x_knots = torch.linspace(0.2, 10, 50, device=device)
+    x_target = torch.tensor([0.6], device=device)
+    spline_proxy = lambda y: CubicSpline(x_knots, y).forward(x_target)
 
-    xa = torch.linspace(0.2, 10, 50, device=device)
-    yb = torch.from_numpy(data[:, [9, 19]]).to(device)
-    fit = CubicSpline(xa, yb)
-    xi = torch.tensor([0.6], requires_grad=True, device=device)
-    grad_is_safe = gradcheck(fit, xi, raise_exception=False)
+    y_knots = Parameter(torch.from_numpy(data[:, 9]).to(device))
+    grad_is_safe = gradcheck(spline_proxy, y_knots, raise_exception=False)
+    assert grad_is_safe, 'Gradient stability test failed'
 
-    assert grad_is_safe, 'Gradient stability test'
+    y_knots = Parameter(torch.from_numpy(data[:, [9, 19]]).to(device))
+    grad_is_safe = gradcheck(spline_proxy, y_knots, raise_exception=False)
+    assert grad_is_safe, 'Gradient stability test failed'
 

@@ -288,8 +288,8 @@ class DFTB_DDP(nn.Module):
 
     def __init__(self):
         super(DFTB_DDP, self).__init__()
-        h_var = [val.abcd for key, val in h_feed.off_sites.items()]
-        s_var = [val.abcd for key, val in s_feed.off_sites.items()]
+        h_var = [val.coefficients for key, val in h_feed.off_sites.items()]
+        s_var = [val.coefficients for key, val in s_feed.off_sites.items()]
         variable = h_var + s_var
 
         self.parameters = nn.ParameterList([nn.Parameter(ivar)
@@ -305,11 +305,11 @@ class DFTB_DDP(nn.Module):
         s_var_u = var[len(var)//2:]
         ii = 0
         for key, val in h_feed_p.off_sites.items():
-            val.abcd = h_var_u[ii]
+            val.coefficients = h_var_u[ii]
             ii = ii + 1
         ii = 0
         for key, val in s_feed_p.off_sites.items():
-            val.abcd = s_var_u[ii]
+            val.coefficients = s_var_u[ii]
             ii = ii + 1
 
         scc = dftb_results(data['number'], data['position'],
@@ -359,7 +359,7 @@ def main(rank, world_size, dataset_train, dataset_test, data_train_dos):
     # Testing
     if rank == 0:
         update_para = list(model.parameters())
-        print(update_para, file=open('./result/abcd.txt', "w"))
+        print(update_para, file=open('./result/coefficients.txt', "w"))
         if test:
             h_feed_p = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
                               interpolation='spline', requires_grad=True)
@@ -370,11 +370,11 @@ def main(rank, world_size, dataset_train, dataset_test, data_train_dos):
             s_var_u = var[len(var)//2:]
             ii = 0
             for key, val in h_feed_p.off_sites.items():
-                val.abcd = h_var_u[ii]
+                val.coefficients = h_var_u[ii]
                 ii = ii + 1
             ii = 0
             for key, val in s_feed_p.off_sites.items():
-                val.abcd = s_var_u[ii]
+                val.coefficients = s_var_u[ii]
                 ii = ii + 1
             test(0, 1, dataset_test, h_feed_p, s_feed_p)
 
