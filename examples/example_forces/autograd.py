@@ -16,10 +16,11 @@ species = [1, 8]
 shell_dict = {1: [0], 8: [0, 1]}
 
 # Set up geometry
-H2O = Geometry(torch.tensor([1, 8, 8]), 
+H2O = Geometry(torch.tensor([8, 1, 1]), 
                torch.tensor([[0.0, 0.0, 0.0],
-                             [0.0, 1.0, -0.5],
-                             [0.0, -1.0, 0.5]], requires_grad=False)
+                             [0.0, 0.8, -0.5],
+                             [0.0, -0.8, -0.5]], requires_grad=False),
+               units='angstrom'
                )
 H2O.positions.requires_grad_(True)
 
@@ -36,11 +37,16 @@ repulsive_feed = RepulsiveSplineFeed.from_database(path, species)
 dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
 
 # Run a SCF calculation
-dftb_calculator(H2O, orbital_info)
+energy = dftb_calculator(H2O, orbital_info)
+print('Energy:', energy)
 
 # Get total energy
 total_energy = dftb_calculator.total_energy
 print('Total energy:', total_energy)
+
+#Get repulsive energy
+repulsive_energy = dftb_calculator.repulsive_energy
+print('Repulsive energy:', repulsive_energy)
 
 # Calculate the gradient
 gradient = torch.autograd.grad(total_energy, H2O.positions, grad_outputs=torch.ones_like(total_energy))[0]
