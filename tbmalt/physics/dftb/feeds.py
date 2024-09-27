@@ -1380,6 +1380,7 @@ class RepulsiveSplineFeed(Feed):
         indx_pairs = torch.combinations(indxs)
         
         Erep = torch.zeros((batch_size), device=self.device, dtype=self.dtype)
+        dErep = torch.zeros((batch_size), device=self.device, dtype=self.dtype)
         for indx_pair in indx_pairs:
             atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
             atomnum2 = geo.atomic_numbers[..., indx_pair[1]].reshape((batch_size, ))
@@ -1389,7 +1390,11 @@ class RepulsiveSplineFeed(Feed):
             for batch_indx in range(batch_size):
                 if atomnum1[batch_indx] == 0 or atomnum2[batch_indx] == 0:
                     continue
-                Erep[batch_indx] += self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx])
+                print(self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx]))
+                add_Erep, add_dErep = self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx])
+                #Erep[batch_indx] += self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx])[0]
+                Erep[batch_indx] += add_Erep
+                dErep[batch_indx] += add_dErep
 
         return Erep
 
@@ -1417,7 +1422,7 @@ class RepulsiveSplineFeed(Feed):
                         return self._spline(distance, spline.grid[ind-1], spline.spline_coef[ind-1])
             else:
                 return self._exponential_head(distance, spline.exp_coef)
-        return 0
+        return (0, 0)
    
     @classmethod
     def _exponential_head(cls, distance: Tensor, coeffs: Tensor) -> Tensor:
@@ -1435,7 +1440,7 @@ class RepulsiveSplineFeed(Feed):
         a2 = coeffs[1]
         a3 = coeffs[2]
 
-        return torch.exp(-a1*distance + a2) + a3
+        return torch.exp(-a1*distance + a2) + a3, -a1*torch.exp(-a1*distance + a2)
 
     @classmethod 
     def _spline(cls, distance: Tensor, start: Tensor, coeffs: Tensor) -> Tensor:
@@ -1452,7 +1457,8 @@ class RepulsiveSplineFeed(Feed):
         """
         rDiff = distance - start
         energy = coeffs[0] + coeffs[1]*rDiff + coeffs[2]*rDiff**2 + coeffs[3]*rDiff**3
-        return energy
+        denergy = coeffs[1] + 2*coeffs[2]*rDiff + 3*coeffs[3]*rDiff**2
+        return energy, denergy
 
     @classmethod 
     def _tail(cls, distance: Tensor, start: Tensor, coeffs: Tensor) -> Tensor:
@@ -1469,7 +1475,8 @@ class RepulsiveSplineFeed(Feed):
         """
         rDiff = distance - start
         energy = coeffs[0] + coeffs[1]*rDiff + coeffs[2]*rDiff**2 + coeffs[3]*rDiff**3 + coeffs[4]*rDiff**4 + coeffs[5]*rDiff**5
-        return energy
+        denergy = coeffs[1] + 2*coeffs[2]*rDiff + 3*coeffs[3]*rDiff**2 + 4*coeffs[4]*rDiff**3 + 5*coeffs[5]*rDiff**4
+        return energy, denergy
 
 
 
