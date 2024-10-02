@@ -109,6 +109,9 @@ def H2_scc(device, **kwargs):
         'q_final_atomic': torch.tensor([
             +1.000000000000000E+00, +1.000000000000000E+00],
             device=device),
+        'band_energy': torch.tensor(-0.6811823890, device=device),
+        'h0_energy': torch.tensor(-0.6811823890, device=device),
+        'h2_energy': torch.tensor(0.0000000000, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.0036749324}
@@ -180,6 +183,9 @@ def H2O_scc(device, **kwargs):
         'q_final_atomic': torch.tensor([
             6.58558984371061, 0.70720507814469, 0.70720507814469],
             device=device),
+        'band_energy': torch.tensor(-3.6852906614, device=device),
+        'h0_energy': torch.tensor(-4.1744311432, device=device),
+        'h2_energy': torch.tensor(0.0182663972, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.0036749324}
@@ -259,6 +265,9 @@ def CH4_scc(device, **kwargs):
             4.30537894059011, 0.92365526485247, 0.92365526485247,
             0.92365526485247, 0.92365526485247],
             device=device),
+        'band_energy': torch.tensor(-3.1646777208, device=device),
+        'h0_energy': torch.tensor(-3.2409102228, device=device),
+        'h2_energy': torch.tensor(0.0010158495, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.0036749324}
@@ -343,6 +352,9 @@ def CH3O_scc(device, **kwargs):
         'q_final_atomic': torch.tensor([
             3.91394532144686, 6.31172685711984, 0.90943832879409,
             0.93244474631961, 0.93244474631961], device=device),
+        'band_energy': torch.tensor(-5.7884294633, device=device),
+        'h0_energy': torch.tensor(-6.1486854611, device=device),
+        'h2_energy': torch.tensor(0.0142612529, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.0036749324}
@@ -368,6 +380,9 @@ def C_wire_scc(device, **kwargs):
             4.44894528173204, 3.88209725653184, 3.75703400352129, 3.91192345821486,
             3.91192345821486, 3.75703400352129, 3.88209725653184, 4.44894528173204],
             device=device),
+        'band_energy': torch.tensor(-18.0811956490, device=device),
+        'h0_energy': torch.tensor(-16.8435335797, device=device),
+        'h2_energy': torch.tensor(0.0395935160, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.0036749324}
@@ -789,6 +804,9 @@ def dftb2_helper(calculator, geometry, orbs, results):
             assert device_check, f'Attribute {i} was returned on the wrong device'
 
     check_allclose('q_final_atomic')
+    check_allclose('band_energy')
+    check_allclose('h0_energy')
+    check_allclose('h2_energy')
 
 
 def test_dftb1_single(device, shell_resolved_feeds):

@@ -204,6 +204,7 @@ class Dftb1(Calculator):
 
         self._overlap: Optional[Tensor] = None
         self._hamiltonian: Optional[Tensor] = None
+        self._scc_energy: Optional[Tensor] = None
         self.rho: Optional[Tensor] = None
         self.eig_values: Optional[Tensor] = None
         self.eig_vectors: Optional[Tensor] = None
@@ -354,6 +355,17 @@ class Dftb1(Calculator):
         return torch.einsum('...i,...i->...', self.eig_values, self.occupancy)
 
     @property
+    def h0_energy(self):
+        """H0 energy"""
+        _h0 = self.h_feed.matrix_from_calculator(self)
+        return ((self.rho * _h0).sum(-1).sum(-1))
+
+    @property
+    def h2_energy(self):
+        """SCC energy"""
+        return 0.0 if self._scc_energy is None else self._scc_energy
+
+    @property
     def band_free_energy(self):
         """Band free energy; i.e. E_band-TS"""
         # Note that this scale factor assumes spin-restricted and will need to
@@ -375,7 +387,7 @@ class Dftb1(Calculator):
     @property
     def total_energy(self):
         """Total system energy"""
-        return self.band_energy + self.repulsive_energy
+        return self.h0_energy + self.h2_energy + self.repulsive_energy
 
     @property
     def mermin_energy(self):
@@ -518,6 +530,8 @@ class Dftb2(Dftb1):
         invr: the 1/R matrix.
         hamiltonian: second order Hamiltonian matrix as produced via the SCC
             cycle.
+        scc_energy: energy contribution from charge fluctuation via the SCC
+            cycle.
         converged: a tensor of booleans indicating which systems have and
             have not converged (True if converged). This can be used during
             training, along side `suppress_SCF_error`, to allow unconverged
@@ -617,6 +631,7 @@ class Dftb2(Dftb1):
         self._core_hamiltonian: Optional[Tensor] = None
         self._gamma: Optional[Tensor] = None
         self._invr: Optional[Tensor] = None
+        self._scc_energy: Optional[Tensor] = None
         self.converged: Optional[Tensor] = None
 
         # Calculator Settings
@@ -686,6 +701,15 @@ class Dftb2(Dftb1):
     @gamma.setter
     def gamma(self, value):
         self._gamma = value
+
+    @property
+    def scc_energy(self):
+        """Energy contribution from charge fluctuation"""
+        return self._scc_energy
+
+    @scc_energy.setter
+    def scc_energy(self, value):
+        self._scc_energy = value
 
     def forward(self, cache: Optional[Dict[str, Any]] = None
                 , **kwargs) -> Tensor:
@@ -902,6 +926,7 @@ class Dftb2(Dftb1):
         # Construct the shift matrix
         shifts = torch.einsum(
             '...i,...ij->...j', q_in - self.q_zero_res, self.gamma)
+        self._scc_energy = .5 * (shifts * (q_in - self.q_zero_res)).sum(-1)
         shifts = prepeat_interleave(shifts, self.orbs.orbs_per_res)
         shifts = (shifts[..., None] + shifts[..., None, :])
 
@@ -934,3 +959,4 @@ class Dftb2(Dftb1):
         self.rho = None
         self.eig_values = None
         self.eig_vectors = None
+        self._scc_energy = None
