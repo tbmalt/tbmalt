@@ -19,7 +19,7 @@ torch.set_default_dtype(torch.float64)
 #   - add more tests for DFTB2 calculations, right now only atomic charges
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def shell_resolved_feeds(device, skf_file):
     species = [1, 6, 8, 79]
     h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
@@ -29,7 +29,7 @@ def shell_resolved_feeds(device, skf_file):
     return h_feed, s_feed, o_feed
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def shell_resolved_feeds_scc(device, skf_file):
     species = [1, 6, 8]
     h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
@@ -39,7 +39,7 @@ def shell_resolved_feeds_scc(device, skf_file):
 
     return h_feed, s_feed, o_feed, u_feed
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def shell_resolved_feeds_scc_spline(device, skf_file):
     species = [1, 6, 8]
     h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian',

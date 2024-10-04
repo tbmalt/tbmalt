@@ -295,8 +295,8 @@ def main(rank, world_size, train_dataset, data_train_dos):
     """ML training to optimize DFTB H and S matrix."""
     # Initial the model
     train_data = data_split(rank, world_size, train_dataset, batch_size=n_batch)
-    h_var = [val.abcd for key, val in h_feed.off_sites.items()]
-    s_var = [val.abcd for key, val in s_feed.off_sites.items()]
+    h_var = [val.coefficients for key, val in h_feed.off_sites.items()]
+    s_var = [val.coefficients for key, val in s_feed.off_sites.items()]
     variable = h_var + s_var
     optimizer = getattr(torch.optim, 'Adam')(variable, lr=lr)
     loss_list = []

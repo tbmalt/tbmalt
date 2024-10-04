@@ -27,7 +27,7 @@ device = torch.device('cpu')
 # 1.1: System settings
 # --------------------
 
-# Provide a list of moecules upon which TBMaLT is to be run
+# Provide a list of molecules upon which TBMaLT is to be run
 targets = ['dipole']
 sources_train = ['run1/train', 'run2/train', 'run3/train']
 sources_test = ['run1/test', 'run2/test', 'run3/test']

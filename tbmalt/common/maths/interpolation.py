@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """Interpolation for general purpose."""
-from typing import Tuple
+from typing import Tuple, Union, Optional
 from numbers import Real
+import warnings
 import torch
+from torch.nn import Parameter
 from tbmalt.common.batch import pack, bT
+from tbmalt.ml import Feed
 Tensor = torch.Tensor
+
 
 
 class BicubInterp:
@@ -237,6 +241,9 @@ class PolyInterpU:
 
     """
 
+    # TODO: Resolve bug causing incorrect value to be returned when
+    #  interpolating at the last grid point.
+
     def __init__(self, xx: Tensor, yy: Tensor, tail: Real = 1.0,
                  delta_r: Real = 1E-5, n_interp: int = 8, n_interp_r: int = 4):
         self.xx = xx
@@ -423,43 +430,107 @@ def poly_interp(xp: Tensor, yp: Tensor, rr: Tensor) -> Tensor:
     return yy
 
 
-class CubicSpline(torch.nn.Module):
-    """Polynomial natural cubic spline.
+class CubicSpline(Feed):
+    """Cupic spline interpolator.
+
+    An entity for piecewise interpolation of data via a cupic polynomial
+    spline which is twice continuously differentiable.
 
     Arguments:
-        xx: Grid points for interpolation, 1D Tensor.
-        yy: Values to be interpolated at each grid point.
+        xx: A one dimensional tensor specifying the interpolation grid points,
+            i.e. the knot locations.
+        yy: Interpolation values, i.e. the knot values, associated with each
+            grid point. For single series interpolation this should be a tensor
+            of length "n", where "n" is the number of grid points present in
+            ``xx``. For batch interpolation this should be an "m" by "n"
+            tensor. Note that `Parameter` should be used in place of `Tensor`
+            instances when wishing to use the knot values as an optimisation
+            target.
         tail: Distance over which to smooth the tail.
         delta_r: Delta distance for 1st and 2nd derivative.
         n_interp: Number of total interpolation grid points for the tail.
 
     Keyword Args:
-        abcd: 0th, 1st, 2nd and 3rd order parameters in cubic spline.
+        coefficients: 0th, 1st, 2nd and 3rd order parameters in cubic spline.
 
     References:
         .. [csi_wiki] https://en.wikipedia.org/wiki/Spline_(mathematics)
 
     Examples:
-        >>> import tbmalt.common.maths.interpolation as interp
+        >>> from tbmalt.common.maths.interpolation import CubicSpline
         >>> import torch
         >>> x = torch.linspace(1, 10, 10)
         >>> y = torch.sin(x)
-        >>> fit = interp.Spline(x, y)
-        >>> fit(torch.tensor([3.5]))
+        >>> spline = CubicSpline(x, y)
+        >>> spline.forward(torch.tensor([3.5]))
         >>> tensor([-0.3526])
         >>> torch.sin(torch.tensor([3.5]))
         >>> tensor([-0.3508])
 
+    TODO:
+        - Need to introduce method to switch gradient tracking on and off as a whole.
+
     """
 
-    def __init__(self, xx: Tensor, yy: Tensor, tail: Real = 1.0,
+    def __init__(self, xx: Tensor, yy: Union[Tensor, Parameter], tail: Real = 1.0,
                  delta_r: Real = 1E-5, n_interp: int = 8, **kwargs):
         super(CubicSpline, self).__init__()
 
+        # X-knot values must be of an anticipated type
+        if not isinstance(xx, Tensor):
+            raise TypeError("The x-knot values must be either a `torch.Tensor`"
+                            " instance.")
+
+        # Same for the y-knot values
+        if not isinstance(yy, (Parameter, Tensor)):
+            raise TypeError("The y-knot values must be either a `torch.Tensor`"
+                            " or `torch.nn.Parameter` instance.")
+
         assert yy.dim() <= 2, '"CubicSpline" only support 1D or 2D interpolation'
 
+        # Ensure that there is not a mismatch between the number of x and y
+        # points supplied: one-dimensional case only.
+        if yy.ndim == 1 and not (len(yy) == len(xx)):
+            raise ValueError(
+                "Mismatch detected in the number of supplied `x` "
+                f"({len(xx)}) and `y` ({len(yy)}) values."
+            )
+
+        # This is just a repeat of the above check but for the two-dimensional
+        # case.
+        elif yy.ndim == 2 and yy.shape[0] != len(xx):
+            raise ValueError(
+                f"Array shape mismatch detected, anticipated a `y` array of "
+                f"the shape ({len(xx)}, n), encountered {tuple(yy.shape)} instead."
+            )
+
+        # Prevent users from unintentionally optimizing the knot locations.
+        if isinstance(xx, Parameter) or xx.requires_grad:
+            raise warnings.warn(
+                "Setting the knot positions 'xx' as a freely tunable parameter"
+                " is strongly advised against as it may lead to instability or"
+                " incorrect behavior of the spline during optimisation."
+                " Please ensure that the `xx` argument is a `torch.tensor`"
+                " type rather than a `torch.nn.Parameter` and that its"
+                "\"requires_grad\" attribute set to `False`.",
+                UserWarning, stacklevel=2)
+
+        # Ensure that the y values are a parameter instance
+        if not isinstance(yy, Parameter):
+            yy = Parameter(yy, requires_grad=yy.requires_grad)
+
         self.xp = xx
-        self.yp = yy.T if yy.dim() == 2 and yy.shape[0] == xx.shape[0] else yy
+        self._yp = yy
+
+        # Coefficients will be build when the `coefficients` property is
+        # first invoked. Unless the user has supplied the spline coefficients
+        # manually.
+        self._coefficients: Optional[Tensor] = None
+        if "coefficients" in kwargs.keys():
+            warnings.warn(
+                "Manual specification of coefficients is deprecated.",
+                DeprecationWarning, stacklevel=2)
+            self._coefficients: Optional[Tensor] = kwargs.get("coefficients")
 
         self.grid_step = xx[1] - xx[0]
         self.delta_r = delta_r
@@ -469,12 +540,81 @@ class CubicSpline(torch.nn.Module):
         # Device type of the tensor in this class
         self._device = xx.device
 
-        aa, bb, cc, dd = kwargs.get("abcd") if "abcd" in kwargs.keys()\
-            else CubicSpline._get_abcd(self.xp, self.yp)
+        # Store the version tracking information for the y-knot values so that
+        # the coefficients can be updated as and when needed.
+        self._yp_version, self._yp_id = None, None
 
-        self.abcd = pack([aa, bb, cc, dd])
+    @property
+    def yp(self) -> Parameter:
+        """Value of the spline at each grid point."""
+        return self._yp
 
-    def forward(self, xnew: Tensor):
+    @yp.setter
+    def yp(self, value: Union[Parameter, Tensor]):
+        # Y-knot values must be of an anticipated type
+        if not isinstance(value, (Parameter, Tensor)):
+            raise TypeError("The y-knot values must be either a `torch.Tensor`"
+                            " or `torch.nn.Parameter` instance.")
+
+        # Ensure that the y values are a parameter instance
+        if not isinstance(value, Parameter):
+            value = Parameter(value, requires_grad=value.requires_grad)
+
+        # Finally, set new y-knot value tensor.
+        self._yp = value
+
+    @property
+    def coefficients(self):
+        """The spline coefficients."""
+
+        # If the spline's y-knot values were modified by something or someone
+        # external to the `CubicSpline` class, then the coefficients will no
+        # longer accurately reflect the current state of the spline. Thus, the
+        # coefficients values must now be recalculated so that they are consistent
+        # with the updated y-knot values.
+        if self._knots_were_changed or self._coefficients is None:
+
+            ypt = bT(self._yp)
+
+            # get the first dim of x
+            nx = self.xp.shape[0]
+            device = self.xp.device
+            assert nx > 3  # the length of x variable must > 3
+
+            # get the difference between grid points
+            dxp = self.xp[1:] - self.xp[:-1]
+            dyp = ypt[..., 1:] - ypt[..., :-1]
+
+            # get b, c, d from reference website: step 3~9, first calculate c
+            A = torch.zeros(nx, nx, device=device)
+            A.diagonal()[1:-1] = 2 * (dxp[:-1] + dxp[1:])  # diag
+            A[torch.arange(nx - 1), torch.arange(nx - 1) + 1] = dxp  # off-diag
+            A[torch.arange(nx - 1) + 1, torch.arange(nx - 1)] = dxp
+            A[0, 0], A[-1, -1] = 1.0, 1.0
+            A[0, 1], A[1, 0] = 0.0, 0.0  # natural condition
+            A[-1, -2], A[-2, -1] = 0.0, 0.0
+
+            B = torch.zeros(*ypt.shape, device=device)
+            B[..., 1:-1] = 3 * (dyp[..., 1:] / dxp[1:] - dyp[..., :-1] / dxp[:-1])
+            B = B.permute(1, 0) if B.dim() == 2 else B
+
+            cc = torch.linalg.lstsq(A, B)[0]
+            cc = cc.permute(1, 0) if cc.dim() == 2 else cc
+            bb = dyp / dxp - dxp * (cc[..., 1:] + 2 * cc[..., :-1]) / 3
+            dd = (cc[..., 1:] - cc[..., :-1]) / (3 * dxp)
+
+            self._coefficients = pack([ypt, bb, cc, dd])
+
+            # The version tracking data must now be updated. The y-knot version
+            # is updated otherwise the coefficients will keep being regenerated
+            # over and over again. The coefficients version must also be updated
+            # to prevent an infinite recursion.
+            self._update_knot_version_tracking_data()
+
+        # Finally return the coefficients
+        return self._coefficients
+
+    def forward(self, xnew: Tensor) -> Tensor:
         """Evaluate the polynomial linear or cubic spline.
 
         Arguments:
@@ -489,10 +629,12 @@ class CubicSpline(torch.nn.Module):
             f'input should not be less than {self.xp[0]}'
         n_grid_point = len(self.xp)
 
+        ypt = bT(self.yp)
+
         result = (
             torch.zeros(xnew.shape, device=self._device)
-            if self.yp.dim() == 1
-            else torch.zeros(xnew.shape[0], self.yp.shape[0],
+            if ypt.dim() == 1
+            else torch.zeros(xnew.shape[0], ypt.shape[0],
                              device=self._device)
         )
 
@@ -512,8 +654,13 @@ class CubicSpline(torch.nn.Module):
         if is_tail.any():
             self.__compute_tail_interpolation(xnew, is_tail, r_max, result)
 
-
         return result
+
+    def __call__(self, *args, **kwargs) -> Tensor:
+        warnings.warn(
+            "`CubicSpline` instances should be invoked via their "
+            "`.forward` method now.")
+        return self.forward(*args, **kwargs)
 
     def __get_nearest_grid_point_indices(self, xnew: Tensor):
         n_tail = int((self.tail / self.grid_step).round())
@@ -523,8 +670,11 @@ class CubicSpline(torch.nn.Module):
         return torch.searchsorted(xx_ext.detach(), xnew)
 
     def __compute_tail_interpolation(self, xnew: Tensor, is_tail, r_max, result):
+
+        ypt = bT(self.yp)
+
         dr = xnew[is_tail] - r_max
-        dr = dr.unsqueeze(-1) if self.yp.dim() == 2 else dr
+        dr = dr.unsqueeze(-1) if ypt.dim() == 2 else dr
         ilast = len(self.xp)
 
         # get grid points and grid point values
@@ -533,17 +683,17 @@ class CubicSpline(torch.nn.Module):
               + torch.arange(self.n_interp, device=self._device) - 1)
               * self.grid_step + self.xp[0])
 
-        yb = bT(self.yp[..., ilast - self.n_interp - 1: ilast - 1])
-        xa = xa.repeat(dr.shape[0]).reshape(dr.shape[0], -1)
+        yb = bT(ypt[..., ilast - self.n_interp - 1: ilast - 1])
         yb = yb.unsqueeze(0).repeat_interleave(dr.shape[0], dim=0)
+        xa = xa.repeat(dr.shape[0]).reshape(dr.shape[0], -1)
 
         # get derivative
         y0 = poly_interp(xa, yb, xa[:, self.n_interp - 1] - self.delta_r)
         y2 = poly_interp(xa, yb, xa[:, self.n_interp - 1] + self.delta_r)
-        y1 = self.yp[..., ilast - 2]
+        y1 = ypt[..., ilast - 2]
         y1p = (y2 - y0) / (2.0 * self.delta_r)
         y1pp = (y2 + y0 - 2.0 * y1) / (self.delta_r * self.delta_r)
-        # dr = dr.repeat(self.yp.shape[0], 1).T if self.yp.dim() == 2 else dr
+        # dr = dr.repeat(ypt.shape[0], 1).T if ypt.dim() == 2 else dr
 
         result[is_tail] = poly_to_zero(
             dr, -1.0 * self.tail, -1.0 / self.tail, y1, y1p, y1pp)
@@ -551,7 +701,7 @@ class CubicSpline(torch.nn.Module):
     def _cubic(self, xnew: Tensor, ind: Tensor):
         """Calculate cubic spline interpolation."""
         dx = xnew - self.xp[ind]
-        aa, bb, cc, dd = self.abcd
+        aa, bb, cc, dd = self.coefficients
         interp = (
             aa[..., ind]
             + bb[..., ind] * dx
@@ -561,43 +711,13 @@ class CubicSpline(torch.nn.Module):
 
         return interp.transpose(-1, 0) if interp.dim() > 1 else interp
 
-    @staticmethod
-    def _get_abcd(xp, yp) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
-        """Get aa, bb, cc, dd parameters for cubic spline interpolation.
+    def _update_knot_version_tracking_data(self):
+        self._yp_version = self._yp._version
+        self._yp_id = id(self._yp)
 
-        Arguments:
-            xp: Grid points for interpolation, 1D Tensor.
-            yp: Values to be interpolated at each grid point.
-
-        Returns:
-            parameters: a tuple storing the aa, bb, cc, and dd parameters.
-
-        """
-        # get the first dim of x
-        nx = xp.shape[0]
-        device = xp.device
-        assert nx > 3  # the length of x variable must > 3
-
-        # get the difference between grid points
-        dxp = xp[1:] - xp[:-1]
-        dyp = yp[..., 1:] - yp[..., :-1]
-
-        # get b, c, d from reference website: step 3~9, first calculate c
-        A = torch.zeros(nx, nx, device=device)
-        A.diagonal()[1:-1] = 2 * (dxp[:-1] + dxp[1:])  # diag
-        A[torch.arange(nx - 1), torch.arange(nx - 1) + 1] = dxp  # off-diag
-        A[torch.arange(nx - 1) + 1, torch.arange(nx - 1)] = dxp
-        A[0, 0], A[-1, -1] = 1.0, 1.0
-        A[0, 1], A[1, 0] = 0.0, 0.0  # natural condition
-        A[-1, -2], A[-2, -1] = 0.0, 0.0
-
-        B = torch.zeros(*yp.shape, device=device)
-        B[..., 1:-1] = 3 * (dyp[..., 1:] / dxp[1:] - dyp[..., :-1] / dxp[:-1])
-        B = B.permute(1, 0) if B.dim() == 2 else B
-
-        cc = torch.linalg.lstsq(A, B)[0]
-        cc = cc.permute(1, 0) if cc.dim() == 2 else cc
-        bb = dyp / dxp - dxp * (cc[..., 1:] + 2 * cc[..., :-1]) / 3
-        dd = (cc[..., 1:] - cc[..., :-1]) / (3 * dxp)
-
-        return yp, bb, cc, dd
+    @property
+    def _knots_were_changed(self):
+        """Check if the y-knot values have updated."""
+        ver_delta = self._yp_version != self._yp._version
+        id_delta = self._yp_id != id(self._yp)
+        return ver_delta or id_delta

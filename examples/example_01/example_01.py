@@ -23,7 +23,7 @@ torch.set_default_dtype(torch.float64)
 # 1.1: System settings
 # --------------------
 
-# Provide a list of moecules upon which TBMaLT is to be run
+# Provide a list of molecules upon which TBMaLT is to be run
 molecule_names = ['CH4', 'H2O']
 targets = {'q_final_atomic': torch.tensor(
     [[4.251914, 0.937022, 0.937022, 0.937022, 0.937022],
@@ -106,10 +106,10 @@ h_var, s_var = [], []
 for key in h_feed.off_sites.keys():
 
     # Collect spline parameters and add to optimizer
-    h_feed.off_sites[key].abcd.requires_grad_(True)
-    s_feed.off_sites[key].abcd.requires_grad_(True)
-    h_var.append({'params': h_feed.off_sites[key].abcd, 'lr': lr})
-    s_var.append({'params': s_feed.off_sites[key].abcd, 'lr': lr})
+    h_feed.off_sites[key].coefficients.requires_grad_(True)
+    s_feed.off_sites[key].coefficients.requires_grad_(True)
+    h_var.append({'params': h_feed.off_sites[key].coefficients, 'lr': lr})
+    s_var.append({'params': s_feed.off_sites[key].coefficients, 'lr': lr})
 
 optimizer = getattr(torch.optim, 'Adam')(h_var + s_var, lr=lr)
 

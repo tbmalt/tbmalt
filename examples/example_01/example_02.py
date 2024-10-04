@@ -24,7 +24,7 @@ torch.set_default_dtype(torch.float64)
 # 1.1: System settings
 # --------------------
 
-# Provide a list of moecules upon which TBMaLT is to be run
+# Provide a list of molecules upon which TBMaLT is to be run
 size = [1000]
 sources = ['run1/train', 'run2/train', 'run3/train']
 targets = ['dipole']
@@ -135,8 +135,8 @@ dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed)
 # Construct machine learning object
 lr = 0.003
 criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
-h_var = [val.abcd for key, val in h_feed.off_sites.items()]
-s_var = [val.abcd for key, val in s_feed.off_sites.items()]
+h_var = [val.coefficients for key, val in h_feed.off_sites.items()]
+s_var = [val.coefficients for key, val in s_feed.off_sites.items()]
 optimizer = getattr(torch.optim, 'Adam')(h_var + s_var, lr=lr)
 
 
