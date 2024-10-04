@@ -147,10 +147,7 @@ def test_scipyskfeed_batch(device, skf_file: str):
 # backpropagatable due to its use of Scipy splines for interpolation.
 
 def test_skfeed_poly_single(device, skf_file: str):
-    """ScipySkFeed matrix single system operability tolerance test"""
-
-    if device.type == "cuda":
-        pytest.skip("Scipy splines do not support CUDA.")
+    """SkFeed matrix single system operability tolerance test"""
 
     b_def = {1: [0], 6: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
     H_feed = SkFeed.from_database(
@@ -173,10 +170,7 @@ def test_skfeed_poly_single(device, skf_file: str):
 
 
 def test_skfeed_poly_batch(device, skf_file: str):
-    """ScipySkFeed matrix batch operability tolerance test"""
-
-    if device.type == "cuda":
-        pytest.skip("Scipy splines do not support CUDA.")
+    """SkFeed matrix batch operability tolerance test"""
 
     H_feed = SkFeed.from_database(
         skf_file, [1, 6, 16, 79], 'hamiltonian', 'polynomial', device=device)
@@ -203,10 +197,7 @@ def test_skfeed_poly_batch(device, skf_file: str):
     assert check_4, 'Failure to operate on batches of size "one"'
 
 def test_skfeed_cubic_single(device, skf_file: str):
-    """ScipySkFeed matrix single system operability tolerance test"""
-
-    if device.type == "cuda":
-        pytest.skip("Scipy splines do not support CUDA.")
+    """SkFeed matrix single system operability tolerance test"""
 
     b_def = {1: [0], 6: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
     H_feed = SkFeed.from_database(
@@ -229,10 +220,7 @@ def test_skfeed_cubic_single(device, skf_file: str):
 
 
 def test_skfeed_cubic_batch(device, skf_file: str):
-    """ScipySkFeed matrix batch operability tolerance test"""
-
-    if device.type == "cuda":
-        pytest.skip("Scipy splines do not support CUDA.")
+    """SkFeed matrix batch operability tolerance test"""
 
     H_feed = SkFeed.from_database(
         skf_file, [1, 6, 16, 79], 'hamiltonian', 'spline', device=device)
@@ -387,7 +375,6 @@ def test_skfeed_single(device, skf_file_vcr):
         assert check_1, f'SkFeed H matrix outside of tolerance ({mol})'
         assert check_2, f'SkFeed S matrix outside of tolerance ({mol})'
         assert check_3, 'SkFeed.matrix returned on incorrect device'
-
 
 
 # Batch
@@ -665,19 +652,3 @@ def test_hubbardfeed_batch(device, skf_file):
 
     check_2 = torch.allclose(predicted, reference)
     assert check_2, 'Predicted hubbard value errors exceed allowed tolerance'
-
-
-if __name__ == '__main__':
-    from os import remove
-    from os.path import isfile
-
-
-    target = "/home/ajmhpc/Projects/TBMaLT/Working/Clean/tbmalt_new/example_dftb_vcr.h5"
-    if isfile(target):
-        remove(target)
-
-    torch.set_default_dtype(torch.float64)
-    device = torch.device("cpu")
-    skf_file_path = "/home/ajmhpc/Projects/TBMaLT/Working/FeedUpdating/tbmalt_new/auorg.hdf5"
-
-    test_hubbardfeed_single(device, skf_file_path)

@@ -457,12 +457,12 @@ class CubicSpline(Feed):
         .. [csi_wiki] https://en.wikipedia.org/wiki/Spline_(mathematics)
 
     Examples:
-        >>> import tbmalt.common.maths.interpolation as interp
+        >>> from tbmalt.common.maths.interpolation import CubicSpline
         >>> import torch
         >>> x = torch.linspace(1, 10, 10)
         >>> y = torch.sin(x)
-        >>> fit = interp.Spline(x, y)
-        >>> fit(torch.tensor([3.5]))
+        >>> spline = CubicSpline(x, y)
+        >>> spline.forward(torch.tensor([3.5]))
         >>> tensor([-0.3526])
         >>> torch.sin(torch.tensor([3.5]))
         >>> tensor([-0.3508])
