@@ -16,10 +16,10 @@ species = [1, 8]
 shell_dict = {1: [0], 8: [0, 1]}
 
 # Set up geometry
-H2O = Geometry(torch.tensor([1, 8, 8]), 
+H2O = Geometry(torch.tensor([8, 1, 1]), 
                torch.tensor([[0.0, 0.0, 0.0],
-                             [0.0, 1.0, -0.5],
-                             [0.0, -1.0, 0.5]], requires_grad=False)
+                             [0.0, 0.8, -0.5],
+                             [0.0, -0.8, 0.5]], requires_grad=False)
                )
 
 orbital_info = OrbitalInfo(H2O.atomic_numbers, shell_dict, shell_resolved=False)
@@ -36,3 +36,6 @@ dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard
 
 # Run a SCF calculation
 dftb_calculator(H2O, orbital_info)
+
+forces = dftb_calculator.forces
+print(forces)

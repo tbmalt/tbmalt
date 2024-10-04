@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Code associated with carrying out DFTB calculations."""
+import copy
 import numpy as np
 import torch
 
@@ -443,6 +444,17 @@ class Dftb1(Calculator):
     @property
     def forces(self):
         """Forces acting on the atoms"""
+
+        # Calculate gradient of h0 and overlap via finite differences.
+        delta = 1
+        dgeometry = copy.copy(self.geometry)
+        dgeometry.positions = dgeometry.positions + delta
+        #doverlap = ( self.s_feed.matrix(dgeometry, self.orbs) - self.s_feed.matrix(self.geometry, self.orbs) )/delta
+
+        return self.overlap.size()
+
+    def _finite_diff_overlap(self, delta=1E-5):
+        "Calculates the gradient of the overlap using finite differences"
         return 0
 
 
