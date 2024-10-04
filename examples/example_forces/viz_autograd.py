@@ -1,4 +1,5 @@
 import torch
+from torchviz import make_dot
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
@@ -39,20 +40,21 @@ dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard
 
 # Run a SCF calculation
 energy = dftb_calculator(H2O, orbital_info)
-print('Energy:', energy)
+#print('Energy:', energy)
 
 # Get total energy
 total_energy = dftb_calculator.total_energy
-print('Total energy:', total_energy)
+#print('Total energy:', total_energy)
+make_dot(total_energy)#.render('total_energy', format='png')
 
 #Get repulsive energy
 repulsive_energy = dftb_calculator.repulsive_energy
-print('Repulsive energy:', repulsive_energy)
+#print('Repulsive energy:', repulsive_energy)
 
 # Calculate the gradient
 #gradient = torch.autograd.grad(total_energy, H2O.positions, grad_outputs=torch.ones_like(total_energy))[0]
 (gradient,) = torch.autograd.grad(total_energy, H2O.positions)
-print(H2O.positions)
+#print(H2O.positions)
 forces = -gradient
 
-print('Forces:', forces)
+#print('Forces:', forces)

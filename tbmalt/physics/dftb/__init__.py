@@ -440,6 +440,12 @@ class Dftb1(Calculator):
         sigma = 0.1 * energy_units['ev']
         return dos(self.eigenvalue, self.dos_energy, sigma=sigma, mask=mask)
 
+    @property
+    def forces(self):
+        """Forces acting on the atoms"""
+        return 0
+
+
     def reset(self):
         """Reset all attributes and cached properties."""
         self._overlap = None
