@@ -446,16 +446,28 @@ class Dftb1(Calculator):
         """Forces acting on the atoms"""
 
         # Calculate gradient of h0 and overlap via finite differences.
-        delta = 1
-        dgeometry = copy.copy(self.geometry)
-        dgeometry.positions = dgeometry.positions + delta
+        #delta = 1
+        #dgeometry = copy.copy(self.geometry)
+        #dgeometry.positions = dgeometry.positions + delta
         #doverlap = ( self.s_feed.matrix(dgeometry, self.orbs) - self.s_feed.matrix(self.geometry, self.orbs) )/delta
 
-        return self.overlap.size()
+        doverlap = self._finite_diff_overlap()
+
+        return doverlap
 
     def _finite_diff_overlap(self, delta=1E-5):
         "Calculates the gradient of the overlap using finite differences"
-        return 0
+        # Instantiate Tensor for overlapp diff with dim: [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ]
+        overlap_dim = self.overlap.size()[-2::]
+        postions_dim = self.geometry._positions.size()
+        doverlap_dim = postions_dim + overlap_dim
+        doverlap = torch.zeros(doverlap_dim, device=self.device, dtype=self.dtype)
+       # dgeometry = copy.copy(self.geometry)
+       # dgeometry.positions[0,0] += delta
+       # doverlap = (self.s_feed.matrix(dgeometry, self.orbs) - self.overlap) / delta
+       # print(doverlap)
+
+        return doverlap
 
 
     def reset(self):
