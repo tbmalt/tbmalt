@@ -455,7 +455,7 @@ class Dftb1(Calculator):
 
         return doverlap
 
-    def _finite_diff_overlap(self, delta=1E-5):
+    def _finite_diff_overlap(self, delta=900):
         "Calculates the gradient of the overlap using finite differences"
         # Instantiate Tensor for overlapp diff with dim: [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ]
         overlap_dim = self.overlap.size()[-2::]
@@ -463,12 +463,22 @@ class Dftb1(Calculator):
         print(postions_dim)
         doverlap_dim = postions_dim + overlap_dim
         doverlap = torch.zeros(doverlap_dim, device=self.device, dtype=self.dtype)
-        dgeometry = copy.copy(self.geometry)
-        #dgeometry._positions[:,0, 0] += delta
-        dgeometry._positions = self.geometry._positions.flatten()
-        dgeometry._positions[0::3*postions_dim[-2]] += delta
+       # dgeometry = copy.copy(self.geometry)
+       # dgeometry._positions = self.geometry._positions.flatten()
+       # dgeometry._positions[14::3*postions_dim[-2]] += delta
+
        # doverlap = (self.s_feed.matrix(dgeometry, self.orbs) - self.overlap) / delta
        # print(doverlap)
+
+        for atom_idx in range(self.geometry.atomic_numbers.size(-1)*3):
+            dgeometry = copy.deepcopy(self.geometry)
+            temp_pos = dgeometry._positions.flatten()
+            temp_pos[atom_idx::3*postions_dim[-2]] += delta
+            dgeometry._positions = temp_pos.unflatten(dim=0, sizes=postions_dim)
+            print(atom_idx)
+            print(dgeometry._positions)
+            print('##########')
+            print(self.geometry._positions)
 
         return dgeometry._positions.unflatten(dim=0, sizes=postions_dim)
 
