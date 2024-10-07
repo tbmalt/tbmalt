@@ -460,14 +460,17 @@ class Dftb1(Calculator):
         # Instantiate Tensor for overlapp diff with dim: [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ]
         overlap_dim = self.overlap.size()[-2::]
         postions_dim = self.geometry._positions.size()
+        print(postions_dim)
         doverlap_dim = postions_dim + overlap_dim
         doverlap = torch.zeros(doverlap_dim, device=self.device, dtype=self.dtype)
-       # dgeometry = copy.copy(self.geometry)
-       # dgeometry.positions[0,0] += delta
+        dgeometry = copy.copy(self.geometry)
+        #dgeometry._positions[:,0, 0] += delta
+        dgeometry._positions = self.geometry._positions.flatten()
+        dgeometry._positions[0::3*postions_dim[-2]] += delta
        # doverlap = (self.s_feed.matrix(dgeometry, self.orbs) - self.overlap) / delta
        # print(doverlap)
 
-        return doverlap
+        return dgeometry._positions.unflatten(dim=0, sizes=postions_dim)
 
 
     def reset(self):
