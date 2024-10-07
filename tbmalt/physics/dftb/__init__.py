@@ -456,16 +456,22 @@ class Dftb1(Calculator):
         return doverlap
 
     def _finite_diff_overlap(self, delta=900):
-        "Calculates the gradient of the overlap using finite differences"
+        """Calculates the gradient of the overlap using finite differences
+        
+        Arguments:
+            delta: step size for finite differences
+
+        Returns:
+            doverlap: gradients of the overlap matrix for each atom and corresponding coordinates.
+                The returned Tensor has the dimensions [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ].
+                The atoms for each batch are ordered in the same way as given by geomytry.atomic_numbers.
+        """
         # Instantiate Tensor for overlapp diff with dim: [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ]
         overlap_dim = self.overlap.size()[-2::]
         postions_dim = self.geometry._positions.size()
         print(postions_dim)
         doverlap_dim = postions_dim + overlap_dim
         doverlap = torch.zeros(doverlap_dim, device=self.device, dtype=self.dtype)
-       # dgeometry = copy.copy(self.geometry)
-       # dgeometry._positions = self.geometry._positions.flatten()
-       # dgeometry._positions[14::3*postions_dim[-2]] += delta
 
        # doverlap = (self.s_feed.matrix(dgeometry, self.orbs) - self.overlap) / delta
        # print(doverlap)
@@ -476,11 +482,21 @@ class Dftb1(Calculator):
             temp_pos[atom_idx::3*postions_dim[-2]] += delta
             dgeometry._positions = temp_pos.unflatten(dim=0, sizes=postions_dim)
             print(atom_idx)
-            print(dgeometry._positions)
-            print('##########')
-            print(self.geometry._positions)
+            #print(dgeometry._positions)
+            #print('##########')
+            #print(self.geometry._positions)
 
-        return dgeometry._positions.unflatten(dim=0, sizes=postions_dim)
+            temp_overlap = self.s_feed.matrix(dgeometry, self.orbs)
+            print(temp_overlap)
+            print('###############')
+            print(doverlap.size())
+            print('current atom = ', int(atom_idx / 3))
+            print('current coord =' , atom_idx % 3)
+            doverlap[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_overlap - self.overlap) / delta
+            print('!!!!!!!!!!!!!!!!!!!')
+        print(doverlap)
+
+        return doverlap
 
 
     def reset(self):
