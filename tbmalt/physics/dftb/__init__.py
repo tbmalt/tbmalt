@@ -445,15 +445,10 @@ class Dftb1(Calculator):
     def forces(self):
         """Forces acting on the atoms"""
 
-        # Calculate gradient of h0 and overlap via finite differences.
-        #delta = 1
-        #dgeometry = copy.copy(self.geometry)
-        #dgeometry.positions = dgeometry.positions + delta
-        #doverlap = ( self.s_feed.matrix(dgeometry, self.orbs) - self.s_feed.matrix(self.geometry, self.orbs) )/delta
-
         doverlap = self._finite_diff_overlap()
+        dhamiltonian = self._finite_diff_h0()
 
-        return doverlap
+        return dhamiltonian
 
     def _finite_diff_overlap(self, delta=900):
         """Calculates the gradient of the overlap using finite differences
@@ -486,6 +481,43 @@ class Dftb1(Calculator):
 
         return doverlap
 
+    def _finite_diff_overlap_h0(self, delta=900):
+        """Calculates the gradient of the overlap using finite differences
+        
+        Arguments:
+            delta: step size for finite differences
+
+        Returns:
+            doverlap: gradients of the overlap matrix for each atom and corresponding coordinates.
+                The returned Tensor has the dimensions [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ].
+                The atoms for each batch are ordered in the same way as given by geomytry.atomic_numbers.
+        """
+        # Instantiate Tensor for overlapp diff with dim: [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ]
+        overlap_dim = self.overlap.size()[-2::]
+        h0_dim = self.hamiltonian.size()[-2::]
+        postions_dim = self.geometry._positions.size()
+        doverlap_dim = postions_dim + overlap_dim
+        dh0_dim = postions_dim + h0_dim
+
+        doverlap = torch.zeros(doverlap_dim, device=self.device, dtype=self.dtype)
+        dh0 = torch.zeros(dh0_dim, device=self.device, dtype=self.dtype)
+
+        for atom_idx in range(self.geometry.atomic_numbers.size(-1)*3):
+            # Make full copy of original geometry and change position
+            dgeometry = copy.deepcopy(self.geometry)
+            # The following changes the atom_idx-nth coordinate of the geometry for each batch
+            temp_pos = dgeometry._positions.flatten()
+            temp_pos[atom_idx::3*postions_dim[-2]] += delta
+            # Set the changed positions for the dgeometry
+            dgeometry._positions = temp_pos.unflatten(dim=0, sizes=postions_dim)
+            # Calculate temporary overlap matrix with the shifted geometry then finite difference
+            temp_overlap = self.s_feed.matrix(dgeometry, self.orbs)
+            temp_h0 = self.h_feed.matrix(dgeometry, self.orbs)
+
+            doverlap[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_overlap - self.overlap) / delta
+            dh0[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_h0 - self.hamiltonian) / delta
+
+        return doverlap, dh0
 
     def reset(self):
         """Reset all attributes and cached properties."""
