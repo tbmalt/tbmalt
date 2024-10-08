@@ -445,10 +445,9 @@ class Dftb1(Calculator):
     def forces(self):
         """Forces acting on the atoms"""
 
-        doverlap = self._finite_diff_overlap()
-        dhamiltonian = self._finite_diff_h0()
+        doverlap, dh0 = self._finite_diff_overlap_h0()
 
-        return dhamiltonian
+        return dh0 
 
     def _finite_diff_overlap(self, delta=900):
         """Calculates the gradient of the overlap using finite differences
