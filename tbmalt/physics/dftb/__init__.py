@@ -469,32 +469,20 @@ class Dftb1(Calculator):
         # Instantiate Tensor for overlapp diff with dim: [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ]
         overlap_dim = self.overlap.size()[-2::]
         postions_dim = self.geometry._positions.size()
-        print(postions_dim)
         doverlap_dim = postions_dim + overlap_dim
         doverlap = torch.zeros(doverlap_dim, device=self.device, dtype=self.dtype)
 
-       # doverlap = (self.s_feed.matrix(dgeometry, self.orbs) - self.overlap) / delta
-       # print(doverlap)
-
         for atom_idx in range(self.geometry.atomic_numbers.size(-1)*3):
+            # Make full copy of original geometry and change position
             dgeometry = copy.deepcopy(self.geometry)
+            # The following changes the atom_idx-nth coordinate of the geometry for each batch
             temp_pos = dgeometry._positions.flatten()
             temp_pos[atom_idx::3*postions_dim[-2]] += delta
+            # Set the changed positions for the dgeometry
             dgeometry._positions = temp_pos.unflatten(dim=0, sizes=postions_dim)
-            print(atom_idx)
-            #print(dgeometry._positions)
-            #print('##########')
-            #print(self.geometry._positions)
-
+            # Calculate temporary overlap matrix with the shifted geometry then finite difference
             temp_overlap = self.s_feed.matrix(dgeometry, self.orbs)
-            print(temp_overlap)
-            print('###############')
-            print(doverlap.size())
-            print('current atom = ', int(atom_idx / 3))
-            print('current coord =' , atom_idx % 3)
             doverlap[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_overlap - self.overlap) / delta
-            print('!!!!!!!!!!!!!!!!!!!')
-        print(doverlap)
 
         return doverlap
 
