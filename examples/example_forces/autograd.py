@@ -19,10 +19,10 @@ shell_dict = {1: [0], 8: [0, 1]}
 H2O = Geometry(torch.tensor([8, 1, 1]), 
                torch.tensor([[0.0, 0.0, 0.0],
                              [0.0, 0.8, -0.5],
-                             [0.0, -0.8, -0.5]], requires_grad=False),
+                             [0.0, -0.8, -0.5]], requires_grad=True),
                units='angstrom'
                )
-H2O.positions.requires_grad_(True)
+#H2O.positions.requires_grad_(True)
 print('Positions:', H2O.positions)
 
 orbital_info = OrbitalInfo(H2O.atomic_numbers, shell_dict, shell_resolved=False)
