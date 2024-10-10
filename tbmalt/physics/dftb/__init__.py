@@ -446,8 +446,14 @@ class Dftb1(Calculator):
         """Forces acting on the atoms"""
 
         doverlap, dh0 = self._finite_diff_overlap_h0()
+        # Use the already calculated density matrix rho_mu,nu
+        density = self.rho
+        # Calculate energy weighted density matrix
+        temp_dens = torch.einsum(  # Scaled occupancy values
+            '...i,...ji->...ji', torch.sqrt(self.occupancy * self.eig_values), self.eig_vectors)
+        rho_weighted = temp_dens @ temp_dens.transpose(-1, -2).conj()
 
-        return dh0 
+        return (rho_weighted.size(), density.size(), doverlap.size(), dh0.size())
 
     def _finite_diff_overlap(self, delta=900):
         """Calculates the gradient of the overlap using finite differences
