@@ -457,42 +457,17 @@ class Dftb1(Calculator):
         
         rho_weighted = temp_dens_weighted @ temp_dens.transpose(-1, -2).conj()
 
+        #TODO something in this summation seems to be wrong (it returns non padded tensor for first batch)
         force = torch.einsum('...mn,...acmn->...ac', density, dh0) + torch.einsum('...mn,...acmn->...ac', rho_weighted, doverlap)
+
+        print(self.geometry.atomic_numbers)
+        #print(dh0[0])
+        #print(doverlap[0])
+        print(rho_weighted[0])
 
         return force
 
-    def _finite_diff_overlap(self, delta=900):
-        """Calculates the gradient of the overlap using finite differences
-        
-        Arguments:
-            delta: step size for finite differences
-
-        Returns:
-            doverlap: gradients of the overlap matrix for each atom and corresponding coordinates.
-                The returned Tensor has the dimensions [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ].
-                The atoms for each batch are ordered in the same way as given by geomytry.atomic_numbers.
-        """
-        # Instantiate Tensor for overlapp diff with dim: [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ]
-        overlap_dim = self.overlap.size()[-2::]
-        postions_dim = self.geometry._positions.size()
-        doverlap_dim = postions_dim + overlap_dim
-        doverlap = torch.zeros(doverlap_dim, device=self.device, dtype=self.dtype)
-
-        for atom_idx in range(self.geometry.atomic_numbers.size(-1)*3):
-            # Make full copy of original geometry and change position
-            dgeometry = copy.deepcopy(self.geometry)
-            # The following changes the atom_idx-nth coordinate of the geometry for each batch
-            temp_pos = dgeometry._positions.flatten()
-            temp_pos[atom_idx::3*postions_dim[-2]] += delta
-            # Set the changed positions for the dgeometry
-            dgeometry._positions = temp_pos.unflatten(dim=0, sizes=postions_dim)
-            # Calculate temporary overlap matrix with the shifted geometry then finite difference
-            temp_overlap = self.s_feed.matrix(dgeometry, self.orbs)
-            doverlap[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_overlap - self.overlap) / delta
-
-        return doverlap
-
-    def _finite_diff_overlap_h0(self, delta=900):
+    def _finite_diff_overlap_h0(self, delta=0.025):
         """Calculates the gradient of the overlap using finite differences
         
         Arguments:
