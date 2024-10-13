@@ -48,5 +48,7 @@ dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard
 # Run a SCF calculation
 dftb_calculator(geos, orbital_info)
 
+dftb_calculator.total_energy
+
 forces = dftb_calculator.forces
 print(forces)

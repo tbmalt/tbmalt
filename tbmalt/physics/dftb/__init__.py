@@ -450,10 +450,16 @@ class Dftb1(Calculator):
         density = self.rho
         # Calculate energy weighted density matrix
         temp_dens = torch.einsum(  # Scaled occupancy values
-            '...i,...ji->...ji', torch.sqrt(self.occupancy * self.eig_values), self.eig_vectors)
-        rho_weighted = temp_dens @ temp_dens.transpose(-1, -2).conj()
+            '...i,...ji->...ji', torch.sqrt(self.occupancy), self.eig_vectors)
+        #TODO This is currently a workaround to include the energy (eigenvalues) but should be solved in a better way
+        temp_dens_weighted = torch.einsum(  # Scaled occupancy values
+            '...i,...ji->...ji', self.eig_values * torch.sqrt(self.occupancy), self.eig_vectors)
+        
+        rho_weighted = temp_dens_weighted @ temp_dens.transpose(-1, -2).conj()
 
-        return (rho_weighted.size(), density.size(), doverlap.size(), dh0.size())
+        force = torch.einsum('...mn,...acmn->...ac', density, dh0) + torch.einsum('...mn,...acmn->...ac', rho_weighted, doverlap)
+
+        return force
 
     def _finite_diff_overlap(self, delta=900):
         """Calculates the gradient of the overlap using finite differences
