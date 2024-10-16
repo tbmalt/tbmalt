@@ -1385,12 +1385,10 @@ class RepulsiveSplineFeed(Feed):
         # normed version of the distance vectors
         normed_distance_vectors = geo.distance_vectors / geo.distances.unsqueeze(-1)
         normed_distance_vectors[normed_distance_vectors.isnan()] = 0
-
+        
         for indx_pair in indx_pairs:
-            print(indx_pair)
             atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
             atomnum2 = geo.atomic_numbers[..., indx_pair[1]].reshape((batch_size, ))
-            print((atomnum1, atomnum2))
 
             distance = geo.distances[..., indx_pair[0], indx_pair[1]].reshape((batch_size, ))
 
@@ -1400,7 +1398,9 @@ class RepulsiveSplineFeed(Feed):
                 add_Erep, add_dErep = self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx])
                 #Erep[batch_indx] += self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx])[0]
                 Erep[batch_indx] += add_Erep
-                dErep[batch_indx] += add_dErep
+
+                dErep[batch_indx, indx_pair[0]] += add_dErep*normed_distance_vectors[batch_indx, indx_pair[0], indx_pair[1]]
+                dErep[batch_indx, indx_pair[1]] += add_dErep*normed_distance_vectors[batch_indx, indx_pair[1], indx_pair[0]]
 
         return Erep
 

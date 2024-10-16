@@ -51,4 +51,4 @@ dftb_calculator(geos, orbital_info)
 dftb_calculator.total_energy
 
 forces = dftb_calculator.forces
-#print(forces)
+print(forces)
