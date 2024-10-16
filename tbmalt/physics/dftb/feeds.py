@@ -1381,10 +1381,16 @@ class RepulsiveSplineFeed(Feed):
         
         Erep = torch.zeros((batch_size), device=self.device, dtype=self.dtype)
         dErep = torch.zeros((batch_size, geo.atomic_numbers.size(dim=-1), 3), device=self.device, dtype=self.dtype)
-        print(dErep)
+        
+        # normed version of the distance vectors
+        normed_distance_vectors = geo.distance_vectors / geo.distances.unsqueeze(-1)
+        normed_distance_vectors[normed_distance_vectors.isnan()] = 0
+
         for indx_pair in indx_pairs:
+            print(indx_pair)
             atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
             atomnum2 = geo.atomic_numbers[..., indx_pair[1]].reshape((batch_size, ))
+            print((atomnum1, atomnum2))
 
             distance = geo.distances[..., indx_pair[0], indx_pair[1]].reshape((batch_size, ))
 
