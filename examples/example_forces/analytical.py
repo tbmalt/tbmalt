@@ -29,8 +29,8 @@ CO2 = Geometry(torch.Tensor([6, 8, 8]),
                )
 
 geos = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
-print(geos._positions)
-print(geos.atomic_numbers)
+#print(geos._positions)
+#print(geos.atomic_numbers)
 
 
 orbital_info = OrbitalInfo(geos.atomic_numbers, shell_dict, shell_resolved=False)
@@ -51,4 +51,4 @@ dftb_calculator(geos, orbital_info)
 dftb_calculator.total_energy
 
 forces = dftb_calculator.forces
-print(forces)
+#print(forces)

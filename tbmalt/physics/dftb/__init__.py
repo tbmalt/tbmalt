@@ -465,7 +465,7 @@ class Dftb1(Calculator):
         #force = (density.unsqueeze(1).unsqueeze(1)*dh0).sum(-1).sum(-1)
 
 
-        print(self.geometry.atomic_numbers)
+        #print(self.geometry.atomic_numbers)
         #print(dh0[0].size())
         #print(self.hamiltonian[0].size())
 

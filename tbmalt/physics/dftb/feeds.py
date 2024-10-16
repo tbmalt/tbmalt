@@ -1380,7 +1380,8 @@ class RepulsiveSplineFeed(Feed):
         indx_pairs = torch.combinations(indxs)
         
         Erep = torch.zeros((batch_size), device=self.device, dtype=self.dtype)
-        dErep = torch.zeros((batch_size), device=self.device, dtype=self.dtype)
+        dErep = torch.zeros((batch_size, geo.atomic_numbers.size(dim=-1), 3), device=self.device, dtype=self.dtype)
+        print(dErep)
         for indx_pair in indx_pairs:
             atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
             atomnum2 = geo.atomic_numbers[..., indx_pair[1]].reshape((batch_size, ))
@@ -1390,7 +1391,6 @@ class RepulsiveSplineFeed(Feed):
             for batch_indx in range(batch_size):
                 if atomnum1[batch_indx] == 0 or atomnum2[batch_indx] == 0:
                     continue
-                print(self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx]))
                 add_Erep, add_dErep = self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx])
                 #Erep[batch_indx] += self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx])[0]
                 Erep[batch_indx] += add_Erep
