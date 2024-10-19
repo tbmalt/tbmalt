@@ -458,7 +458,7 @@ class Dftb1(Calculator):
         rho_weighted = temp_dens_weighted @ temp_dens.transpose(-1, -2).conj()
 
         #TODO something in this summation seems to be wrong (it returns non padded tensor for first batch)
-        force = torch.einsum('...mn,...acmn->...ac', density, dh0) + torch.einsum('...mn,...acmn->...ac', rho_weighted, doverlap)
+        force = torch.einsum('...mn,...acmn->...ac', density, dh0) + torch.einsum('...mn,...acmn->...ac', rho_weighted, doverlap) - self.r_feed.dErep
 
         #force = (density * dh0).sum(-1).sum(-1)
 

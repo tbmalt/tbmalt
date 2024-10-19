@@ -1351,6 +1351,7 @@ class RepulsiveSplineFeed(Feed):
 
     def __init__(self, spline_data: Dict[Tuple, Tensor]):
         self.spline_data = {frozenset(interaction_pairs):data for interaction_pairs,data in spline_data.items()}
+        self.dErep = 0
 
     @property
     def dtype(self) -> torch.dtype:
@@ -1402,6 +1403,7 @@ class RepulsiveSplineFeed(Feed):
                 dErep[batch_indx, indx_pair[0]] += add_dErep*normed_distance_vectors[batch_indx, indx_pair[0], indx_pair[1]]
                 dErep[batch_indx, indx_pair[1]] += add_dErep*normed_distance_vectors[batch_indx, indx_pair[1], indx_pair[0]]
 
+        self.dErep = dErep
         return Erep
 
     def _repulsive_calc(self, distance: Tensor, atomnum1: Union[Tensor, int], atomnum2: Union[Tensor, int]) -> Tensor:
