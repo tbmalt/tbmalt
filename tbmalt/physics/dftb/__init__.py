@@ -518,6 +518,8 @@ class Dftb2(Dftb1):
         invr: the 1/R matrix.
         hamiltonian: second order Hamiltonian matrix as produced via the SCC
             cycle.
+        scc_energy: energy contribution from charge fluctuation via the SCC
+            cycle.
         converged: a tensor of booleans indicating which systems have and
             have not converged (True if converged). This can be used during
             training, along side `suppress_SCF_error`, to allow unconverged
@@ -649,7 +651,6 @@ class Dftb2(Dftb1):
         if self._core_hamiltonian is None:
             self._core_hamiltonian = self.h_feed.matrix_from_calculator(self)
 
-
         return self._core_hamiltonian
 
     @core_hamiltonian.setter
@@ -686,6 +687,23 @@ class Dftb2(Dftb1):
     @gamma.setter
     def gamma(self, value):
         self._gamma = value
+
+    @property
+    def core_band_energy(self):
+        """Core_band_energy"""
+        return ((self.rho * self.core_hamiltonian).sum(-1).sum(-1))
+
+    @property
+    def scc_energy(self):
+        """Energy contribution from charge fluctuation"""
+        q_delta = _mulliken(self.rho, self.overlap, self.orbs) - self.q_zero_res
+        shifts = torch.einsum('...i,...ij->...j', q_delta, self.gamma)
+        return .5 * (shifts * q_delta).sum(-1)
+
+    @property
+    def total_energy(self):
+        """Total system energy"""
+        return self.core_band_energy + self.scc_energy + self.repulsive_energy
 
     def forward(self, cache: Optional[Dict[str, Any]] = None
                 , **kwargs) -> Tensor:
@@ -845,7 +863,7 @@ class Dftb2(Dftb1):
 
         # Calculate and return the total system energy, taking into account
         # the entropy term as and when necessary.
-        return self.mermin_energy
+        return self.total_energy
 
     def __cull(self, mask: Tensor):
         """Cull converged systems from the calculator instance.

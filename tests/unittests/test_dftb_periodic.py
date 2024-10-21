@@ -89,6 +89,9 @@ def H2_scc(device):
         'q_final_atomic': torch.tensor([
             +1.000000000000000E+00, +1.000000000000000E+00],
             device=device),
+        'band_energy': torch.tensor(-1.2424910092, device=device),
+        'core_band_energy': torch.tensor(-1.2424910092, device=device),
+        'scc_energy': torch.tensor(0.0000000000, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -157,6 +160,9 @@ def CH4_scc(device):
             4.6123999558687441, 0.83319744713571420, 0.85270457628532692,
             0.85179367706689479, 0.84990434364332379],
             device=device),
+        'band_energy': torch.tensor(-3.0733021165, device=device),
+        'core_band_energy': torch.tensor(-3.1532140266, device=device),
+        'scc_energy': torch.tensor(0.0067918553, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -219,6 +225,9 @@ def H2O_scc(device):
         'q_final_atomic': torch.tensor([
             0.69168110898393897, 6.6004334231842421, 0.70788546783182138],
             device=device),
+        'band_energy': torch.tensor(-3.6933637908, device=device),
+        'core_band_energy': torch.tensor(-4.1565716533, device=device),
+        'scc_energy': torch.tensor(0.0182313218, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -295,6 +304,9 @@ def C2H6_scc(device):
             0.93768012543326973, 0.93757380742508800, 0.93772828820761100,
             0.93742072783044328, 0.93780871965928714],
             device=device),
+        'band_energy': torch.tensor(-5.6277033348, device=device),
+        'core_band_energy': torch.tensor(-5.7318750500, device=device),
+        'scc_energy': torch.tensor(0.0017586419, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -326,7 +338,7 @@ def merge_systems(device, *systems):
     return geometry, orbs, results, kwargs
 
 
-def dftb_helper(calculator, geometry, orbs, results):
+def dftb1_helper(calculator, geometry, orbs, results):
 
     # Trigger the calculation
     _ = calculator(geometry, orbs)
@@ -348,6 +360,31 @@ def dftb_helper(calculator, geometry, orbs, results):
     check_allclose('q_final_atomic')
 
 
+def dftb2_helper(calculator, geometry, orbs, results):
+
+    # Trigger the calculation
+    _ = calculator(geometry, orbs)
+
+    # Ensure that the `hamiltonian` and `overlap` properties return the correct
+    # matrices. We do not need to actually check if the matrices are themselves
+    # correct as this is something that is something that is done by the unit
+    # tests for those feeds. Furthermore, any errors in said matrix will cause
+    # many of the computed properties to be incorrect.
+
+    def check_allclose(i):
+        predicted = getattr(calculator, i)
+        is_close = torch.allclose(predicted, results[i], atol=1E-10)
+        assert is_close, f'Attribute {i} is in error for system {geometry}'
+        if isinstance(predicted, torch.Tensor):
+            device_check = predicted.device == calculator.device
+            assert device_check, f'Attribute {i} was returned on the wrong device'
+
+    check_allclose('q_final_atomic')
+    check_allclose('band_energy')
+    check_allclose('core_band_energy')
+    check_allclose('scc_energy')
+
+
 def test_dftb1_single(device, feeds_nscc):
     h_feed, s_feed, o_feed = feeds_nscc
 
@@ -358,7 +395,7 @@ def test_dftb1_single(device, feeds_nscc):
 
         calculator = Dftb1(h_feed, s_feed, o_feed, **kwargs)
 
-        dftb_helper(calculator, geometry, orbs, results)
+        dftb1_helper(calculator, geometry, orbs, results)
 
 
 def test_dftb1_batch(device, feeds_nscc):
@@ -373,7 +410,7 @@ def test_dftb1_batch(device, feeds_nscc):
         calculator = Dftb1(h_feed, s_feed, o_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
 
-        dftb_helper(calculator, geometry, orbs, results)
+        dftb1_helper(calculator, geometry, orbs, results)
 
 
 def test_dftb2_single(device, feeds_scc):
@@ -388,7 +425,7 @@ def test_dftb2_single(device, feeds_scc):
 
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
 
-        dftb_helper(calculator, geometry, orbs, results)
+        dftb2_helper(calculator, geometry, orbs, results)
 
 
 def test_dftb2_batch(device, feeds_scc):
@@ -403,4 +440,4 @@ def test_dftb2_batch(device, feeds_scc):
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
 
-        dftb_helper(calculator, geometry, orbs, results)
+        dftb2_helper(calculator, geometry, orbs, results)
