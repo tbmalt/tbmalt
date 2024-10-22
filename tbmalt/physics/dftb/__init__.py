@@ -458,7 +458,7 @@ class Dftb1(Calculator):
         rho_weighted = temp_dens_weighted @ temp_dens.transpose(-1, -2).conj()
 
         #TODO something in this summation seems to be wrong (it returns non padded tensor for first batch)
-        force = torch.einsum('...mn,...acmn->...ac', density, dh0) + torch.einsum('...mn,...acmn->...ac', rho_weighted, doverlap) - self.r_feed.dErep
+        force = - torch.einsum('...nm,...acmn->...ac', density, dh0) + torch.einsum('...nm,...acmn->...ac', rho_weighted, doverlap) - self.r_feed.dErep
 
         #force = (density * dh0).sum(-1).sum(-1)
 
@@ -503,14 +503,18 @@ class Dftb1(Calculator):
             # Calculate temporary overlap matrix with the shifted geometry then finite difference
             temp_overlap = self.s_feed.matrix(dgeometry, self.orbs)
             temp_h0 = self.h_feed.matrix(dgeometry, self.orbs)
+            print('#######################################')
+            print(dgeometry._positions)
+            print(self.geometry._positions)
+            print(temp_h0 - self.hamiltonian)
 
             doverlap[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_overlap - self.overlap) / delta
             dh0[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_h0 - self.hamiltonian) / delta
 
         # Mask to add padded values which have been falsely calculated before
-        mask = self.geometry.atomic_numbers == 0
-        doverlap[mask] = torch.zeros_like(doverlap[mask])
-        dh0[mask] = torch.zeros_like(dh0[mask])
+        #mask = self.geometry.atomic_numbers == 0
+        #doverlap[mask] = torch.zeros_like(doverlap[mask])
+        #dh0[mask] = torch.zeros_like(dh0[mask])
 
         return doverlap, dh0
 

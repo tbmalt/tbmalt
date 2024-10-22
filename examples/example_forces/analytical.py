@@ -2,7 +2,7 @@ import torch
 from ase.build import molecule
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml.module import Calculator
-from tbmalt.physics.dftb import Dftb2
+from tbmalt.physics.dftb import Dftb1
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed, RepulsiveSplineFeed
 
 # Define global constants
@@ -43,7 +43,8 @@ hubbard_feed = HubbardFeed.from_database(path, species)
 repulsive_feed = RepulsiveSplineFeed.from_database(path, species)
 
 # Set up the calculator
-dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
+#dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
+dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, r_feed=repulsive_feed)
 
 # Run a SCF calculation
 dftb_calculator(geos, orbital_info)
