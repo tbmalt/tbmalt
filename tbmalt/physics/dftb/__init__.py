@@ -448,6 +448,7 @@ class Dftb1(Calculator):
         doverlap, dh0 = self._finite_diff_overlap_h0()
         # Use the already calculated density matrix rho_mu,nu
         density = self.rho
+        print('Density:', density)
         # Calculate energy weighted density matrix
         temp_dens = torch.einsum(  # Scaled occupancy values
             '...i,...ji->...ji', torch.sqrt(self.occupancy), self.eig_vectors)
@@ -456,13 +457,15 @@ class Dftb1(Calculator):
             '...i,...ji->...ji', self.eig_values * torch.sqrt(self.occupancy), self.eig_vectors)
         
         rho_weighted = temp_dens_weighted @ temp_dens.transpose(-1, -2).conj()
+        print('Rho weighted:', rho_weighted)
 
         #TODO something in this summation seems to be wrong (it returns non padded tensor for first batch)
-        force = - torch.einsum('...nm,...acmn->...ac', density, dh0) + torch.einsum('...nm,...acmn->...ac', rho_weighted, doverlap) - self.r_feed.dErep
+        force = - torch.einsum('...nm,...acmn->...ac', density, dh0) + torch.einsum('...nm,...acmn->...ac', rho_weighted, doverlap) #- self.r_feed.dErep
+        #force = self.r_feed.dErep
 
         return force
 
-    def _finite_diff_overlap_h0(self, delta=0.025):
+    def _finite_diff_overlap_h0(self, delta=1.0e-2):
         """Calculates the gradient of the overlap using finite differences
         
         Arguments:

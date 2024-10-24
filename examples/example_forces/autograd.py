@@ -1,29 +1,41 @@
 import torch
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml.module import Calculator
-from tbmalt.physics.dftb import Dftb2
+from tbmalt.physics.dftb import Dftb1
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed, RepulsiveSplineFeed
 
 # Define global constants
 torch.set_default_dtype(torch.float64)
 torch.autograd.set_detect_anomaly(True)
 
+print('-------------------------')
+print('autograd')
+
 # File with the sk data
 path = './auorg.hdf5'
 
-species = [1, 8]
+#species = [1, 8]
+species = [1]
 
-shell_dict = {1: [0], 8: [0, 1]}
+#shell_dict = {1: [0], 8: [0, 1]}
+shell_dict = {1: [0]}
 
 # Set up geometry
-H2O = Geometry(torch.tensor([8, 1, 1]), 
+#H2O = Geometry(torch.tensor([8, 1, 1]), 
+#               torch.tensor([[0.0, 0.0, 0.0],
+#                             [0.0, 0.8, -0.5],
+#                             [0.0, -0.8, -0.5]], requires_grad=True),
+#               units='angstrom'
+#               )
+#H2O.positions.requires_grad_(True)
+#print('Positions:', H2O.positions)
+
+H2 = Geometry(torch.tensor([1, 1]), 
                torch.tensor([[0.0, 0.0, 0.0],
-                             [0.0, 0.8, -0.5],
-                             [0.0, -0.8, -0.5]], requires_grad=True),
+                             [0.0, 0.0, 0.5]], requires_grad=True),
                units='angstrom'
                )
-#H2O.positions.requires_grad_(True)
-print('Positions:', H2O.positions)
+H2O = H2
 
 orbital_info = OrbitalInfo(H2O.atomic_numbers, shell_dict, shell_resolved=False)
 
@@ -35,7 +47,8 @@ hubbard_feed = HubbardFeed.from_database(path, species)
 repulsive_feed = RepulsiveSplineFeed.from_database(path, species)
 
 # Set up the calculator
-dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
+#dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
+dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, r_feed=repulsive_feed)
 
 # Run a SCF calculation
 energy = dftb_calculator(H2O, orbital_info)
