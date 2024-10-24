@@ -202,9 +202,14 @@ def test_scipyskfeed_pbc_batch(device, skf_file: str):
 # tbmalt.physics.dftb.feeds.SkFeed #
 #########################################
 
+
 # Single
 def test_skffeed_pbc_single(device, skf_file: str):
     """SkFeed matrix single system operability tolerance test"""
+
+    # Hmmmm... for some reason the tolerance checks pass when run via PyTest
+    # but fail if run manually.
+
     b_def = {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
     H_feed = SkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
@@ -219,6 +224,7 @@ def test_skffeed_pbc_single(device, skf_file: str):
         check_1 = torch.allclose(H, H_ref, atol=1E-12)
         check_2 = torch.allclose(S, S_ref, atol=1E-12)
         check_3 = H.device == device
+
         assert check_1, f'SkFeed H matrix outside of tolerance ({sys})'
         assert check_2, f'SkFeed S matrix outside of tolerance ({sys})'
         assert check_3, 'SkFeed.matrix returned on incorrect device'
@@ -250,4 +256,3 @@ def test_skffeed_pbc_batch(device, skf_file: str):
     assert check_2, 'SkFeed S matrix outside of tolerance (batch)'
     assert check_3, 'SkFeed.matrix returned on incorrect device'
     assert check_4, 'Failure to operate on batches of size "one"'
-

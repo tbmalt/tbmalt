@@ -288,8 +288,8 @@ class DFTB_DDP(nn.Module):
 
     def __init__(self):
         super(DFTB_DDP, self).__init__()
-        h_var = [val.coefficients for key, val in h_feed.off_sites.items()]
-        s_var = [val.coefficients for key, val in s_feed.off_sites.items()]
+        h_var = [val.coefficients for key, val in h_feed._off_sites.items()]
+        s_var = [val.coefficients for key, val in s_feed._off_sites.items()]
         variable = h_var + s_var
 
         self.parameters = nn.ParameterList([nn.Parameter(ivar)
@@ -304,11 +304,11 @@ class DFTB_DDP(nn.Module):
         h_var_u = var[:len(var)//2]
         s_var_u = var[len(var)//2:]
         ii = 0
-        for key, val in h_feed_p.off_sites.items():
+        for key, val in h_feed_p._off_sites.items():
             val.coefficients = h_var_u[ii]
             ii = ii + 1
         ii = 0
-        for key, val in s_feed_p.off_sites.items():
+        for key, val in s_feed_p._off_sites.items():
             val.coefficients = s_var_u[ii]
             ii = ii + 1
 
@@ -369,11 +369,11 @@ def main(rank, world_size, dataset_train, dataset_test, data_train_dos):
             h_var_u = var[:len(var)//2]
             s_var_u = var[len(var)//2:]
             ii = 0
-            for key, val in h_feed_p.off_sites.items():
+            for key, val in h_feed_p._off_sites.items():
                 val.coefficients = h_var_u[ii]
                 ii = ii + 1
             ii = 0
-            for key, val in s_feed_p.off_sites.items():
+            for key, val in s_feed_p._off_sites.items():
                 val.coefficients = s_var_u[ii]
                 ii = ii + 1
             test(0, 1, dataset_test, h_feed_p, s_feed_p)

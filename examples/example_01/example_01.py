@@ -103,13 +103,13 @@ lr = 0.002
 criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
 
 h_var, s_var = [], []
-for key in h_feed.off_sites.keys():
+for key in h_feed._off_sites.keys():
 
     # Collect spline parameters and add to optimizer
-    h_feed.off_sites[key].coefficients.requires_grad_(True)
-    s_feed.off_sites[key].coefficients.requires_grad_(True)
-    h_var.append({'params': h_feed.off_sites[key].coefficients, 'lr': lr})
-    s_var.append({'params': s_feed.off_sites[key].coefficients, 'lr': lr})
+    h_feed._off_sites[key].coefficients.requires_grad_(True)
+    s_feed._off_sites[key].coefficients.requires_grad_(True)
+    h_var.append({'params': h_feed._off_sites[key].coefficients, 'lr': lr})
+    s_var.append({'params': s_feed._off_sites[key].coefficients, 'lr': lr})
 
 optimizer = getattr(torch.optim, 'Adam')(h_var + s_var, lr=lr)
 

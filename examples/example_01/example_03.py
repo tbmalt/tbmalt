@@ -272,8 +272,8 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
                     for iatm in data.geometry.unique_atomic_numbers().tolist()}
 
         # Perform the forwards operation
-        dftb_calculator.h_feed.vcr = this_cr
-        dftb_calculator.s_feed.vcr = this_cr
+        dftb_calculator.h_feed.compression_radii = this_cr
+        dftb_calculator.s_feed.compression_radii = this_cr
         dftb_calculator(data.geometry, orbs)
 
         # Calculate the loss
@@ -303,7 +303,7 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
 
     # store optimized results to dftb calculator
     if global_r:
-        dftb_calculator.h_feed.vcr = comp_r
+        dftb_calculator.h_feed.compression_radii = comp_r
     else:
         dftb_calculator.h_feed.on_sites = onsite_dict
 
@@ -360,7 +360,7 @@ def single_test(dftb_calculator: Dftb2,
 
         # Collect ML input and reference
         x_fit = build_feature(geometry_fit, orbs_fit)
-        y_fit = dftb_calculator.h_feed.vcr.detach()
+        y_fit = dftb_calculator.h_feed.compression_radii.detach()
         y_fit = y_fit[geometry_fit.atomic_numbers.ne(0)]
         x_test = build_feature(geometry_test, orbs_test)
 
@@ -383,17 +383,17 @@ def single_test(dftb_calculator: Dftb2,
                 for iatm in geometry_test.unique_atomic_numbers().tolist()}
 
         # Update predicted compression radii and onsite
-        dftb_calculator.h_feed.vcr = y_pred
-        dftb_calculator.s_feed.vcr = y_pred
+        dftb_calculator.h_feed.compression_radii = y_pred
+        dftb_calculator.s_feed.compression_radii = y_pred
     else:
-        comp_r = dftb_calculator.h_feed.vcr
+        comp_r = dftb_calculator.h_feed.compression_radii
         this_cr = torch.ones(geometry_test.atomic_numbers.shape)
         for ii, iatm in enumerate(geometry_test.unique_atomic_numbers()):
             this_cr[iatm == geometry_test.atomic_numbers] = comp_r[ii]
 
         # Perform the forwards operation
-        dftb_calculator.h_feed.vcr = this_cr
-        dftb_calculator.s_feed.vcr = this_cr
+        dftb_calculator.h_feed.compression_radii = this_cr
+        dftb_calculator.s_feed.compression_radii = this_cr
 
     # Perform DFTB calculations
     dftb_calculator_std(geometry_test, orbs_test)
