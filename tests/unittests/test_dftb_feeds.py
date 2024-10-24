@@ -10,6 +10,7 @@ from ase.build import molecule
 from tbmalt.physics.dftb.feeds import ScipySkFeed, SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.common.batch import pack
+from tbmalt.common.maths.interpolation import CubicSpline, PolyInterpU
 from functools import reduce
 
 torch.set_default_dtype(torch.float64)
@@ -146,14 +147,19 @@ def test_scipyskfeed_batch(device, skf_file: str):
 # Note that gradient tests are not performed on the ScipySkFeed as it is not
 # backpropagatable due to its use of Scipy splines for interpolation.
 
+
+#########################################
+#   tbmalt.physics.dftb.feeds.SkFeed    #
+#########################################
+
 def test_skfeed_poly_single(device, skf_file: str):
     """SkFeed matrix single system operability tolerance test"""
 
     b_def = {1: [0], 6: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
     H_feed = SkFeed.from_database(
-        skf_file, [1, 6, 16, 79], 'hamiltonian', 'polynomial', device=device)
+        skf_file, [1, 6, 16, 79], 'hamiltonian', PolyInterpU, device=device)
     S_feed = SkFeed.from_database(
-        skf_file, [1, 6, 16, 79], 'overlap', 'polynomial', device=device)
+        skf_file, [1, 6, 16, 79], 'overlap', PolyInterpU, device=device)
 
     for mol, H_ref, S_ref in zip(
             molecules(device), hamiltonians(device), overlaps(device)):
@@ -173,9 +179,9 @@ def test_skfeed_poly_batch(device, skf_file: str):
     """SkFeed matrix batch operability tolerance test"""
 
     H_feed = SkFeed.from_database(
-        skf_file, [1, 6, 16, 79], 'hamiltonian', 'polynomial', device=device)
+        skf_file, [1, 6, 16, 79], 'hamiltonian', PolyInterpU, device=device)
     S_feed = SkFeed.from_database(
-        skf_file, [1, 6, 16, 79], 'overlap', 'polynomial', device=device)
+        skf_file, [1, 6, 16, 79], 'overlap', PolyInterpU, device=device)
 
     mols = reduce(lambda i, j: i+j, molecules(device))
     orbs = OrbitalInfo(mols.atomic_numbers,
@@ -201,9 +207,9 @@ def test_skfeed_cubic_single(device, skf_file: str):
 
     b_def = {1: [0], 6: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
     H_feed = SkFeed.from_database(
-        skf_file, [1, 6, 16, 79], 'hamiltonian', 'spline', device=device)
+        skf_file, [1, 6, 16, 79], 'hamiltonian', CubicSpline, device=device)
     S_feed = SkFeed.from_database(
-        skf_file, [1, 6, 16, 79], 'overlap', 'spline', device=device)
+        skf_file, [1, 6, 16, 79], 'overlap', CubicSpline, device=device)
 
     for mol, H_ref, S_ref in zip(
             molecules(device), hamiltonians(device), overlaps(device)):
@@ -223,9 +229,9 @@ def test_skfeed_cubic_batch(device, skf_file: str):
     """SkFeed matrix batch operability tolerance test"""
 
     H_feed = SkFeed.from_database(
-        skf_file, [1, 6, 16, 79], 'hamiltonian', 'spline', device=device)
+        skf_file, [1, 6, 16, 79], 'hamiltonian', CubicSpline, device=device)
     S_feed = SkFeed.from_database(
-        skf_file, [1, 6, 16, 79], 'overlap', 'spline', device=device)
+        skf_file, [1, 6, 16, 79], 'overlap', CubicSpline, device=device)
 
     mols = reduce(lambda i, j: i+j, molecules(device))
     orbs = OrbitalInfo(mols.atomic_numbers,
@@ -249,7 +255,7 @@ def test_skfeed_cubic_batch(device, skf_file: str):
 
 
 #########################################
-# tbmalt.physics.dftb.feeds.SkFeed #
+#  tbmalt.physics.dftb.feeds.SkVcrFeed  #
 #########################################
 # Hamiltonian and overlap data for CH4 and H2O
 def reference_data(device):
@@ -652,3 +658,22 @@ def test_hubbardfeed_batch(device, skf_file):
 
     check_2 = torch.allclose(predicted, reference)
     assert check_2, 'Predicted hubbard value errors exceed allowed tolerance'
+
+
+if __name__ == '__main__':
+    from os import remove
+    from os.path import isfile
+
+    target = "/home/ajmhpc/Projects/TBMaLT/Working/Clean/tbmalt_new/example_dftb_vcr.h5"
+    if isfile(target):
+        remove(target)
+
+    torch.set_default_dtype(torch.float64)
+    device = torch.device("cpu")
+    skf_file_path = "/home/ajmhpc/Projects/TBMaLT/Working/FeedUpdating/tbmalt_new/auorg.hdf5"
+
+
+    test_skfeed_cubic_single(device, skf_file_path)
+    test_skfeed_cubic_batch(device, skf_file_path)
+    # test_skfeed_batch(device)
+    # test_skfeed_single(device)

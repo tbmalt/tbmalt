@@ -198,7 +198,7 @@ class BicubInterp:
                 fxy01, fxy10, fxy11)
 
 
-class PolyInterpU:
+class PolyInterpU(Feed):
     """Polynomial interpolation method with uniform grid points.
 
     The boundary condition will use `poly_to_zero` function, which make the
@@ -213,7 +213,7 @@ class PolyInterpU:
         n_interp_r: Number of right side interpolation grid points.
 
     Attributes:
-        xx: Grid points for interpolation, 1D Tensor.
+        _xx: Grid points for interpolation, 1D Tensor.
         yy: Values to be interpolated at each grid point.
         delta_r: Delta distance for 1st, 2nd derivative.
         tail: Distance to smooth the tail.
@@ -246,33 +246,106 @@ class PolyInterpU:
 
     def __init__(self, xx: Tensor, yy: Tensor, tail: Real = 1.0,
                  delta_r: Real = 1E-5, n_interp: int = 8, n_interp_r: int = 4):
-        self.xx = xx
+
+        super().__init__()
+
+        if not torch.allclose(xx.diff(), xx[1] - xx[0]):
+            raise ValueError("Spacing of grid points must be uniform.")
+
+        # Ensure that the y values are a parameter instance
+        if not isinstance(yy, Parameter):
+            yy = Parameter(yy, requires_grad=yy.requires_grad)
+
+        self._xx = xx
         self.yy = yy
         self.delta_r = delta_r
 
-        self.tail = tail
+        self._tail = tail
         self.n_interp = n_interp
         self.n_interp_r = n_interp_r
-        self.grid_step = xx[1] - xx[0]
 
         # Device type of the tensor in this class
         self._device = xx.device
 
         # Get grid points with external tail for index operation
-        self.n_tail = int(self.tail / self.grid_step)
-        self.xx_ext = torch.linspace(
-            self.xx[0], self.xx[-1] + self.tail,
-            len(self.xx) + self.n_tail, device=self._device)
+        self._xx_ext = torch.linspace(
+            xx[0], xx[-1] + tail,
+            len(xx) + int(tail / (xx[1] - xx[0])),
+            device=self._device)
 
         # Check xx is uniform & that len(xx) > n_interp
-        dxs = xx[1:] - xx[:-1]
-        check_1 = torch.allclose(dxs, torch.full_like(dxs, self.grid_step))
-        assert check_1, 'Grid points xx are not uniform'
         if len(xx) < n_interp:
             raise ValueError(f'`n_interp` ({n_interp}) exceeds the number of'
                              f'data points `xx` ({len(xx)}).')
 
-    def __call__(self, rr: Tensor) -> Tensor:
+
+
+    @property
+    def xx(self):
+        return self._xx
+
+
+    @xx.setter
+    def xx(self, xx: Tensor):
+        if not torch.allclose(xx.diff(), xx[1] - xx[0]):
+            raise ValueError("Spacing of grid points must be uniform.")
+
+        if len(xx) < self.n_interp:
+            raise ValueError(f'`n_interp` ({self.n_interp}) exceeds the number '
+                             f'of data points `xx` ({len(xx)}).')
+
+
+        self._xx = xx
+
+        self._xx_ext = torch.linspace(
+            xx[0], xx[-1] + self._tail,
+            len(xx) + int(self._tail / (xx[1] - xx[0])),
+            device=self._device)
+
+
+
+    @property
+    def tail(self):
+        return self._tail
+
+
+    @tail.setter
+    def tail(self, tail):
+        pass
+
+
+
+    # def set_xx(self, xx):
+    #
+    #     if not torch.allclose(xx.diff(), xx[1] - xx[0]):
+    #         raise ValueError("Spacing of grid points must be uniform.")
+    #
+    #
+    #     # Need to move tests to the top
+    #
+    #     ## Is set
+    #     self.xx = xx
+    #
+    #     # Grid step is set
+    #     self.grid_step = xx[1] - xx[0]
+    #
+    #
+    #     # Change in `grid_step` causes
+    #     self.n_tail = int(self.tail / self.grid_step)
+    #
+    #
+    #     # Changes in `n_tail` causes
+    #     self.xx_ext = torch.linspace(
+    #         self.xx[0], self.xx[-1] + self.tail,
+    #         len(self.xx) + self.n_tail, device=self._device)
+    #
+    #     # Need to check grid step is uniform
+    #     pass
+
+
+
+
+    def forward(self, rr: Tensor) -> Tensor:
         """Get interpolation according to given rr.
 
         Arguments:
@@ -282,9 +355,11 @@ class PolyInterpU:
             result: Interpolation values with given rr.
 
         """
-        n_grid_point = len(self.xx)  # -> number of grid points
+        n_grid_point = len(self._xx)  # -> number of grid points
 
-        ind = torch.searchsorted(self.xx_ext, rr).to(self._device)
+        grid_step = self.xx[1] - self.xx[0]
+
+        ind = torch.searchsorted(self._xx_ext, rr).to(self._device)
         result = (
             torch.zeros(rr.shape, device=self._device)
             if self.yy.dim() == 1
@@ -301,26 +376,26 @@ class PolyInterpU:
             ind_last[ind_last < self.n_interp + 1] = self.n_interp + 1
 
             # gather xx and yy for both single and batch
-            xa = self.xx[0] + (ind_last.unsqueeze(1) - self.n_interp - 1 +
-                               torch.arange(self.n_interp, device=self._device)
-                               ) * self.grid_step
+            xa = self._xx[0] + (ind_last.unsqueeze(1) - self.n_interp - 1 +
+                                torch.arange(self.n_interp, device=self._device)
+                                ) * grid_step
             yb = torch.stack([self.yy[ii - self.n_interp - 1: ii - 1]
                               for ii in ind_last]).to(self._device)
 
             result[_mask] = poly_interp(xa, yb, rr[_mask])
 
         # Beyond the grid => extrapolation with polynomial of 5th order
-        max_ind = n_grid_point - 1 + int(self.tail / self.grid_step)
+        max_ind = n_grid_point - 1 + int(self._tail / grid_step)
         is_tail = ind.masked_fill(ind.ge(n_grid_point) * ind.le(max_ind), -1).eq(-1)
         if is_tail.any():
-            r_max = self.xx[-2] + self.tail
+            r_max = self._xx[-2] + self._tail
             dr = rr[is_tail] - r_max
             dr = dr.unsqueeze(-1) if self.yy.dim() == 2 else dr
             ilast = n_grid_point
 
             # get grid points and grid point values
             xa = (ilast - self.n_interp + torch.arange(
-                self.n_interp, device=self._device) - 1) * self.grid_step + self.xx[0]
+                self.n_interp, device=self._device) - 1) * grid_step + self._xx[0]
             yb = self.yy[ilast - self.n_interp - 1: ilast - 1]
             xa = xa.repeat(dr.shape[0]).reshape(dr.shape[0], -1)
             yb = yb.unsqueeze(0).repeat_interleave(dr.shape[0], dim=0)
@@ -333,9 +408,167 @@ class PolyInterpU:
             y1pp = (y2 + y0 - 2.0 * y1) / (self.delta_r * self.delta_r)
 
             result[is_tail] = poly_to_zero(
-                dr, -1.0 * self.tail, -1.0 / self.tail, y1, y1p, y1pp)
+                dr, -1.0 * self._tail, -1.0 / self._tail, y1, y1p, y1pp)
 
         return result
+
+    def __call__(self, *args, **kwargs) -> Tensor:
+        warnings.warn(
+            "`PolyInterpU` instances should be invoked via their "
+            "`.forward` method now.")
+        return self.forward(*args, **kwargs)
+
+# class PolyInterpU(Feed):
+#     """Polynomial interpolation method with uniform grid points.
+#
+#     The boundary condition will use `poly_to_zero` function, which make the
+#     polynomial values smoothly converge to zero at the boundary.
+#
+#     Arguments:
+#         xx: Grid points for interpolation, 1D Tensor.
+#         yy: Values to be interpolated at each grid point.
+#         tail: Distance to smooth the tail.
+#         delta_r: Delta distance for 1st, 2nd derivative.
+#         n_interp: Number of total interpolation grid points.
+#         n_interp_r: Number of right side interpolation grid points.
+#
+#     Attributes:
+#         xx: Grid points for interpolation, 1D Tensor.
+#         yy: Values to be interpolated at each grid point.
+#         delta_r: Delta distance for 1st, 2nd derivative.
+#         tail: Distance to smooth the tail.
+#         n_interp: Number of total interpolation grid points.
+#         n_interp_r: Number of right side interpolation grid points.
+#         grid_step: Distance between each gird points.
+#
+#     Notes:
+#         The `PolyInterpU` class, which is taken from the DFTB+, assumes a
+#         uniform grid. Here, the yy and xx arguments are the values to be
+#         interpolated and their associated grid points respectively. The tail
+#         end of the spline is smoothed to zero, meaning that extrapolated
+#         points will rapidly, but smoothly, decay to zero.
+#
+#     Examples:
+#         >>> import matplotlib.pyplot as plt
+#         >>> x = torch.linspace(0, 2. * torch.pi, 100)
+#         >>> y = torch.sin(x)
+#         >>> poly = PolyInterpU(x, y, n_interp=8, n_interp_r=4)
+#         >>> new_x = torch.rand(10) * 2. * torch.pi
+#         >>> new_y = poly(new_x)
+#         >>> plt.plot(x, y, 'k-')
+#         >>> plt.plot(new_x, new_y, 'rx')
+#         >>> plt.show()
+#
+#     """
+#
+#     # TODO: Resolve bug causing incorrect value to be returned when
+#     #  interpolating at the last grid point.
+#
+#     def __init__(self, xx: Tensor, yy: Tensor, tail: Real = 1.0,
+#                  delta_r: Real = 1E-5, n_interp: int = 8, n_interp_r: int = 4):
+#
+#         super().__init__()
+#
+#         # Ensure that the y values are a parameter instance
+#         if not isinstance(yy, Parameter):
+#             yy = Parameter(yy, requires_grad=yy.requires_grad)
+#
+#         self.xx = xx
+#         self.yy = yy
+#         self.delta_r = delta_r
+#
+#         self.tail = tail
+#         self.n_interp = n_interp
+#         self.n_interp_r = n_interp_r
+#         self.grid_step = xx[1] - xx[0]
+#
+#         # Device type of the tensor in this class
+#         self._device = xx.device
+#
+#         # Get grid points with external tail for index operation
+#         self.n_tail = int(self.tail / self.grid_step)
+#         self.xx_ext = torch.linspace(
+#             self.xx[0], self.xx[-1] + self.tail,
+#             len(self.xx) + self.n_tail, device=self._device)
+#
+#         # Check xx is uniform & that len(xx) > n_interp
+#         dxs = xx[1:] - xx[:-1]
+#         check_1 = torch.allclose(dxs, torch.full_like(dxs, self.grid_step))
+#         assert check_1, 'Grid points xx are not uniform'
+#         if len(xx) < n_interp:
+#             raise ValueError(f'`n_interp` ({n_interp}) exceeds the number of'
+#                              f'data points `xx` ({len(xx)}).')
+#
+#     def forward(self, rr: Tensor) -> Tensor:
+#         """Get interpolation according to given rr.
+#
+#         Arguments:
+#             rr: interpolation points for single and batch.
+#
+#         Returns:
+#             result: Interpolation values with given rr.
+#
+#         """
+#         n_grid_point = len(self.xx)  # -> number of grid points
+#
+#         ind = torch.searchsorted(self.xx_ext, rr).to(self._device)
+#         result = (
+#             torch.zeros(rr.shape, device=self._device)
+#             if self.yy.dim() == 1
+#             else torch.zeros(rr.shape[0], *self.yy.shape[1:], device=self._device)
+#         )
+#
+#         # => polynomial fit
+#         if (ind <= n_grid_point).any():
+#             _mask = torch.logical_and(ind <= n_grid_point, ind != 0)
+#
+#             # get the index of rr in grid points
+#             ind_last = (ind[_mask] + self.n_interp_r + 1).long()
+#             ind_last[ind_last > n_grid_point] = n_grid_point
+#             ind_last[ind_last < self.n_interp + 1] = self.n_interp + 1
+#
+#             # gather xx and yy for both single and batch
+#             xa = self.xx[0] + (ind_last.unsqueeze(1) - self.n_interp - 1 +
+#                                torch.arange(self.n_interp, device=self._device)
+#                                ) * self.grid_step
+#             yb = torch.stack([self.yy[ii - self.n_interp - 1: ii - 1]
+#                               for ii in ind_last]).to(self._device)
+#
+#             result[_mask] = poly_interp(xa, yb, rr[_mask])
+#
+#         # Beyond the grid => extrapolation with polynomial of 5th order
+#         max_ind = n_grid_point - 1 + int(self.tail / self.grid_step)
+#         is_tail = ind.masked_fill(ind.ge(n_grid_point) * ind.le(max_ind), -1).eq(-1)
+#         if is_tail.any():
+#             r_max = self.xx[-2] + self.tail
+#             dr = rr[is_tail] - r_max
+#             dr = dr.unsqueeze(-1) if self.yy.dim() == 2 else dr
+#             ilast = n_grid_point
+#
+#             # get grid points and grid point values
+#             xa = (ilast - self.n_interp + torch.arange(
+#                 self.n_interp, device=self._device) - 1) * self.grid_step + self.xx[0]
+#             yb = self.yy[ilast - self.n_interp - 1: ilast - 1]
+#             xa = xa.repeat(dr.shape[0]).reshape(dr.shape[0], -1)
+#             yb = yb.unsqueeze(0).repeat_interleave(dr.shape[0], dim=0)
+#
+#             # get derivative
+#             y0 = poly_interp(xa, yb, xa[:, self.n_interp - 1] - self.delta_r)
+#             y2 = poly_interp(xa, yb, xa[:, self.n_interp - 1] + self.delta_r)
+#             y1 = self.yy[ilast - 2]
+#             y1p = (y2 - y0) / (2.0 * self.delta_r)
+#             y1pp = (y2 + y0 - 2.0 * y1) / (self.delta_r * self.delta_r)
+#
+#             result[is_tail] = poly_to_zero(
+#                 dr, -1.0 * self.tail, -1.0 / self.tail, y1, y1p, y1pp)
+#
+#         return result
+#
+#     def __call__(self, *args, **kwargs) -> Tensor:
+#         warnings.warn(
+#             "`PolyInterpU` instances should be invoked via their "
+#             "`.forward` method now.")
+#         return self.forward(*args, **kwargs)
 
 
 def poly_to_zero(xx: Tensor, dx: Tensor, inv_dist: Tensor,
@@ -474,11 +707,11 @@ class CubicSpline(Feed):
 
     def __init__(self, xx: Tensor, yy: Union[Tensor, Parameter], tail: Real = 1.0,
                  delta_r: Real = 1E-5, n_interp: int = 8, **kwargs):
-        super(CubicSpline, self).__init__()
+        super().__init__()
 
         # X-knot values must be of an anticipated type
         if not isinstance(xx, Tensor):
-            raise TypeError("The x-knot values must be either a `torch.Tensor`"
+            raise TypeError("The x-knot values must be a `torch.Tensor`"
                             " instance.")
 
         # Same for the y-knot values
