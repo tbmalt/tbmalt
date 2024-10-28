@@ -185,7 +185,7 @@ class Dftb1(Calculator):
     """
     def __init__(
             self, h_feed: IntegralFeed, s_feed: IntegralFeed, o_feed: Feed,
-            r_feed: Optional[Feed] = None, filling_temp: Optional[float] = None,
+            r_feed: Optional[Feed] = None, filling_temp: Optional[float] = 0,
             filling_scheme: str = 'fermi', **kwargs):
 
         super().__init__(
