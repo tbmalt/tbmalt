@@ -7,6 +7,7 @@ from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed, Re
 # Define global constants
 torch.set_default_dtype(torch.float64)
 torch.autograd.set_detect_anomaly(True)
+torch.set_printoptions(precision=15, sci_mode=False, linewidth=200, profile="full")
 
 print('-------------------------')
 print('autograd')

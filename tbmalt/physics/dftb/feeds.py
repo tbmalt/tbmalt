@@ -1399,15 +1399,15 @@ class RepulsiveSplineFeed(Feed):
                 add_Erep, add_dErep = self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx])
                 #Erep[batch_indx] += self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx])[0]
                 Erep[batch_indx] += add_Erep
-                print('Add Erep:', add_Erep)
-                print('dErep in loop', dErep[batch_indx, indx_pair[0]]) 
-                print(normed_distance_vectors[..., indx_pair[0], indx_pair[1]])
+                #print('Add Erep:', add_Erep)
+                #print('dErep in loop', dErep[batch_indx, indx_pair[0]]) 
+                #print(normed_distance_vectors[..., indx_pair[0], indx_pair[1]])
                 #TODO: Not yet batched
                 dErep[batch_indx, indx_pair[0]] += add_dErep*normed_distance_vectors[indx_pair[0], indx_pair[1]]
                 dErep[batch_indx, indx_pair[1]] += add_dErep*normed_distance_vectors[indx_pair[1], indx_pair[0]]
         
         self.dErep = dErep
-        print('dErep:', dErep)
+        #print('dErep:', dErep)
         return Erep
 
     def _repulsive_calc(self, distance: Tensor, atomnum1: Union[Tensor, int], atomnum2: Union[Tensor, int]) -> Tensor:

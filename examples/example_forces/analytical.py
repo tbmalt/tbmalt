@@ -16,18 +16,18 @@ print('Analytical')
 # File with the sk data
 path = './auorg.hdf5'
 
-#species = [1, 6, 8]
-species = [1]
+species = [1, 6, 8]
+#species = [1]
 
-#shell_dict = {1: [0], 6: [0,1], 8: [0, 1]}
-shell_dict = {1: [0]}
+shell_dict = {1: [0], 6: [0,1], 8: [0, 1]}
+#shell_dict = {1: [0]}
 # Set up geometry
-#H2O = Geometry(torch.tensor([8, 1, 1]), 
-#               torch.tensor([[0.0, 0.0, 0.0],
-#                             [0.0, 0.8, -0.5],
-#                             [0.0, -0.8, -0.5]], requires_grad=False),
-#               units='angstrom'
-#               )
+H2O = Geometry(torch.tensor([8, 1, 1]), 
+               torch.tensor([[0.0, 0.0, 0.0],
+                             [0.0, 0.8, -0.5],
+                             [0.0, -0.8, -0.5]], requires_grad=False),
+               units='angstrom'
+               )
 #CO2 = Geometry(torch.Tensor([6, 8, 8]), 
 #               torch.tensor([[0.0, 0.0, 0.0],
 #                             [0.0, 0.0, 1.16],
@@ -43,7 +43,7 @@ H2 = Geometry(torch.tensor([1, 1]),
                              [0.0, 0.0, 0.5]], requires_grad=False),
                units='angstrom'
                )
-geos = H2
+geos = H2O
 
 orbital_info = OrbitalInfo(geos.atomic_numbers, shell_dict, shell_resolved=False)
 

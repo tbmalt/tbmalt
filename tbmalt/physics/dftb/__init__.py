@@ -448,7 +448,9 @@ class Dftb1(Calculator):
         doverlap, dh0 = self._finite_diff_overlap_h0()
         # Use the already calculated density matrix rho_mu,nu
         density = self.rho
+        print('#####################')
         print('Density:', density)
+        print('#####################')
         # Calculate energy weighted density matrix
         temp_dens = torch.einsum(  # Scaled occupancy values
             '...i,...ji->...ji', torch.sqrt(self.occupancy), self.eig_vectors)
@@ -460,12 +462,12 @@ class Dftb1(Calculator):
         print('Rho weighted:', rho_weighted)
 
         #TODO something in this summation seems to be wrong (it returns non padded tensor for first batch)
-        force = - torch.einsum('...nm,...acmn->...ac', density, dh0) + torch.einsum('...nm,...acmn->...ac', rho_weighted, doverlap) #- self.r_feed.dErep
+        force = - torch.einsum('...nm,...acmn->...ac', density, dh0) + torch.einsum('...nm,...acmn->...ac', rho_weighted, doverlap) - self.r_feed.dErep
         #force = self.r_feed.dErep
 
         return force
 
-    def _finite_diff_overlap_h0(self, delta=1.0e-2):
+    def _finite_diff_overlap_h0(self, delta=1.0e-6):
         """Calculates the gradient of the overlap using finite differences
         
         Arguments:
@@ -488,18 +490,26 @@ class Dftb1(Calculator):
 
         for atom_idx in range(self.geometry.atomic_numbers.size(-1)*3):
             # Make full copy of original geometry and change position
-            dgeometry = copy.deepcopy(self.geometry)
+            dgeometry1 = copy.deepcopy(self.geometry)
+            dgeometry2 = copy.deepcopy(self.geometry)
             # The following changes the atom_idx-nth coordinate of the geometry for each batch
-            temp_pos = dgeometry._positions.flatten()
-            temp_pos[atom_idx::3*postions_dim[-2]] += delta
+            temp_pos1 = dgeometry1._positions.flatten()
+            temp_pos1[atom_idx::3*postions_dim[-2]] += delta
+            
+            temp_pos2 = dgeometry2._positions.flatten()
+            temp_pos2[atom_idx::3*postions_dim[-2]] -= delta
             # Set the changed positions for the dgeometry
-            dgeometry._positions = temp_pos.unflatten(dim=0, sizes=postions_dim)
+            dgeometry1._positions = temp_pos1.unflatten(dim=0, sizes=postions_dim)
+            dgeometry2._positions = temp_pos2.unflatten(dim=0, sizes=postions_dim)
             # Calculate temporary overlap matrix with the shifted geometry then finite difference
-            temp_overlap = self.s_feed.matrix(dgeometry, self.orbs)
-            temp_h0 = self.h_feed.matrix(dgeometry, self.orbs)
+            temp_overlap1 = self.s_feed.matrix(dgeometry1, self.orbs)
+            temp_overlap2 = self.s_feed.matrix(dgeometry2, self.orbs)
 
-            doverlap[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_overlap - self.overlap) / delta
-            dh0[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_h0 - self.hamiltonian) / delta
+            temp_h01 = self.h_feed.matrix(dgeometry1, self.orbs)
+            temp_h02 = self.h_feed.matrix(dgeometry2, self.orbs)
+            
+            doverlap[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_overlap1 - temp_overlap2) / (2*delta)
+            dh0[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_h01 - temp_h02) / (2*delta)
 
         return doverlap, dh0
 
