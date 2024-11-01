@@ -17,9 +17,10 @@ print('Analytical')
 path = './auorg.hdf5'
 
 species = [1, 6, 8]
-#species = [1]
+#species = [6, 8]
 
 shell_dict = {1: [0], 6: [0,1], 8: [0, 1]}
+#shell_dict = {6: [0,1], 8: [0, 1]}
 #shell_dict = {1: [0]}
 # Set up geometry
 H2O = Geometry(torch.tensor([8, 1, 1]), 
@@ -28,22 +29,31 @@ H2O = Geometry(torch.tensor([8, 1, 1]),
                              [0.0, -0.8, -0.5]], requires_grad=False),
                units='angstrom'
                )
-#CO2 = Geometry(torch.Tensor([6, 8, 8]), 
-#               torch.tensor([[0.0, 0.0, 0.0],
-#                             [0.0, 0.0, 1.16],
-#                             [0.0, 0.0, -1.16]], requires_grad=False)
-#               )
+CO2 = Geometry(torch.tensor([6, 8, 8]), 
+               torch.tensor([[0.0, 0.0, 0.0],
+                             [0.0, 0.0, 1.16],
+                             [0.0, 0.0, -1.16]], requires_grad=False),
+               units='angstrom'
+               )
 
-#geos = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
+#geos = Geometry.from_ase_atoms([molecule('H2O'), molecule('CO2')])
 #print(geos._positions)
 #print(geos.atomic_numbers)
 
-H2 = Geometry(torch.tensor([1, 1]), 
-               torch.tensor([[0.0, 0.0, 0.0],
-                             [0.0, 0.0, 0.5]], requires_grad=False),
-               units='angstrom'
-               )
-geos = H2O
+#H2 = Geometry(torch.tensor([1, 1]), 
+#               torch.tensor([[0.0, 0.0, 0.0],
+#                             [0.0, 0.0, 0.5]], requires_grad=False),
+#               units='angstrom'
+#               )
+geos = H2O + CO2
+#geos = Geometry.from_ase_atoms(molecule('CO2'))
+#geos = CO2
+#print(geos)
+
+#geos = H2O
+
+print("Atomic numbers:", geos.atomic_numbers)
+print("Positions:", geos._positions)
 
 orbital_info = OrbitalInfo(geos.atomic_numbers, shell_dict, shell_resolved=False)
 

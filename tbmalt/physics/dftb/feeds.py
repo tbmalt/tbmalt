@@ -1386,6 +1386,13 @@ class RepulsiveSplineFeed(Feed):
         # normed version of the distance vectors
         normed_distance_vectors = geo.distance_vectors / geo.distances.unsqueeze(-1)
         normed_distance_vectors[normed_distance_vectors.isnan()] = 0
+       # print('normed_distance_vectors shape:', normed_distance_vectors.shape)
+        normed_distance_vectors = torch.reshape(normed_distance_vectors, (batch_size, normed_distance_vectors.shape[-3], normed_distance_vectors.shape[-2], normed_distance_vectors.shape[-1]))
+       # print('distance_vectors:', geo.distance_vectors)
+       # print('distances:', geo.distances)
+       # print('distances unsqueezed:', geo.distances.unsqueeze(-1))
+       # print('normed_distance_vectors:', normed_distance_vectors)
+       # print('normed_distance_vectors shape:', normed_distance_vectors.shape)
         
         for indx_pair in indx_pairs:
             atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
@@ -1403,8 +1410,8 @@ class RepulsiveSplineFeed(Feed):
                 #print('dErep in loop', dErep[batch_indx, indx_pair[0]]) 
                 #print(normed_distance_vectors[..., indx_pair[0], indx_pair[1]])
                 #TODO: Not yet batched
-                dErep[batch_indx, indx_pair[0]] += add_dErep*normed_distance_vectors[indx_pair[0], indx_pair[1]]
-                dErep[batch_indx, indx_pair[1]] += add_dErep*normed_distance_vectors[indx_pair[1], indx_pair[0]]
+                dErep[batch_indx, indx_pair[0]] += add_dErep*normed_distance_vectors[batch_indx, indx_pair[0], indx_pair[1]]
+                dErep[batch_indx, indx_pair[1]] += add_dErep*normed_distance_vectors[batch_indx,indx_pair[1], indx_pair[0]]
         
         self.dErep = dErep
         #print('dErep:', dErep)
