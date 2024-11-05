@@ -2,7 +2,7 @@ import torch
 from ase.build import molecule
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml.module import Calculator
-from tbmalt.physics.dftb import Dftb1
+from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed, RepulsiveSplineFeed
 
 # Define global constants
@@ -40,17 +40,17 @@ CO2 = Geometry(torch.tensor([6, 8, 8]),
 #print(geos._positions)
 #print(geos.atomic_numbers)
 
-#H2 = Geometry(torch.tensor([1, 1]), 
-#               torch.tensor([[0.0, 0.0, 0.0],
-#                             [0.0, 0.0, 0.5]], requires_grad=False),
-#               units='angstrom'
-#               )
-geos = H2O + CO2
+H2 = Geometry(torch.tensor([1, 1]), 
+               torch.tensor([[0.0, 0.0, 0.0],
+                             [0.0, 0.0, 0.5]], requires_grad=False),
+               units='angstrom'
+               )
+geos = H2O
 #geos = Geometry.from_ase_atoms(molecule('CO2'))
 #geos = CO2
 #print(geos)
 
-#geos = H2O
+#geos = H2
 
 print("Atomic numbers:", geos.atomic_numbers)
 print("Positions:", geos._positions)
@@ -65,8 +65,8 @@ hubbard_feed = HubbardFeed.from_database(path, species)
 repulsive_feed = RepulsiveSplineFeed.from_database(path, species)
 
 # Set up the calculator
-#dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
-dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, r_feed=repulsive_feed)
+dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
+#dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, r_feed=repulsive_feed)
 
 # Run a SCF calculation
 energy = dftb_calculator(geos, orbital_info)
@@ -81,6 +81,6 @@ repulsive_energy = dftb_calculator.repulsive_energy
 print('Repulsive energy:', repulsive_energy)
 
 #Get forces
-forces = dftb_calculator.forces
-print('Forces:', forces)
+#forces = dftb_calculator.forces
+#print('Forces:', forces)
 
