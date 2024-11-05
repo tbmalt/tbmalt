@@ -622,6 +622,13 @@ def gamma_exponential_gradient(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us
     r = geometry.distances
     z = geometry.atomic_numbers
 
+    # normed version of the distance vectors
+    normed_distance_vectors = geometry.distance_vectors / geometry.distances.unsqueeze(-1)
+    normed_distance_vectors[normed_distance_vectors.isnan()] = 0
+
+    print('normed_distance_vectors: ', normed_distance_vectors)
+
+
     dtype, device = r.dtype, r.device
 
     if orbs.shell_resolved:  # and expand it if this is shell resolved calc.
@@ -650,6 +657,10 @@ def gamma_exponential_gradient(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us
     # build the whole gamma, shortgamma (without 1/R) and triangular gamma
     gamma = torch.zeros(r.shape, dtype=dtype, device=device)
     gamma_tr = torch.zeros(distance_tr.shape, dtype=dtype, device=device)
+    #build the gamma gradient matrix
+    print('Gamma shape: ', gamma.size() + (3,))
+    gamma_grad = torch.ones(gamma.size() + (3,), dtype=dtype, device=device)
+    #print('gamma_grad shape: ', gamma_grad * torch.tensor([[1, 2],[3,4]], dtype=dtype, device=device).unsqueeze(-1))
 
     # diagonal values is so called chemical hardness Hubbard
     gamma_tr[..., ut[0] == ut[1]] = 0
@@ -704,7 +715,9 @@ def gamma_exponential_gradient(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us
     # result.
     r[r != 0.0] = 1.0 / r[r != 0.0]
     gamma = -r**2 - gamma
-    print('gamma gradient: ', gamma)
+    print('gamma: ', gamma)
+    gamma_grad = normed_distance_vectors * gamma.unsqueeze(-1)
+    print('gamma gradient: ', gamma_grad)
 
     return gamma.squeeze()
 

@@ -45,12 +45,12 @@ H2 = Geometry(torch.tensor([1, 1]),
                              [0.0, 0.0, 0.5]], requires_grad=False),
                units='angstrom'
                )
-geos = H2O
+#geos = H2O + CO2
 #geos = Geometry.from_ase_atoms(molecule('CO2'))
 #geos = CO2
 #print(geos)
 
-#geos = H2
+geos = H2
 
 print("Atomic numbers:", geos.atomic_numbers)
 print("Positions:", geos._positions)
