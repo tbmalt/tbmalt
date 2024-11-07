@@ -2,7 +2,7 @@ import torch
 from ase.build import molecule
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml.module import Calculator
-from tbmalt.physics.dftb import Dftb2
+from tbmalt.physics.dftb import Dftb2, Dftb1
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed, RepulsiveSplineFeed
 
 # Define global constants
@@ -81,6 +81,6 @@ repulsive_energy = dftb_calculator.repulsive_energy
 print('Repulsive energy:', repulsive_energy)
 
 #Get forces
-#forces = dftb_calculator.forces
-#print('Forces:', forces)
+forces = dftb_calculator.forces
+print('Forces:', forces)
 

@@ -15,7 +15,7 @@ from tbmalt.physics.filling import (
     aufbau_filling)
 from tbmalt.common.maths import eighb
 from tbmalt.physics.dftb.coulomb import build_coulomb_matrix
-from tbmalt.physics.dftb.gamma import build_gamma_matrix
+from tbmalt.physics.dftb.gamma import build_gamma_matrix, gamma_exponential_gradient
 from tbmalt.physics.dftb.properties import dos
 from tbmalt.common.batch import prepeat_interleave
 from tbmalt.common.maths.mixers import Simple, Anderson, _Mixer
@@ -784,6 +784,99 @@ class Dftb2(Dftb1):
     def scc_energy(self, value):
         self._scc_energy = value
 
+    @property
+    def forces(self):
+        """Forces acting on the atoms"""
+
+        doverlap, dh0 = self._finite_diff_overlap_h0()
+        # Use the already calculated density matrix rho_mu,nu
+        density = self.rho
+        # Calculate energy weighted density matrix
+        temp_dens = torch.einsum(  # Scaled occupancy values
+            '...i,...ji->...ji', torch.sqrt(self.occupancy), self.eig_vectors)
+        #TODO This is currently a workaround to include the energy (eigenvalues) but should be solved in a better way
+        temp_dens_weighted = torch.einsum(  # Scaled occupancy values
+            '...i,...ji->...ji', self.eig_values * torch.sqrt(self.occupancy), self.eig_vectors)
+        
+        rho_weighted = temp_dens_weighted @ temp_dens.transpose(-1, -2).conj()
+        
+        #Non-scc Forces
+        force = - torch.einsum('...nm,...acmn->...ac', density, dh0) + torch.einsum('...nm,...acmn->...ac', rho_weighted, doverlap) - self.r_feed.dErep
+
+        #Scc corrcections
+        
+        # Construct the shift matrix
+        shifts = torch.einsum(
+            '...i,...ij->...j', self.q_final_atomic - self.q_zero_res, self.gamma)
+        shifts = prepeat_interleave(shifts, self.orbs.orbs_per_res)
+        shifts = (shifts[..., None] + shifts[..., None, :])
+
+        print('force shifts:', shifts)
+
+        # Compute the h1 hamiltonian matrix
+        h1 = .5 * shifts
+        print('H1:', h1)
+        
+        h1_correction = torch.einsum('...nm,...nm,...acmn->...ac', density, h1, doverlap)
+        print('H1 correction:', h1_correction)
+
+        # Gamma gradient correction
+        gamma_grad = gamma_exponential_gradient(self.geometry, self.orbs, self.u_feed(self.orbs))
+        print('Gamma gradient:', gamma_grad)
+        gamma_correction = torch.einsum('...a,...abc,...b->...ac', self.q_delta_atomic, gamma_grad, self.q_delta_atomic)
+        print('Gamma correction:', gamma_correction)
+
+        force = force - h1_correction - gamma_correction
+
+        return force
+
+    def _finite_diff_overlap_h0(self, delta=1.0e-6):
+        """Calculates the gradient of the overlap using finite differences
+        
+        Arguments:
+            delta: step size for finite differences
+
+        Returns:
+            doverlap: gradients of the overlap matrix for each atom and corresponding coordinates.
+                The returned Tensor has the dimensions [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ].
+                The atoms for each batch are ordered in the same way as given by geomytry.atomic_numbers.
+        """
+        # Instantiate Tensor for overlapp diff with dim: [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ]
+        overlap_dim = self.overlap.size()[-2::]
+        h0_dim = self.core_hamiltonian.size()[-2::]
+        postions_dim = self.geometry._positions.size()
+        doverlap_dim = postions_dim + overlap_dim
+        dh0_dim = postions_dim + h0_dim
+
+        doverlap = torch.zeros(doverlap_dim, device=self.device, dtype=self.dtype)
+        dh0 = torch.zeros(dh0_dim, device=self.device, dtype=self.dtype)
+
+        for atom_idx in range(self.geometry.atomic_numbers.size(-1)*3):
+            # Make full copy of original geometry and change position
+            dgeometry1 = copy.deepcopy(self.geometry)
+            dgeometry2 = copy.deepcopy(self.geometry)
+            # The following changes the atom_idx-nth coordinate of the geometry for each batch
+            temp_pos1 = dgeometry1._positions.flatten()
+            temp_pos1[atom_idx::3*postions_dim[-2]] += delta
+            
+            temp_pos2 = dgeometry2._positions.flatten()
+            temp_pos2[atom_idx::3*postions_dim[-2]] -= delta
+            # Set the changed positions for the dgeometry
+            dgeometry1._positions = temp_pos1.unflatten(dim=0, sizes=postions_dim)
+            dgeometry2._positions = temp_pos2.unflatten(dim=0, sizes=postions_dim)
+            # Calculate temporary overlap matrix with the shifted geometry then finite difference
+            temp_overlap1 = self.s_feed.matrix(dgeometry1, self.orbs)
+            temp_overlap2 = self.s_feed.matrix(dgeometry2, self.orbs)
+
+            temp_h01 = self.h_feed.matrix(dgeometry1, self.orbs)
+            temp_h02 = self.h_feed.matrix(dgeometry2, self.orbs)
+            
+            doverlap[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_overlap1 - temp_overlap2) / (2*delta)
+            dh0[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_h01 - temp_h02) / (2*delta)
+
+        return doverlap, dh0
+ 
+
     def forward(self, cache: Optional[Dict[str, Any]] = None
                 , **kwargs) -> Tensor:
         """Execute the SCC-DFTB calculation.
@@ -1002,6 +1095,9 @@ class Dftb2(Dftb1):
         self._scc_energy = .5 * (shifts * (q_in - self.q_zero_res)).sum(-1)
         shifts = prepeat_interleave(shifts, self.orbs.orbs_per_res)
         shifts = (shifts[..., None] + shifts[..., None, :])
+        
+        print('-----------------------------------------')
+        print('Shifts:', shifts)
 
         # Compute the second order Hamiltonian matrix
         self._hamiltonian = self.core_hamiltonian + .5 * self.overlap * shifts

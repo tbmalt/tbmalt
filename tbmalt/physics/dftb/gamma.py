@@ -716,9 +716,10 @@ def gamma_exponential_gradient(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us
     r[r != 0.0] = 1.0 / r[r != 0.0]
     gamma = -r**2 - gamma
     print('gamma: ', gamma)
+    print('gamma unsqueezed: ', gamma.unsqueeze(-1))
     gamma_grad = normed_distance_vectors * gamma.unsqueeze(-1)
-    print('gamma gradient: ', gamma_grad)
+    print('gamma gradient: ', gamma_grad.squeeze())
 
-    return gamma.squeeze()
+    return gamma_grad
 
 
