@@ -45,12 +45,12 @@ H2 = Geometry(torch.tensor([1, 1]),
                              [0.0, 0.0, 0.5]], requires_grad=False),
                units='angstrom'
                )
-#geos = H2O + CO2
+geos = H2O + CO2
 #geos = Geometry.from_ase_atoms(molecule('CO2'))
 #geos = CO2
 #print(geos)
 
-geos = H2O
+#geos = H2O
 
 print("Atomic numbers:", geos.atomic_numbers)
 print("Positions:", geos._positions)
@@ -65,8 +65,8 @@ hubbard_feed = HubbardFeed.from_database(path, species)
 repulsive_feed = RepulsiveSplineFeed.from_database(path, species)
 
 # Set up the calculator
-dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
-#dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, r_feed=repulsive_feed)
+#dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
+dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, r_feed=repulsive_feed)
 
 # Run a SCF calculation
 energy = dftb_calculator(geos, orbital_info)
