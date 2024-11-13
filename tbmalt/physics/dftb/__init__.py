@@ -801,7 +801,7 @@ class Dftb2(Dftb1):
         rho_weighted = temp_dens_weighted @ temp_dens.transpose(-1, -2).conj()
         
         #Non-scc Forces
-        force = - torch.einsum('...nm,...acmn->...ac', density, dh0) + torch.einsum('...nm,...acmn->...ac', rho_weighted, doverlap) - self.r_feed.dErep
+        force = - torch.einsum('...nm,...acmn->...ac', density, dh0) + torch.einsum('...nm,...acmn->...ac', rho_weighted, doverlap) - self.r_feed.gradient(self.geometry)
 
         #Scc corrcections
         

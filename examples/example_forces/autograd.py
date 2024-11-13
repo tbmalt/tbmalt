@@ -42,7 +42,7 @@ H2 = Geometry(torch.tensor([1, 1]),
                              [0.0, 0.0, 0.5]], requires_grad=True),
                units='angstrom'
                )
-H2O = H2
+H2O = H2O
 
 orbital_info = OrbitalInfo(H2O.atomic_numbers, shell_dict, shell_resolved=False)
 

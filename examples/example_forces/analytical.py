@@ -50,7 +50,7 @@ H2 = Geometry(torch.tensor([1, 1]),
 #geos = CO2
 #print(geos)
 
-geos = H2
+geos = H2O
 
 print("Atomic numbers:", geos.atomic_numbers)
 print("Positions:", geos._positions)
