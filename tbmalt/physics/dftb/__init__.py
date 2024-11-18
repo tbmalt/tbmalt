@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Code associated with carrying out DFTB calculations."""
+import time
 import copy
 import numpy as np
 import torch
@@ -446,8 +447,16 @@ class Dftb1(Calculator):
         """Forces acting on the atoms"""
 
         doverlap, dh0 = self._finite_diff_overlap_h0()
+        print('doverlap:', doverlap)
+        print('dh0:', dh0)
+        print('Hamiltonian: ', self.hamiltonian)
+        print('Overlap: ', self.overlap)
         # Use the already calculated density matrix rho_mu,nu
         density = self.rho
+       # density = torch.tensor([[0.55280536420906479, 0.55280536420906468],
+       #                         [0.55280536420906468, 0.55280536420906456]]
+       #                        )
+        print('Density:', density)
         # Calculate energy weighted density matrix
         temp_dens = torch.einsum(  # Scaled occupancy values
             '...i,...ji->...ji', torch.sqrt(self.occupancy), self.eig_vectors)
@@ -456,6 +465,13 @@ class Dftb1(Calculator):
             '...i,...ji->...ji', self.eig_values * torch.sqrt(self.occupancy), self.eig_vectors)
         
         rho_weighted = temp_dens_weighted @ temp_dens.transpose(-1, -2).conj()
+       # rho_weighted = torch.tensor([[-0.19921695987796384, -0.19921695987796381],
+       #                              [-0.19921695987796381, -0.19921695987796376]]
+       #                             )
+        print('Rho weighted:', rho_weighted)
+
+        print('Repulsive force:', self.r_feed.gradient(self.geometry))
+        print('electronic forces: ', - torch.einsum('...nm,...acmn->...ac', density, dh0) + torch.einsum('...nm,...acmn->...ac', rho_weighted, doverlap))
 
         force = - torch.einsum('...nm,...acmn->...ac', density, dh0) + torch.einsum('...nm,...acmn->...ac', rho_weighted, doverlap) - self.r_feed.gradient(self.geometry)
 
@@ -472,6 +488,9 @@ class Dftb1(Calculator):
                 The returned Tensor has the dimensions [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ].
                 The atoms for each batch are ordered in the same way as given by geomytry.atomic_numbers.
         """
+        print("Calculating overlap gradient")
+        start_time = time.time()
+
         # Instantiate Tensor for overlapp diff with dim: [ num_batches, num_atoms, coords, 1st overlap dim, 2nd overlap dim ]
         overlap_dim = self.overlap.size()[-2::]
         h0_dim = self.hamiltonian.size()[-2::]
@@ -481,8 +500,10 @@ class Dftb1(Calculator):
 
         doverlap = torch.zeros(doverlap_dim, device=self.device, dtype=self.dtype)
         dh0 = torch.zeros(dh0_dim, device=self.device, dtype=self.dtype)
-
+        print('Gradient loop')
+        start_time_loop = time.time()
         for atom_idx in range(self.geometry.atomic_numbers.size(-1)*3):
+            start_time_iter = time.time()
             # Make full copy of original geometry and change position
             dgeometry1 = copy.deepcopy(self.geometry)
             dgeometry2 = copy.deepcopy(self.geometry)
@@ -504,7 +525,12 @@ class Dftb1(Calculator):
             
             doverlap[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_overlap1 - temp_overlap2) / (2*delta)
             dh0[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_h01 - temp_h02) / (2*delta)
-
+            end_time_iter = time.time()
+            print("Iteration took:", end_time_iter - start_time_iter, "s")
+        end_time_loop = time.time()
+        print("Gradient loop took:", end_time_loop - start_time_loop, "s")
+        end_time = time.time()
+        print("Overlap gradient calculation took:", end_time - start_time, "s")
         return doverlap, dh0
     
     def reset(self):
