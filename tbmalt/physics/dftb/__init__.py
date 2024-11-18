@@ -505,8 +505,11 @@ class Dftb1(Calculator):
         for atom_idx in range(self.geometry.atomic_numbers.size(-1)*3):
             start_time_iter = time.time()
             # Make full copy of original geometry and change position
+            start_time_deepcopy = time.time()
             dgeometry1 = copy.deepcopy(self.geometry)
             dgeometry2 = copy.deepcopy(self.geometry)
+            end_time_deepcopy = time.time()
+            print("Deepcopy took:", end_time_deepcopy - start_time_deepcopy, "s")
             # The following changes the atom_idx-nth coordinate of the geometry for each batch
             temp_pos1 = dgeometry1._positions.flatten()
             temp_pos1[atom_idx::3*postions_dim[-2]] += delta
