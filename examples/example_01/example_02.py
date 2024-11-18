@@ -135,8 +135,8 @@ dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed)
 # Construct machine learning object
 lr = 0.003
 criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
-h_var = [val.coefficients for key, val in h_feed.off_sites.items()]
-s_var = [val.coefficients for key, val in s_feed.off_sites.items()]
+h_var = [val.coefficients for key, val in h_feed._off_sites.items()]
+s_var = [val.coefficients for key, val in s_feed._off_sites.items()]
 optimizer = getattr(torch.optim, 'Adam')(h_var + s_var, lr=lr)
 
 
