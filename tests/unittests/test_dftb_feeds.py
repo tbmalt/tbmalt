@@ -446,22 +446,13 @@ def test_skfoccupationfeed_general(device, skf_file):
 
     # Verify that the occupancy feed can be instantiated without issue
     occ_1 = SkfOccupationFeed(
-        {"1": torch.tensor([0.]), "6": torch.tensor([1., 2.])}
-    )
-
-    occ_2 = SkfOccupationFeed(
         ParameterDict({"1": torch.tensor([0.]), "6": torch.tensor([1., 2.])})
     )
 
-    # Confirm that the initialisation method enforces the condition that
-    # dictionary keys must be strings.
-    with pytest.raises(TypeError, match="Occupancy dictionary keys must be strings.*"):
-        SkfOccupationFeed({1: torch.tensor([0.])})
-
-    # Variety that a warning is given when autograd enabled tensors are used
-    # without warping them in a Parameter/ParameterDict structure.
-    with pytest.warns(Warning, match="One or more of the supplied occupancy values*"):
-        SkfOccupationFeed({"1": torch.tensor([0.], requires_grad=True)})
+    # Make sure that use of `torch.ParameterDict` is enforced.
+    with pytest.raises(TypeError, match=" must be stored within a*"):
+        SkfOccupationFeed({
+            "1": torch.tensor([0.]), "6": torch.tensor([1., 2.])})
 
     # Check 0: ensure that the feed can be constructed from a HDF5 skf database
     # without encountering an error.
@@ -564,22 +555,13 @@ def test_hubbardfeed_general(device, skf_file):
 
     # Verify that the Hubbard-U feed can be instantiated without issue
     _ = HubbardFeed(
-        {"1": torch.tensor([0.]), "6": torch.tensor([1., 2.])}
-    )
-
-    _ = HubbardFeed(
         ParameterDict({"1": torch.tensor([0.]), "6": torch.tensor([1., 2.])})
     )
 
-    # Confirm that the initialisation method enforces the condition that
-    # dictionary keys must be strings.
-    with pytest.raises(TypeError, match="Hubbard-U dictionary keys must be strings.*"):
-        HubbardFeed({1: torch.tensor([0.])})
-
-    # Variety that a warning is given when autograd enabled tensors are used
-    # without warping them in a Parameter/ParameterDict structure.
-    with pytest.warns(Warning, match="One or more of the supplied Hubbard-U values*"):
-        HubbardFeed({"1": torch.tensor([0.], requires_grad=True)})
+    # Make sure that use of `torch.ParameterDict` is enforced.
+    with pytest.raises(TypeError, match="Hubbard-Us must be stored within a*"):
+        _ = HubbardFeed(
+            {"1": torch.tensor([0.]), "6": torch.tensor([1., 2.])})
 
     # Check 0: ensure that the feed can be constructed from a HDF5 skf database
     # without encountering an error.

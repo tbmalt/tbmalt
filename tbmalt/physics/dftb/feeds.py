@@ -1079,7 +1079,9 @@ class SkFeed(IntegralFeed):
 
     def __str__(self):
         elements = ', '.join([
-            chemical_symbols[i]for i in sorted(self.on_sites.keys())])
+            chemical_symbols[i] for i in
+            sorted([int(j) for j in self.on_sites.keys()])
+        ])
         return f'{self.__class__.__name__}({elements})'
 
     def __repr__(self):
@@ -1505,7 +1507,9 @@ class VcrSkFeed(IntegralFeed):
 
     def __str__(self):
         elements = ', '.join([
-            chemical_symbols[i]for i in sorted(self.on_sites.keys())])
+            chemical_symbols[i] for i in
+            sorted([int(j) for j in self.on_sites.keys()])
+        ])
         return f'{self.__class__.__name__}({elements})'
 
     def __repr__(self):
@@ -1570,19 +1574,15 @@ class SkfOccupationFeed(Feed):
     """Occupations feed entity that derives its data from a skf file.
 
     Arguments:
-        occupancies: A dictionary specifying the angular-momenta resolved
-            occupancies, keyed by atomic numbers (as strings) and valued by
-            tensors or parameters. When using occupancies as standard inputs,
-            provide a `Dict[str, Tensor]`. When using them as optimisation
-            targets, they should be specified as `ParameterDict[str, Parameter]`,
-            which enables PyTorch to automatically detect and optimise these
-            parameters. The dictionary keys must be strings to ensure
-            compatibility with PyTorch's `ParameterDict` structure.
+        occupancies: A PyTorch parameter dictionary specifying the angular-
+            -momenta resolved occupancies, keyed by atomic numbers (as
+            strings) and valued by parameters. Dictionary keys must be strings
+            as required by the PyTorch `ParameterDict` structure.
 
     Examples:
         >>> from tbmalt.physics.dftb.feeds import SkfOccupationFeed
-        >>> #                                                   fs, fp, fd
-        >>> l_resolved = SkfOccupationFeed({"79": torch.tensor([1., 0., 10.])})
+        >>> l_resolved = SkfOccupationFeed(  #     fs, fp, fd
+        ...     ParameterDict({"79": torch.tensor([1., 0., 10.])}))
 
     Notes:
         Note that this method discriminates between orbitals based only on
@@ -1594,37 +1594,17 @@ class SkfOccupationFeed(Feed):
     # via shell number which will avoid the current limits which only allow
     # for minimal orbs sets.
 
-    def __init__(self,
-                 occupancies: Union[
-                     Dict[str, Tensor],
-                     ParameterDict[str, Parameter]]
-                 ):
+    def __init__(self, occupancies: ParameterDict[str, Parameter]):
         super().__init__()
 
         self.occupancies = occupancies
 
-        # Ensure that all dictionary keys are strings
-        if not all(isinstance(key, str) for key in occupancies):
+        # Occupancy values must be supplied via a PyTorch `ParameterDict`.
+        if not isinstance(occupancies, ParameterDict):
             raise TypeError(
-                "Occupancy dictionary keys must be strings. This is required "
-                "to maintain consistency with the `torch.nn.ParameterDict` "
-                "type which enforces this behaviour."
-            )
-
-        # When the occupancies have autograd enabled then they are considered
-        # to be optimisation targets. In such a case they should be parameter
-        # instances stored in a parameter dictionary.
-        if (isinstance(occupancies, dict)
-                and any(value.requires_grad for value in occupancies.values())):
-            warnings.warn(
-                "One or more of the supplied occupancy values has `requires_grad` "
-                "set to `True`. In such cases one should supply the occupancies "
-                "as `torch.nn.Parameter` instances stored within a "
-                "`torch.nn.ParameterDict` entity. This allows PyTorch to "
-                "automatically detect valid optimisation targets. The current "
-                "type structure will compute gradients for the selected "
-                "occupancies but will not attempt to optimise them.",
-                Warning
+                "Occupancies must be stored within a `torch.nn.ParameterDict` "
+                "entity. This allows PyTorch to a automatically detect valid "
+                "optimisation targets as and when necessary."
             )
 
     @property
@@ -1648,9 +1628,8 @@ class SkfOccupationFeed(Feed):
                 on the specified device.
 
         """
-        return self.__class__(self.occupancies.__class__(
-            {k: v.to(device=device) for k, v in self.occupancies.items()}
-        ))
+        return self.__class__(ParameterDict({
+            k: v.to(device=device) for k, v in self.occupancies.items()}))
 
     def forward(self, orbs: OrbitalInfo) -> Tensor:
         """Shell resolved occupancies.
@@ -1725,21 +1704,20 @@ class SkfOccupationFeed(Feed):
             >>> torch.set_default_dtype(torch.float64)
 
             # Link to the auorg-1-1 parameter set
-            >>> link = \
-            'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+            >>> link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
 
             # Preparation of sk file
             >>> elements = ['H', 'C', 'O', 'Au', 'S']
             >>> tmpdir = './'
             >>> urllib.request.urlretrieve(
-                    link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
+            ...     link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
             >>> with tarfile.open(path) as tar:
-                    tar.extractall(tmpdir)
+            ...     tar.extractall(tmpdir)
             >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-                             for i in elements for j in elements]
+            ...              for i in elements for j in elements]
             >>> for skf_file in skf_files:
-                    Skf.read(skf_file).write(path := join(tmpdir,
-                                                          'auorg.hdf5'))
+            ...     Skf.read(skf_file).write(path := join(tmpdir,
+            ...                                           'auorg.hdf5'))
 
             # Definition of feeds
             >>> o_feed = SkfOccupationFeed.from_database(path, [1, 6])
@@ -1751,15 +1729,18 @@ class SkfOccupationFeed(Feed):
                     1.0000, 1.0000, 1.0000, 1.0000])
 
         """
-        # If the "requires_grad" keyword argument is set to "True" then the
-        # occupancies are considered to be optimisable targets; and thus should
-        # be `Parameter` types stored in a `ParameterDict` rather than `Tensor`
-        # types stored in a `Dict`.
-        struct = ParameterDict if kwargs.pop("requires_grad", False) else dict
+        requires_grad = kwargs.pop("requires_grad", False)
 
-        return cls(struct(
-            {str(i): Skf.read(path, (i, i), **kwargs).occupations
-             for i in species}))
+        def get_occupations(x: int):
+            # Read occupancy values for the target species from the associated
+            # Slater-Koster parameter file.
+            occupations = Skf.read(path, (x, x), **kwargs).occupations
+
+            # `Tensor` -> `Parameter` cast done manually now to give control
+            # over the `requires_grad` option.
+            return Parameter(occupations, requires_grad=requires_grad)
+
+        return cls(ParameterDict({str(i): get_occupations(i) for i in species}))
 
 
 class HubbardFeed(Feed):
@@ -1769,18 +1750,14 @@ class HubbardFeed(Feed):
     values can be accessed.
 
     Arguments:
-        hubbard_us: A dictionary specifying the angular-momenta resolved
-            Hubbard-Us, keyed by atomic numbers (as strings) and valued by
-            tensors or parameters. When using Hubbard-Us as standard inputs,
-            provide a `Dict[str, Tensor]`. When using them as optimisation
-            targets, they should be specified as `ParameterDict[str, Parameter]`,
-            which enables PyTorch to automatically detect and optimise these
-            parameters. The dictionary keys must be strings to ensure
-            compatibility with PyTorch's `ParameterDict` structure.
+        hubbard_us: A PyTorch parameter dictionary specifying the angular-
+            -momenta resolved Hubbard-Us, keyed by atomic numbers (as strings)
+            and valued by parameters. Dictionary keys must be strings
+            as required by the PyTorch `ParameterDict` structure.
 
     Examples:
         >>> from tbmalt.physics.dftb.feeds import HubbardFeed
-        >>> l_resolved = HubbardFeed({"1": torch.tensor([0.5])})
+        >>> l_resolved = HubbardFeed(ParameterDict({"1": torch.tensor([0.5])}))
 
     Notes:
         Note that this method discriminates between orbitals based only on
@@ -1791,37 +1768,17 @@ class HubbardFeed(Feed):
         `hubbard_u` is found to only be atom resolved; and vise versa. The skf
         database should also instruct the loader whether it is shell-resolved.
     """
-    def __init__(self,
-                 hubbard_us: Union[
-                     Dict[str, Tensor],
-                     ParameterDict[str, Parameter]]
-                 ):
+    def __init__(self, hubbard_us: ParameterDict[str, Parameter]):
         super().__init__()
 
         self.hubbard_us = hubbard_us
 
-        # Ensure that all dictionary keys are strings
-        if not all(isinstance(key, str) for key in hubbard_us):
+        # Hubbard-U values must be supplied via a PyTorch `ParameterDict`.
+        if not isinstance(hubbard_us, ParameterDict):
             raise TypeError(
-                "Hubbard-U dictionary keys must be strings. This is required "
-                "to maintain consistency with the `torch.nn.ParameterDict` "
-                "type which enforces this behaviour."
-            )
-
-        # When the Hubbard-Us have autograd enabled then they are considered
-        # to be optimisation targets. In such a case they should be parameter
-        # instances stored in a parameter dictionary.
-        if (isinstance(hubbard_us, dict)
-                and any(value.requires_grad for value in hubbard_us.values())):
-            warnings.warn(
-                "One or more of the supplied Hubbard-U values has `requires_grad` "
-                "set to `True`. In such cases one should supply the Hubbard-Us "
-                "as `torch.nn.Parameter` instances stored within a "
-                "`torch.nn.ParameterDict` entity. This allows PyTorch to "
-                "automatically detect valid optimisation targets. The current "
-                "type structure will compute gradients for the selected "
-                "Hubbard-Us but will not attempt to optimise them.",
-                Warning
+                "Hubbard-Us must be stored within a `torch.nn.ParameterDict` "
+                "entity. This allows PyTorch to a automatically detect valid "
+                "optimisation targets as and when necessary."
             )
 
     @property
@@ -1845,9 +1802,8 @@ class HubbardFeed(Feed):
                 on the specified device.
 
         """
-        return self.__class__(self.hubbard_us.__class__(
-            {k: v.to(device=device) for k, v in self.hubbard_us.items()}
-        ))
+        return self.__class__(ParameterDict({
+            k: v.to(device=device) for k, v in self.hubbard_us.items()}))
 
     def forward(self, orbs: OrbitalInfo) -> Tensor:
         """Hubbard U values.
@@ -1922,21 +1878,20 @@ class HubbardFeed(Feed):
             >>> torch.set_default_dtype(torch.float64)
 
             # Link to the auorg-1-1 parameter set
-            >>> link = \
-            'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+            >>> link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
 
             # Preparation of sk file
             >>> elements = ['H', 'C', 'O', 'Au', 'S']
             >>> tmpdir = './'
             >>> urllib.request.urlretrieve(
-                    link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
+            ...     link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
             >>> with tarfile.open(path) as tar:
-                    tar.extractall(tmpdir)
+            ...     tar.extractall(tmpdir)
             >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-                             for i in elements for j in elements]
+            ...              for i in elements for j in elements]
             >>> for skf_file in skf_files:
-                    Skf.read(skf_file).write(path := join(tmpdir,
-                                                          'auorg.hdf5'))
+            ...     Skf.read(skf_file).write(
+            ...         path := join(tmpdir, 'auorg.hdf5'))
 
             # Definition of feeds
             >>> u_feed = HubbardFeed.from_database(path, [1, 6])
@@ -1947,15 +1902,18 @@ class HubbardFeed(Feed):
             tensor([0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
 
         """
-        # If the "requires_grad" keyword argument is set to "True" then the
-        # Hubbard-Us are considered to be optimisable targets; and thus should
-        # be `Parameter` types stored in a `ParameterDict` rather than `Tensor`
-        # types stored in a `Dict`.
-        struct = ParameterDict if kwargs.pop("requires_grad", False) else dict
+        requires_grad = kwargs.pop("requires_grad", False)
 
-        return cls(struct(
-            {str(i): Skf.read(path, (i, i), **kwargs).hubbard_us
-             for i in species}))
+        def get_hubbard_us(x: int):
+            # Read Hubbard-U values for the target species from the associated
+            # Slater-Koster parameter file.
+            hubbard_us = Skf.read(path, (x, x), **kwargs).hubbard_us
+
+            # `Tensor` -> `Parameter` cast done manually now to give control
+            # over the `requires_grad` option.
+            return Parameter(hubbard_us, requires_grad=requires_grad)
+
+        return cls(ParameterDict({str(i): get_hubbard_us(i) for i in species}))
 
 
 class RepulsiveSplineFeed(Feed):
