@@ -43,21 +43,9 @@ class Feed(torch.nn.Module, ABC):
         performed by the feed. Other methods may be required depending on the
         specific subclass implementation.
 
-    TODO:
-     - Documentation.
-        - Make sure to remark that it may be necessary to override the `parameters`
-          method of the base `torch.nn.Module` class. This is because the
-          `parameters` method is used to fetch all optimisation targets.
-     - All feeds should be modified to make use of the `.forward` method rather
-       than the `__call__` method.
-
     """
     def __init__(self):
         super().__init__()
 
-    def __call__(self, *args, **kwargs):
-        pass
-
     def forward(self, *args, **kwargs):
-        # TODO: make this manditory.
         self(*args, **kwargs)
