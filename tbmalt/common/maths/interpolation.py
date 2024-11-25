@@ -441,16 +441,17 @@ class PolyInterpU(Feed):
         return self.forward(*args, **kwargs)
 
 
-def poly_to_zero(xx: Tensor, dx: Tensor, inv_dist: Tensor,
+def poly_to_zero(xx: Tensor, dx: Tensor, inv_x: Tensor,
                  y0: Tensor, y0p: Tensor, y0pp: Tensor) -> Tensor:
     """Get interpolation if beyond the grid range with 5th order polynomial.
 
     Arguments:
+        xx: Grid points.
+        dx: The grid point range for y0 and its derivative.
+        inv_x: Reciprocal of dx
         y0: Values to be interpolated at each grid point.
         y0p: First derivative of y0.
         y0pp: Second derivative of y0.
-        xx: Grid points.
-        dx: The grid point range for y0 and its derivative.
 
     Returns:
         yy: The interpolation values with given xx points in the tail.
@@ -468,7 +469,7 @@ def poly_to_zero(xx: Tensor, dx: Tensor, inv_dist: Tensor,
     dd = 10.0 * y0 - 4.0 * dx1 + 0.5 * dx2
     ee = -15.0 * y0 + 7.0 * dx1 - 1.0 * dx2
     ff = 6.0 * y0 - 3.0 * dx1 + 0.5 * dx2
-    xr = xx * inv_dist
+    xr = xx * inv_x
     yy = ((ff * xr + ee) * xr + dd) * xr * xr * xr
 
     return yy
@@ -546,7 +547,7 @@ class CubicSpline(Feed):
             grid point. For single series interpolation this should be an array
             of length "n", where "n" is the number of grid points present in
             ``x``. For batch interpolation this should be an "m" by "n"
-            tensor. Note that this should be a `Parameter` rather than `Tensor`
+            tensor. Note that this must be a `Parameter` rather than `Tensor`
             instance.
         tail: Distance over which to smooth the tail.
         delta_r: Delta distance for 1st and 2nd derivative.
@@ -566,9 +567,9 @@ class CubicSpline(Feed):
         >>> y = Parameter(torch.sin(x), requires_grad=False)
         >>> spline = CubicSpline(x, y)
         >>> spline.forward(torch.tensor([3.5]))
-        >>> tensor([-0.3526])
+        #   tensor([-0.3526])
         >>> torch.sin(torch.tensor([3.5]))
-        >>> tensor([-0.3508])
+        #   tensor([-0.3508])
 
     """
 
@@ -577,14 +578,14 @@ class CubicSpline(Feed):
         super().__init__()
 
         # X-knot values must be of an anticipated type
-        if not isinstance(x, Tensor):
+        if not isinstance(x, Tensor) or isinstance(x, Parameter):
             raise TypeError("The x-knot values must be a `torch.Tensor`"
                             " instance.")
 
         # Same for the y-knot values
-        if not isinstance(y, (Parameter, Tensor)):
-            raise TypeError("The y-knot values must be either a `torch.Tensor`"
-                            " or `torch.nn.Parameter` instance.")
+        if not isinstance(y, Parameter):
+            raise TypeError(
+                "The y-knot values must be a  or `torch.nn.Parameter` instance.")
 
         assert y.dim() <= 2, '"CubicSpline" only support 1D or 2D interpolation'
 
@@ -614,15 +615,6 @@ class CubicSpline(Feed):
                 " type rather than a `torch.nn.Parameter` and that its"
                 "\"requires_grad\" attribute set to `False`.",
                 UserWarning, stacklevel=2)
-
-        # Ensure that the y values are a parameter instance
-        if not isinstance(y, Parameter):
-            warnings.warn(
-                "An instance of `torch.nn.Parameter` was expected for the "
-                "attribute `y`, but a `torch.Tensor` was received. The tensor "
-                "will be automatically cast to a parameter.",
-                UserWarning)
-            y = Parameter(y, requires_grad=y.requires_grad)
 
         self.xp = x
         self._y = y
@@ -657,18 +649,9 @@ class CubicSpline(Feed):
     @y.setter
     def y(self, value: Parameter):
         # Y-knot values must be of an anticipated type
-        if not isinstance(value, (Parameter, Tensor)):
-            raise TypeError("The y-knot values must be either a `torch.Tensor`"
-                            " or `torch.nn.Parameter` instance.")
-
-        # Ensure that the y values are a parameter instance
         if not isinstance(value, Parameter):
-            warnings.warn(
-                "An instance of `torch.nn.Parameter` was expected for the "
-                "attribute `y`, but a `torch.Tensor` was received. The tensor "
-                "will be automatically cast to a parameter.",
-                UserWarning)
-            value = Parameter(value, requires_grad=value.requires_grad)
+            raise TypeError(
+                "y-knot values must be a `torch.nn.Parameter` instance.")
 
         # Finally, set new y-knot value tensor.
         self._y = value

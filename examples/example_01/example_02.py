@@ -113,12 +113,14 @@ species = torch.tensor([1, 6, 7, 8])
 species = species[species != 0].tolist()
 
 # Load the Hamiltonian feed model
-h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation='spline', requires_grad=True)
+h_feed = SkFeed.from_database(
+    parameter_db_path, species, 'hamiltonian', interpolation=CubicSpline,
+    requires_grad_offsite=True)
 
 # Load the overlap feed model
-s_feed = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation='spline', requires_grad=True)
+s_feed = SkFeed.from_database(
+    parameter_db_path, species, 'overlap', interpolation=CubicSpline,
+    requires_grad_offsite=True)
 
 # Load the occupation feed object
 o_feed = SkfOccupationFeed.from_database(parameter_db_path, species)

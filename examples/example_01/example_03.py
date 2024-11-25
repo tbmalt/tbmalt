@@ -9,7 +9,7 @@ from sklearn.ensemble import RandomForestRegressor
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
-from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
+from tbmalt.physics.dftb.feeds import SkFeed, VcrSkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.io.dataset import DataSetIM
 from tbmalt.ml.acsf import Acsf
 from tbmalt.common.batch import pack
@@ -124,14 +124,12 @@ species = torch.tensor([1, 6, 7, 8])
 species = species[species != 0].tolist()
 
 # Load the Hamiltonian feed model
-h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation='bicubic')
+h_feed = VcrSkFeed.from_database(parameter_db_path, species, 'hamiltonian')
 h_feed_std = SkFeed.from_database(
     parameter_db_path_std, species, 'hamiltonian')
 
 # Load the overlap feed model
-s_feed = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation='bicubic')
+s_feed = VcrSkFeed.from_database(parameter_db_path, species, 'overlap')
 s_feed_std = SkFeed.from_database(
     parameter_db_path_std, species, 'overlap')
 
