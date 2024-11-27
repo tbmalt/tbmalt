@@ -7,6 +7,7 @@ from ase.build import molecule
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.physics.dftb import Dftb1, Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
+from tbmalt.common.maths.interpolation import CubicSpline
 from tbmalt.common.batch import pack
 
 
@@ -19,7 +20,7 @@ torch.set_default_dtype(torch.float64)
 #   - add more tests for DFTB2 calculations, right now only atomic charges
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def shell_resolved_feeds(device, skf_file):
     species = [1, 6, 8, 79]
     h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
@@ -29,7 +30,7 @@ def shell_resolved_feeds(device, skf_file):
     return h_feed, s_feed, o_feed
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def shell_resolved_feeds_scc(device, skf_file):
     species = [1, 6, 8]
     h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
@@ -39,13 +40,13 @@ def shell_resolved_feeds_scc(device, skf_file):
 
     return h_feed, s_feed, o_feed, u_feed
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def shell_resolved_feeds_scc_spline(device, skf_file):
     species = [1, 6, 8]
     h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian',
-                                  interpolation='spline', device=device)
+                                  interpolation=CubicSpline, device=device)
     s_feed = SkFeed.from_database(skf_file, species, 'overlap',
-                                  interpolation='spline', device=device)
+                                  interpolation=CubicSpline, device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file, species, device=device)
 

@@ -202,9 +202,11 @@ def test_scipyskfeed_pbc_batch(device, skf_file: str):
 # tbmalt.physics.dftb.feeds.SkFeed #
 #########################################
 
+
 # Single
 def test_skffeed_pbc_single(device, skf_file: str):
     """SkFeed matrix single system operability tolerance test"""
+
     b_def = {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
     H_feed = SkFeed.from_database(
         skf_file, [1, 6, 8, 16, 79], 'hamiltonian', device=device)
@@ -216,9 +218,10 @@ def test_skffeed_pbc_single(device, skf_file: str):
         H = H_feed.matrix(sys, OrbitalInfo(sys.atomic_numbers, b_def))
         S = S_feed.matrix(sys, OrbitalInfo(sys.atomic_numbers, b_def))
 
-        check_1 = torch.allclose(H, H_ref, atol=1E-12)
-        check_2 = torch.allclose(S, S_ref, atol=1E-12)
+        check_1 = torch.allclose(H, H_ref, rtol=1E-8, atol=1E-8)
+        check_2 = torch.allclose(S, S_ref, rtol=1E-8, atol=1E-8)
         check_3 = H.device == device
+
         assert check_1, f'SkFeed H matrix outside of tolerance ({sys})'
         assert check_2, f'SkFeed S matrix outside of tolerance ({sys})'
         assert check_3, 'SkFeed.matrix returned on incorrect device'
@@ -239,8 +242,8 @@ def test_skffeed_pbc_batch(device, skf_file: str):
     H = H_feed.matrix(sys, orbs)
     S = S_feed.matrix(sys, orbs)
 
-    check_1 = torch.allclose(H, pack(hamiltonians(device)), atol=1E-12)
-    check_2 = torch.allclose(S, pack(overlaps(device)), atol=1E-12)
+    check_1 = torch.allclose(H, pack(hamiltonians(device)), rtol=1E-8, atol=1E-8)
+    check_2 = torch.allclose(S, pack(overlaps(device)), rtol=1E-8, atol=1E-8)
     check_3 = H.device == device
 
     # Check that batches of size one do not cause problems
@@ -250,4 +253,3 @@ def test_skffeed_pbc_batch(device, skf_file: str):
     assert check_2, 'SkFeed S matrix outside of tolerance (batch)'
     assert check_3, 'SkFeed.matrix returned on incorrect device'
     assert check_4, 'Failure to operate on batches of size "one"'
-

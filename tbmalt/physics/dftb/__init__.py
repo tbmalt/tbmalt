@@ -252,7 +252,7 @@ class Dftb1(Calculator):
     @property
     def q_zero(self):
         """Initial orbital populations"""
-        return self.o_feed(self.orbs)
+        return self.o_feed.forward(self.orbs)
 
     @property
     def q_final(self):
@@ -681,7 +681,7 @@ class Dftb2(Dftb1):
         if self._gamma is None:
             self._gamma = build_gamma_matrix(
                 self.geometry, self.orbs, self.invr,
-                self.u_feed(self.orbs), self.gamma_scheme)
+                self.u_feed.forward(self.orbs), self.gamma_scheme)
         return self._gamma
 
     @gamma.setter

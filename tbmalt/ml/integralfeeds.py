@@ -40,7 +40,7 @@ def indices(dims, dtype=None, device=None):
     return res.to(device=device)
 
 
-class IntegralFeed(ABC, Feed):
+class IntegralFeed(Feed, ABC):
     r"""ABC for Hamiltonian and overlap matrix constructors.
 
     Subclasses of this abstract base class are responsible for constructing
@@ -53,6 +53,7 @@ class IntegralFeed(ABC, Feed):
     """
 
     def __init__(self, dtype, device):
+        super().__init__()
         # These variables must NEVER be modified outside the .to method!
         self.__device = device
         self.__dtype = dtype

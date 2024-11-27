@@ -23,7 +23,7 @@ torch.set_default_dtype(torch.float64)
 # 1.1: System settings
 # --------------------
 
-# Provide a list of moecules upon which TBMaLT is to be run
+# Provide a list of molecules upon which TBMaLT is to be run
 molecule_names = ['CH4', 'H2O']
 targets = {'q_final_atomic': torch.tensor(
     [[4.251914, 0.937022, 0.937022, 0.937022, 0.937022],
@@ -79,11 +79,11 @@ species = species[species != 0].tolist()
 
 # Load the Hamiltonian feed model
 h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation='spline')
+                              interpolation=CubicSpline)
 
 # Load the overlap feed model
 s_feed = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation='spline')
+                              interpolation=CubicSpline)
 
 # Load the occupation feed object
 o_feed = SkfOccupationFeed.from_database(parameter_db_path, species)
@@ -103,13 +103,13 @@ lr = 0.002
 criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
 
 h_var, s_var = [], []
-for key in h_feed.off_sites.keys():
+for key in h_feed._off_sites.keys():
 
     # Collect spline parameters and add to optimizer
-    h_feed.off_sites[key].abcd.requires_grad_(True)
-    s_feed.off_sites[key].abcd.requires_grad_(True)
-    h_var.append({'params': h_feed.off_sites[key].abcd, 'lr': lr})
-    s_var.append({'params': s_feed.off_sites[key].abcd, 'lr': lr})
+    h_feed._off_sites[key].coefficients.requires_grad_(True)
+    s_feed._off_sites[key].coefficients.requires_grad_(True)
+    h_var.append({'params': h_feed._off_sites[key].coefficients, 'lr': lr})
+    s_var.append({'params': s_feed._off_sites[key].coefficients, 'lr': lr})
 
 optimizer = getattr(torch.optim, 'Adam')(h_var + s_var, lr=lr)
 
