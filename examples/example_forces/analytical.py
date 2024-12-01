@@ -12,7 +12,7 @@ from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed, Re
 # Define global constants
 torch.set_default_dtype(torch.float64)
 torch.autograd.set_detect_anomaly(True)
-torch.set_printoptions(precision=15, sci_mode=False, linewidth=200, profile="full")
+torch.set_printoptions(precision=20, sci_mode=False, linewidth=200, profile="full")
 
 def skf_file(output_path: str):
     """Path to auorg-1-1 HDF5 database.
@@ -58,14 +58,14 @@ print('Analytical')
 skf_file('./test_auorg.hdf5')
 path = './test_auorg.hdf5'
 
-#species = [1, 6, 8, 16, 79]
-species = [1]
+species = [1, 6, 8, 16, 79]
+#species = [1]
 #species = [6, 8]
 
 
-#shell_dict = {1: [0], 6: [0,1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
+shell_dict = {1: [0], 6: [0,1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
 #shell_dict = {6: [0,1], 8: [0, 1]}
-shell_dict = {1: [0]}
+#shell_dict = {1: [0]}
 # Set up geometry
 #H2O = Geometry(torch.tensor([8, 1, 1]), 
 #               torch.tensor([[0.0, 0.0, 0.0],
@@ -79,20 +79,20 @@ shell_dict = {1: [0]}
 #                             [0.0, 0.0, -1.16]], requires_grad=False),
 #               units='angstrom'
 #               )
-#C2H2Au2S3 = Geometry(torch.tensor([1, 6, 16, 79, 16, 79, 16, 6, 1]),
-#                     torch.tensor([
-#                         [+0.00, +0.00, +0.00],
-#                         [-0.03, +0.83, +0.86],
-#                         [-0.65, +1.30, +1.60],
-#                         [+0.14, +1.80, +2.15],
-#                         [-0.55, +0.42, +2.36],
-#                         [+0.03, +2.41, +3.46],
-#                         [+1.12, +1.66, +3.23],
-#                         [+1.10, +0.97, +0.86],
-#                         [+0.19, +0.93, +4.08]], requires_grad=False),
-#                     units='angstrom'
-#                     )
-#
+C2H2Au2S3 = Geometry(torch.tensor([1, 6, 16, 79, 16, 79, 16, 6, 1]),
+                     torch.tensor([
+                         [+0.00, +0.00, +0.00],
+                         [-0.03, +0.83, +0.86],
+                         [-0.65, +1.30, +1.60],
+                         [+0.14, +1.80, +2.15],
+                         [-0.55, +0.42, +2.36],
+                         [+0.03, +2.41, +3.46],
+                         [+1.12, +1.66, +3.23],
+                         [+1.10, +0.97, +0.86],
+                         [+0.19, +0.93, +4.08]], requires_grad=False),
+                     units='angstrom'
+                     )
+
 #geos = Geometry.from_ase_atoms([molecule('H2O'), molecule('CO2')])
 #print(geos._positions)
 #print(geos.atomic_numbers)
@@ -107,8 +107,8 @@ H2 = Geometry(torch.tensor([1, 1]),
 #geos = CO2
 #print(geos)
 
-#geos = C2H2Au2S3
-geos = H2
+geos = C2H2Au2S3
+#geos = H2
 
 print("Atomic numbers:", geos.atomic_numbers)
 print("Positions:", geos._positions)

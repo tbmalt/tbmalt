@@ -663,6 +663,32 @@ class Geometry:
         # Just redirect to the `__repr__` method
         return repr(self)
 
+    def clone(self) -> 'Geometry':
+        """Returns a copy of the `Geometry` instance.
+        This method creates and returns a new copy of the `Geometry` instance.
+        Returns:
+            geometry: A copy of the `Geometry` instance.
+        """
+        if self.periodicity is None:
+            return self.__class__(self.atomic_numbers.clone(),
+                                  self.positions.clone())
+        else:
+            raise NotImplementedError(
+                "This operation does not support periodic systems")
+
+    def detach(self) -> 'Geometry':
+        """Returns a copy of the `Geometry` instance.
+        This method creates and returns a new copy of the `Geometry` instance.
+        Returns:
+            geometry: A copy of the `Geometry` instance.
+        """
+        if self.periodicity is None:
+            return self.__class__(self.atomic_numbers.detach(),
+                                  self.positions.detach())
+        else:
+            raise NotImplementedError(
+                "This operation does not support periodic systems")
+
 
 ####################
 # Helper Functions #

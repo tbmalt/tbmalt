@@ -447,16 +447,16 @@ class Dftb1(Calculator):
         """Forces acting on the atoms"""
 
         doverlap, dh0 = self._finite_diff_overlap_h0()
-        print('doverlap:', doverlap)
-        print('dh0:', dh0)
-        print('Hamiltonian: ', self.hamiltonian)
-        print('Overlap: ', self.overlap)
+        #print('doverlap:', doverlap)
+        #print('dh0:', dh0)
+        #print('Hamiltonian: ', self.hamiltonian)
+        #print('Overlap: ', self.overlap)
         # Use the already calculated density matrix rho_mu,nu
         density = self.rho
        # density = torch.tensor([[0.55280536420906479, 0.55280536420906468],
        #                         [0.55280536420906468, 0.55280536420906456]]
        #                        )
-        print('Density:', density)
+        #print('Density:', density)
         # Calculate energy weighted density matrix
         temp_dens = torch.einsum(  # Scaled occupancy values
             '...i,...ji->...ji', torch.sqrt(self.occupancy), self.eig_vectors)
@@ -468,10 +468,10 @@ class Dftb1(Calculator):
        # rho_weighted = torch.tensor([[-0.19921695987796384, -0.19921695987796381],
        #                              [-0.19921695987796381, -0.19921695987796376]]
        #                             )
-        print('Rho weighted:', rho_weighted)
+        #print('Rho weighted:', rho_weighted)
 
-        print('Repulsive force:', self.r_feed.gradient(self.geometry))
-        print('electronic forces: ', - torch.einsum('...nm,...acmn->...ac', density, dh0) + torch.einsum('...nm,...acmn->...ac', rho_weighted, doverlap))
+        #print('Repulsive force:', self.r_feed.gradient(self.geometry))
+        #print('electronic forces: ', - torch.einsum('...nm,...acmn->...ac', density, dh0) + torch.einsum('...nm,...acmn->...ac', rho_weighted, doverlap))
 
         force = - torch.einsum('...nm,...acmn->...ac', density, dh0) + torch.einsum('...nm,...acmn->...ac', rho_weighted, doverlap) - self.r_feed.gradient(self.geometry)
 
@@ -503,33 +503,56 @@ class Dftb1(Calculator):
         print('Gradient loop')
         start_time_loop = time.time()
         for atom_idx in range(self.geometry.atomic_numbers.size(-1)*3):
+            print("Atom index:", atom_idx)
             start_time_iter = time.time()
             # Make full copy of original geometry and change position
             start_time_deepcopy = time.time()
             dgeometry1 = copy.deepcopy(self.geometry)
+            #dgeometry1 = self.geometry.detach().clone()
             dgeometry2 = copy.deepcopy(self.geometry)
+            #dgeometry2 = self.geometry.detach().clone()
             end_time_deepcopy = time.time()
             print("Deepcopy took:", end_time_deepcopy - start_time_deepcopy, "s")
             # The following changes the atom_idx-nth coordinate of the geometry for each batch
+            start_time_temp_pos = time.time()
             temp_pos1 = dgeometry1._positions.flatten()
             temp_pos1[atom_idx::3*postions_dim[-2]] += delta
             
             temp_pos2 = dgeometry2._positions.flatten()
             temp_pos2[atom_idx::3*postions_dim[-2]] -= delta
+            end_time_temp_pos = time.time()
+            print("Temp pos took:", end_time_temp_pos - start_time_temp_pos, "s")
             # Set the changed positions for the dgeometry
+            start_time_geo_pos = time.time()
             dgeometry1._positions = temp_pos1.unflatten(dim=0, sizes=postions_dim)
             dgeometry2._positions = temp_pos2.unflatten(dim=0, sizes=postions_dim)
+            end_time_geo_pos = time.time()
+            print("Geo pos took:", end_time_geo_pos - start_time_geo_pos, "s")
             # Calculate temporary overlap matrix with the shifted geometry then finite difference
+            start_time_overlap = time.time()
             temp_overlap1 = self.s_feed.matrix(dgeometry1, self.orbs)
             temp_overlap2 = self.s_feed.matrix(dgeometry2, self.orbs)
-
+            end_time_overlap = time.time()
+            print("Overlap took:", end_time_overlap - start_time_overlap, "s")
+            #print("tepmp_overlap1:", temp_overlap1)
+            #print("tepmp_overlap2:", temp_overlap2)
+            
+            start_time_h = time.time()
             temp_h01 = self.h_feed.matrix(dgeometry1, self.orbs)
             temp_h02 = self.h_feed.matrix(dgeometry2, self.orbs)
-            
+            end_time_h = time.time()
+            print("Hamiltonian took:", end_time_h - start_time_h, "s")
+
+            #print("2 * delta:", 2*delta)
+            start_time_finitediff = time.time()
             doverlap[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_overlap1 - temp_overlap2) / (2*delta)
+            #print("doverlap:", doverlap)
             dh0[..., int(atom_idx / 3), atom_idx % 3, :, :] = (temp_h01 - temp_h02) / (2*delta)
+            end_time_finitediff = time.time()
+            print("Finite difference took:", end_time_finitediff - start_time_finitediff, "s")
             end_time_iter = time.time()
             print("Iteration took:", end_time_iter - start_time_iter, "s")
+            print("----------------------------------------------------------")
         end_time_loop = time.time()
         print("Gradient loop took:", end_time_loop - start_time_loop, "s")
         end_time = time.time()
