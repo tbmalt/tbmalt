@@ -388,8 +388,11 @@ class PolyInterpU(Feed):
             xa = self._x[0] + (ind_last.unsqueeze(1) - self.n_interp - 1 +
                                torch.arange(self.n_interp, device=self._device)
                                ) * grid_step
-            yb = torch.stack([self._y[ii - self.n_interp - 1: ii - 1]
-                              for ii in ind_last]).to(self._device)
+
+            start_idx = (ind_last - self.n_interp - 1)
+            idx_matrix = start_idx.unsqueeze(-1) + torch.arange(
+                self.n_interp, device=self.device)
+            yb = self._y[idx_matrix]
 
             result[_mask] = poly_interp(xa, yb, rr[_mask])
 
