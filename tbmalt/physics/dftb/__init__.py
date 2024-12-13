@@ -98,6 +98,7 @@ def _mulliken(
 
     return q
 
+
 class Dftb1(Calculator):
     """
     Non-self-consistent-charge density-functional tight-binding method
@@ -133,7 +134,7 @@ class Dftb1(Calculator):
 
     Examples:
         >>> from tbmalt import OrbitalInfo, Geometry
-        >>> from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed
+        >>> from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed
         >>> from tbmalt.physics.dftb import Dftb1
         >>> from tbmalt.io.skf import Skf
         >>> from ase.build import molecule
@@ -143,20 +144,19 @@ class Dftb1(Calculator):
         >>> torch.set_default_dtype(torch.float64)
 
         # Link to the auorg-1-1 parameter set
-        >>> link = \
-        'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+        >>> link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
 
         # Preparation of sk file
         >>> elements = ['H', 'C', 'O', 'Au', 'S']
         >>> tmpdir = './'
         >>> urllib.request.urlretrieve(
-                link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
+        ...     link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
         >>> with tarfile.open(path) as tar:
-                tar.extractall(tmpdir)
+        ...     tar.extractall(tmpdir)
         >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-                         for i in elements for j in elements]
+        ...              for i in elements for j in elements]
         >>> for skf_file in skf_files:
-                Skf.read(skf_file).write(path := join(tmpdir, 'auorg.hdf5'))
+        ...     Skf.read(skf_file).write(path := join(tmpdir, 'auorg.hdf5'))
 
         # Preparation of system to calculate
         # Single system
@@ -164,21 +164,21 @@ class Dftb1(Calculator):
         >>> orbs_s = OrbitalInfo(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
         # Batch systems
         >>> geob = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
-        >>> orbs_b = OrbitalInfo(geob.atomic_numbers, shell_dict={1: [0], 6: [0, 1],
-                                                            8: [0, 1]})
+        >>> orbs_b = OrbitalInfo(geob.atomic_numbers, shell_dict={
+        ...     1: [0], 6: [0, 1], 8: [0, 1]})
 
         # Definition of feeds
-        >>> h_feed = ScipySkFeed.from_database(path, [1, 6, 8], 'hamiltonian')
-        >>> s_feed = ScipySkFeed.from_database(path, [1, 6, 8], 'overlap')
+        >>> h_feed = SkFeed.from_database(path, [1, 6, 8], 'hamiltonian')
+        >>> s_feed = SkFeed.from_database(path, [1, 6, 8], 'overlap')
         >>> o_feed = SkfOccupationFeed.from_database(path, [1, 6, 8])
 
         # Run DFTB1 calculation
         >>> dftb = Dftb1(h_feed, s_feed, o_feed, filling_temp=0.0036749324)
-        >>> _ = dftb(geos, orbs_s)
-        >>> getattr(dftb, 'q_final_atomic')
+        >>> dftb(geos, orbs_s)
+        >>> print(dftb.q_final_atomic)
         tensor([4.3591, 0.9102, 0.9102, 0.9102, 0.9102])
-        >>> _ = dftb(geob, orbs_b)
-        >>> getattr(dftb, 'q_final_atomic')
+        >>> dftb(geob, orbs_b)
+        >>> print(dftb.q_final_atomic)
         tensor([[6.7552, 0.6224, 0.6224, 0.0000, 0.0000],
                 [4.3591, 0.9102, 0.9102, 0.9102, 0.9102]])
 
@@ -188,8 +188,7 @@ class Dftb1(Calculator):
             r_feed: Optional[Feed] = None, filling_temp: Optional[float] = 0,
             filling_scheme: str = 'fermi', **kwargs):
 
-        super().__init__(
-            h_feed.dtype, h_feed.device, kwargs.get('mass', None))
+        super().__init__(h_feed.dtype, h_feed.device)
 
         # Calculator Feeds
         self.h_feed = h_feed
@@ -199,8 +198,8 @@ class Dftb1(Calculator):
 
         device_list = [d.device for d in [h_feed, s_feed, o_feed, r_feed]
                        if d is not None]
-        common_device = len(set(device_list)) == 1
-        assert common_device, 'All `Feeds` must be on the same device'
+        if not len(set(device_list)) == 1:
+            raise ValueError('All `Feeds` must be on the same device')
 
         self._overlap: Optional[Tensor] = None
         self._hamiltonian: Optional[Tensor] = None
@@ -296,23 +295,24 @@ class Dftb1(Calculator):
         return _mulliken(self.rho, self.overlap, self.orbs, 'atom')
 
     @property
-    def dipole(self) -> Tensor:
-        """Return dipole moments."""
-        return torch.sum(
-            self.q_delta_atomic.unsqueeze(-1) * self.geometry.positions, -2
-        )
-
-    @property
     def q_delta_atomic(self):
         """Delta atomic populations"""
         return self.q_final_atomic - self.q_zero_atomic
 
     @property
     def q_zero_res(self):
+        """Initial charges, atom or shell resolved according to `OrbitalInfo`"""
         if self.orbs.shell_resolved:
             return self.q_zero_shells
         else:
             return self.q_zero_atomic
+
+    @property
+    def dipole(self) -> Tensor:
+        """Return dipole moments."""
+        return torch.sum(
+            self.q_delta_atomic.unsqueeze(-1) * self.geometry.positions, -2
+        )
 
     @property
     def n_electrons(self):
@@ -383,11 +383,6 @@ class Dftb1(Calculator):
         return self.band_free_energy + self.repulsive_energy
 
     @property
-    def eigenvalue(self):
-        """Eigenvalue in unit hartree"""
-        return self.eig_values
-
-    @property
     def homo_lumo(self):
         """Highest occupied and lowest unoccupied energy level in unit hartree"""
         # Number of occupied states
@@ -402,16 +397,16 @@ class Dftb1(Calculator):
                 self.occupancy, device=self.device, dtype=self.dtype).scatter_(
                 -1, nocc.unsqueeze(-1), 1).scatter_(
                     -1, nocc.unsqueeze(-1) - 1, 1).bool()
-            homo_lumo = self.eigenvalue[mask] if self.occupancy.ndim == 1 else\
-                self.eigenvalue[mask].view(self.occupancy.size(0), -1)
+            homo_lumo = self.eig_values[mask] if self.occupancy.ndim == 1 else\
+                self.eig_values[mask].view(self.occupancy.size(0), -1)
 
         return homo_lumo
 
     @property
     def dos_energy(self, ext=energy_units['ev'], grid=1000):
         """Energy distribution of (p)DOS in unit hartree"""
-        e_min = torch.min(self.eigenvalue.detach(), dim=-1).values - ext
-        e_max = torch.max(self.eigenvalue.detach(), dim=-1).values + ext
+        e_min = torch.min(self.eig_values.detach(), dim=-1).values - ext
+        e_max = torch.max(self.eig_values.detach(), dim=-1).values + ext
         dos_energy = torch.linspace(
             e_min, e_max, grid, device=self.device, dtype=self.dtype) if\
             self.occupancy.ndim == 1 else torch.stack([torch.linspace(
@@ -424,9 +419,9 @@ class Dftb1(Calculator):
     def dos(self):
         """Electronic density of states"""
         # Mask to remove padding values.
-        mask = torch.where(self.eigenvalue == 0, False, True)
+        mask = torch.where(self.eig_values == 0, False, True)
         sigma = 0.1 * energy_units['ev']
-        return dos(self.eigenvalue, self.dos_energy, sigma=sigma, mask=mask)
+        return dos(self.eig_values, self.dos_energy, sigma=sigma, mask=mask)
 
     def reset(self):
         """Reset all attributes and cached properties."""
@@ -470,7 +465,7 @@ class Dftb1(Calculator):
         return self.mermin_energy
 
 
-class Dftb2(Dftb1):
+class Dftb2(Calculator):
     """Self-consistent-charge density-functional tight-binding method
     (SCC-DFTB).
 
@@ -488,9 +483,12 @@ class Dftb2(Dftb1):
         r_feed: this feed describes the repulsive interaction. [DEFAULT: None]
         filling_temp: Electronic temperature used to calculate Fermi-energy.
             [DEFAULT: None]
+        filling_scheme: The scheme used for finite temperature broadening.
+            There are two broadening methods, Fermi-Dirac broadening and
+            Gaussian broadening, supported in TBMaLT. [DEFAULT: fermi]
         max_scc_iter: maximum permitted number of SCC iterations. If one or
             more system fail to converge within ``max_scc_iter`` cycles then a
-            convergence error will be raise; unless the ``suppress_SCF_error``
+            convergence error will be raised; unless the ``suppress_SCF_error``
             flag has been set. [DEFAULT=200]
         mixer: specifies the charge mixing scheme to be used. Providing the
             strings "simple" and "anderson" will result in their respectively
@@ -522,16 +520,18 @@ class Dftb2(Dftb1):
             cycle.
         converged: a tensor of booleans indicating which systems have and
             have not converged (True if converged). This can be used during
-            training, along side `suppress_SCF_error`, to allow unconverged
+            training, alongside `suppress_SCF_error`, to allow unconverged
             systems to be omitted from the final loss calculation; as so to
             prevent introducing unnecessary instabilities.
         mixer: a `Mixer` type class instance used during the SCC cycle to
             perform charge mixing.
+        rho: density matrix.
+        eig_values: eigen values.
+        eig_vectors: eigen vectors.
 
     Examples:
         >>> from tbmalt import OrbitalInfo, Geometry
-        >>> from tbmalt.physics.dftb.feeds import ScipySkFeed,\
-            SkfOccupationFeed, HubbardFeed
+        >>> from tbmalt.physics.dftb.feeds import HubbardFeed, SkFeed, SkfOccupationFeed
         >>> from tbmalt.physics.dftb import Dftb2
         >>> from tbmalt.io.skf import Skf
         >>> from ase.build import molecule
@@ -541,20 +541,19 @@ class Dftb2(Dftb1):
         >>> torch.set_default_dtype(torch.float64)
 
         # Link to the auorg-1-1 parameter set
-        >>> link = \
-        'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+        >>> link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
 
         # Preparation of sk file
         >>> elements = ['H', 'C', 'O', 'Au', 'S']
         >>> tmpdir = './'
         >>> urllib.request.urlretrieve(
-                link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
+        ...     link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
         >>> with tarfile.open(path) as tar:
-                tar.extractall(tmpdir)
+        ...     tar.extractall(tmpdir)
         >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-                         for i in elements for j in elements]
+        ...              for i in elements for j in elements]
         >>> for skf_file in skf_files:
-                Skf.read(skf_file).write(path := join(tmpdir, 'auorg.hdf5'))
+        ...     Skf.read(skf_file).write(path := join(tmpdir, 'auorg.hdf5'))
 
         # Preparation of system to calculate
         # Single system
@@ -563,42 +562,42 @@ class Dftb2(Dftb1):
         # Batch systems
         >>> geob = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
         >>> orbs_b = OrbitalInfo(geob.atomic_numbers, shell_dict={1: [0], 6: [0, 1],
-                                                            8: [0, 1]})
+        ...                                                 8: [0, 1]})
         # Single system with pbc
         >>> geop = Geometry(
-                torch.tensor([6, 1, 1, 1, 1]),
-                torch.tensor([[3.0, 3.0, 3.0],
-                              [3.6, 3.6, 3.6],
-                              [2.4, 3.6, 3.6],
-                              [3.6, 2.4, 3.6],
-                              [3.6, 3.6, 2.4]]),
-                torch.tensor([[4.0, 4.0, 0.0],
-                              [5.0, 0.0, 5.0],
-                              [0.0, 6.0, 6.0]]),
-                units='a', cutoff=torch.tensor([9.98]))
+        ...     torch.tensor([6, 1, 1, 1, 1]),
+        ...     torch.tensor([[3.0, 3.0, 3.0],
+        ...                   [3.6, 3.6, 3.6],
+        ...                   [2.4, 3.6, 3.6],
+        ...                   [3.6, 2.4, 3.6],
+        ...                   [3.6, 3.6, 2.4]]),
+        ...     torch.tensor([[4.0, 4.0, 0.0],
+        ...                   [5.0, 0.0, 5.0],
+        ...                   [0.0, 6.0, 6.0]]),
+        ...     units='a', cutoff=torch.tensor([9.98]))
         >>> orbs_p = OrbitalInfo(geop.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
 
 
         # Definition of feeds
-        >>> h_feed = ScipySkFeed.from_database(path, [1, 6, 8], 'hamiltonian')
-        >>> s_feed = ScipySkFeed.from_database(path, [1, 6, 8], 'overlap')
+        >>> h_feed = SkFeed.from_database(path, [1, 6, 8], 'hamiltonian')
+        >>> s_feed = SkFeed.from_database(path, [1, 6, 8], 'overlap')
         >>> o_feed = SkfOccupationFeed.from_database(path, [1, 6, 8])
         >>> u_feed = HubbardFeed.from_database(path, [1, 6, 8])
 
         # Run DFTB2 calculation
         >>> mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2,
-                          'generations': 3, 'tolerance': 1e-10}
+        ...               'generations': 3, 'tolerance': 1e-10}
         >>> dftb2 = Dftb2(h_feed, s_feed, o_feed, u_feed,
-                          filling_temp=0.0036749324, mix_params=mix_params)
-        >>> _ = dftb2(geos, orbs_s)
-        >>> getattr(dftb2, 'q_final_atomic')
+        ...               filling_temp=0.0036749324, mix_params=mix_params)
+        >>> dftb2(geos, orbs_s)
+        >>> print(dftb2.q_final_atomic)
         tensor([4.3054, 0.9237, 0.9237, 0.9237, 0.9237])
-        >>> _ = dftb2(geob, orbs_b)
-        >>> getattr(dftb2, 'q_final_atomic')
+        >>> dftb2(geob, orbs_b)
+        >>> print(dftb2.q_final_atomic)
         tensor([[6.5856, 0.7072, 0.7072, 0.0000, 0.0000],
                 [4.3054, 0.9237, 0.9237, 0.9237, 0.9237]])
-        >>> _ = dftb2(geop, orbs_p)
-        >>> getattr(dftb2, 'q_final_atomic')
+        >>> dftb2(geop, orbs_p)
+        >>> print(dftb2.q_final_atomic)
         tensor([4.6124, 0.8332, 0.8527, 0.8518, 0.8499])
 
     """
@@ -606,22 +605,42 @@ class Dftb2(Dftb1):
     def __init__(
             self, h_feed: IntegralFeed, s_feed: IntegralFeed, o_feed: Feed,
             u_feed: Feed, r_feed: Optional[Feed] = None,
+            filling_temp: Optional[float] = 0, filling_scheme: str = 'fermi',
             max_scc_iter: int = 200,
             mixer: Union[_Mixer, Literal['anderson', 'simple']] = 'anderson',
             **kwargs):
 
-        super().__init__(
-            h_feed, s_feed, o_feed, r_feed=r_feed, **kwargs)
+        super().__init__(h_feed.dtype, h_feed.device)
 
-        # DFTB2 specific calculator feeds
+        # Calculator Feeds
+        self.h_feed = h_feed
+        self.s_feed = s_feed
+        self.o_feed = o_feed
         self.u_feed = u_feed
+        self.r_feed = r_feed
 
+        device_list = [
+            d.device for d in [h_feed, s_feed, o_feed, u_feed, r_feed]
+            if d is not None]
+        if not len(set(device_list)) == 1:
+            raise ValueError('All `Feeds` must be on the same device')
+
+        self._overlap: Optional[Tensor] = None
+        self._hamiltonian: Optional[Tensor] = None
         self._core_hamiltonian: Optional[Tensor] = None
+        self.rho: Optional[Tensor] = None
+        self.eig_values: Optional[Tensor] = None
+        self.eig_vectors: Optional[Tensor] = None
         self._gamma: Optional[Tensor] = None
         self._invr: Optional[Tensor] = None
         self.converged: Optional[Tensor] = None
 
         # Calculator Settings
+        self.filling_temp = filling_temp
+        self.filling_scheme = {
+            'fermi': fermi_smearing, 'gaussian': gaussian_smearing,
+            None: None
+        }[filling_scheme]
         self.max_scc_iter = max_scc_iter
         self.suppress_SCF_error = kwargs.get('supress_SCF_error', False)
         self.gamma_scheme = kwargs.get('gamma_scheme', 'exponential')
@@ -634,6 +653,26 @@ class Dftb2(Dftb1):
                 mixer.lower()](False, **kwargs.get('mix_params', {}))
 
         self.mixer = mixer
+
+        # Optional keyword arguments can be passed through to the `eighb`
+        # solver via the `_solver_settings` dictionary argument.
+        self._solver_settings = kwargs.get('eigen_solver_settings', {})
+
+    @property
+    def overlap(self):
+        """Overlap matrix"""
+
+        # Check to see if the overlap matrix has already been constructed. If
+        # not then construct it.
+        if self._overlap is None:
+            self._overlap = self.s_feed.matrix_from_calculator(self)
+
+        # Return the cached overlap matrix.
+        return self._overlap
+
+    @overlap.setter
+    def overlap(self, value):
+        self._overlap = value
 
     @property
     def hamiltonian(self):
@@ -658,6 +697,214 @@ class Dftb2(Dftb1):
         self._core_hamiltonian = value
 
     @property
+    def gamma(self):
+        """Gamma matrix as constructed using the `u_feed`"""
+        if self._gamma is None:
+            self._gamma = build_gamma_matrix(
+                self.geometry, self.orbs, self.invr,
+                self.u_feed.forward(self.orbs), self.gamma_scheme)
+        return self._gamma
+
+    @gamma.setter
+    def gamma(self, value):
+        self._gamma = value
+
+    @property
+    def q_zero(self):
+        """Initial orbital populations"""
+        return self.o_feed.forward(self.orbs)
+
+    @property
+    def q_final(self):
+        """Final orbital populations"""
+        return _mulliken(self.rho, self.overlap)
+
+    @property
+    def q_delta(self):
+        """Delta orbital populations"""
+        return self.q_final - self.q_zero
+
+    @property
+    def q_zero_shells(self):
+        """Initial shell-wise populations"""
+        return torch.zeros(
+            self.orbs.shell_matrix_shape[:-1],
+            device=self.device, dtype=self.dtype).scatter_add_(
+            -1, self.orbs.on_shells.clamp(min=0), self.q_zero)
+
+    @property
+    def q_final_shells(self):
+        """Final shell-wise populations"""
+        return _mulliken(self.rho, self.overlap, self.orbs, 'shell')
+
+    @property
+    def q_delta_shells(self):
+        """Delta shell-wise populations"""
+        return self.q_final_shells - self.q_zero_shells
+
+    @property
+    def q_zero_atomic(self):
+        """Initial atomic populations"""
+        return torch.zeros(
+            self.orbs.atomic_matrix_shape[:-1],
+            device=self.device, dtype=self.dtype).scatter_add_(
+            -1, self.orbs.on_atoms.clamp(min=0), self.q_zero)
+
+    @property
+    def q_final_atomic(self):
+        """Final atomic populations"""
+        return _mulliken(self.rho, self.overlap, self.orbs, 'atom')
+
+    @property
+    def q_delta_atomic(self):
+        """Delta atomic populations"""
+        return self.q_final_atomic - self.q_zero_atomic
+
+    @property
+    def q_zero_res(self):
+        """Initial charges, atom or shell resolved according to `OrbitalInfo`"""
+        if self.orbs.shell_resolved:
+            return self.q_zero_shells
+        else:
+            return self.q_zero_atomic
+
+    @property
+    def dipole(self) -> Tensor:
+        """Return dipole moments."""
+        return torch.sum(
+            self.q_delta_atomic.unsqueeze(-1) * self.geometry.positions, -2
+        )
+
+    @property
+    def n_electrons(self):
+        """Number of electrons"""
+        return self.q_zero.sum(-1)
+
+    @property
+    def occupancy(self):
+        """Occupancies of each state"""
+
+        # Note that this scale factor assumes spin-restricted and will need to
+        # be refactored when implementing spin-unrestricted calculations.
+        scale_factor = 2.0
+
+        # If finite temperature is active then use the appropriate smearing
+        # method.
+        if self.filling_temp is not None:
+            return self.filling_scheme(
+                self.eig_values, self.fermi_energy, self.filling_temp,
+                e_mask=self.orbs if self.is_batch else None) * scale_factor
+        # Otherwise just fill according to the Aufbau principle
+        else:
+            return aufbau_filling(
+                self.eig_values, self.n_electrons,
+                e_mask=self.orbs if self.is_batch else None) * scale_factor
+
+    @property
+    def fermi_energy(self):
+        """Fermi energy"""
+        return fermi_search(
+            self.eig_values, self.n_electrons, self.filling_temp,
+            self.filling_scheme,
+            # Pass the e_mask argument, but only if required.
+            e_mask=self.orbs if self.is_batch else None)
+
+    @property
+    def band_energy(self):
+        """Band structure energy, including SCC contributions"""
+        return torch.einsum('...i,...i->...', self.eig_values, self.occupancy)
+
+    @property
+    def core_band_energy(self):
+        """Core band structure energy, excluding SCC contributions"""
+        return ((self.rho * self.core_hamiltonian).sum(-1).sum(-1))
+
+    @property
+    def band_free_energy(self):
+        """Band free energy including SCC contributions; i.e. E_band-TS"""
+        return self.band_energy * self._get_entropy_term()
+
+    @property
+    def core_band_free_energy(self):
+        """Core band free energy, excluding SCC contributions"""
+        return self.core_band_energy * self._get_entropy_term()
+
+    def _get_entropy_term(self):
+        # Note that this scale factor assumes spin-restricted and will need to
+        # be refactored when implementing spin-unrestricted calculations.
+        scale_factor = 2.0
+        if self.filling_scheme is not None and self.filling_temp is not None:
+            # The function `entropy_term` yields the "TS" term
+            return scale_factor * entropy_term(
+                self.filling_scheme, self.eig_values, self.fermi_energy,
+                self.filling_temp, e_mask=self.orbs if self.is_batch else None)
+        else:
+            return 1.0
+
+    @property
+    def scc_energy(self):
+        """Energy contribution from charge fluctuation"""
+        q_delta = _mulliken(self.rho, self.overlap, self.orbs) - self.q_zero_res
+        shifts = torch.einsum('...i,...ij->...j', q_delta, self.gamma)
+        return .5 * (shifts * q_delta).sum(-1)
+
+    @property
+    def repulsive_energy(self):
+        """Repulsive energy; zero in the absence of a repulsive feed"""
+        return 0.0 if self.r_feed is None else self.r_feed(self.geometry)
+
+    @property
+    def total_energy(self):
+        """Total system energy"""
+        return self.core_band_energy + self.scc_energy + self.repulsive_energy
+
+    @property
+    def mermin_energy(self):
+        """Mermin free energy; i.e. E_total-TS"""
+        return self.core_band_free_energy + self.scc_energy + self.repulsive_energy
+
+    @property
+    def homo_lumo(self):
+        """Highest occupied and lowest unoccupied energy level in unit hartree"""
+        # Number of occupied states
+        nocc = (~(self.occupancy - 0 < 1E-10)).long().sum(-1)
+
+        # Check if HOMO&LUMO well defined
+        if self.occupancy.size(dim=-1) <= nocc.max():
+            raise ValueError('Warning: HOMO&LUMO are not defined properly!')
+        else:
+            # Mask of HOMO and LUMO
+            mask = torch.zeros_like(
+                self.occupancy, device=self.device, dtype=self.dtype).scatter_(
+                -1, nocc.unsqueeze(-1), 1).scatter_(
+                    -1, nocc.unsqueeze(-1) - 1, 1).bool()
+            homo_lumo = self.eig_values[mask] if self.occupancy.ndim == 1 else\
+                self.eig_values[mask].view(self.occupancy.size(0), -1)
+
+        return homo_lumo
+
+    @property
+    def dos_energy(self, ext=energy_units['ev'], grid=1000):
+        """Energy distribution of (p)DOS in unit hartree"""
+        e_min = torch.min(self.eig_values.detach(), dim=-1).values - ext
+        e_max = torch.max(self.eig_values.detach(), dim=-1).values + ext
+        dos_energy = torch.linspace(
+            e_min, e_max, grid, device=self.device, dtype=self.dtype) if\
+            self.occupancy.ndim == 1 else torch.stack([torch.linspace(
+                imin, imax, grid, device=self.device, dtype=self.dtype
+                ) for imin, imax in zip(e_min, e_max)])
+
+        return dos_energy
+
+    @property
+    def dos(self):
+        """Electronic density of states"""
+        # Mask to remove padding values.
+        mask = torch.where(self.eig_values == 0, False, True)
+        sigma = 0.1 * energy_units['ev']
+        return dos(self.eig_values, self.dos_energy, sigma=sigma, mask=mask)
+
+    @property
     def invr(self):
         """1/R matrix"""
         if self._invr is None:
@@ -675,36 +922,6 @@ class Dftb2(Dftb1):
     def invr(self, value):
         self._invr = value
 
-    @property
-    def gamma(self):
-        """Gamma matrix as constructed using the `u_feed`"""
-        if self._gamma is None:
-            self._gamma = build_gamma_matrix(
-                self.geometry, self.orbs, self.invr,
-                self.u_feed.forward(self.orbs), self.gamma_scheme)
-        return self._gamma
-
-    @gamma.setter
-    def gamma(self, value):
-        self._gamma = value
-
-    @property
-    def core_band_energy(self):
-        """Core_band_energy"""
-        return ((self.rho * self.core_hamiltonian).sum(-1).sum(-1))
-
-    @property
-    def scc_energy(self):
-        """Energy contribution from charge fluctuation"""
-        q_delta = _mulliken(self.rho, self.overlap, self.orbs) - self.q_zero_res
-        shifts = torch.einsum('...i,...ij->...j', q_delta, self.gamma)
-        return .5 * (shifts * q_delta).sum(-1)
-
-    @property
-    def total_energy(self):
-        """Total system energy"""
-        return self.core_band_energy + self.scc_energy + self.repulsive_energy
-
     def forward(self, cache: Optional[Dict[str, Any]] = None
                 , **kwargs) -> Tensor:
         """Execute the SCC-DFTB calculation.
@@ -713,7 +930,7 @@ class Dftb2(Dftb1):
         density functional tight binding theory calculation.
 
         Arguments:
-            cache: This stores any information which can be used to boot-strap
+            cache: This stores any information which can be used to bootstrap
                 the calculation. Currently supported values are:
 
                     - "q_initial": initial starting guess for the SCC cycle.
@@ -748,7 +965,7 @@ class Dftb2(Dftb1):
         self.overlap, self.core_hamiltonian, self.invr, self.gamma
 
         # Step 2: Preliminary SCC cycle
-        # A preliminary SCC cycle is performed outside of the gradient and acts
+        # A preliminary SCC cycle is performed outside the gradient and acts
         # only to get the converged charges to be used in the second cycle.
         with torch.no_grad():
 
@@ -769,7 +986,7 @@ class Dftb2(Dftb1):
                         self.converged = torch.tensor(True)
                         break
 
-                # If the maximum permitted number of iterations is exceeded then
+                # If the maximum permitted number of iterations is exceeded
                 # then raise an exception; unless explicitly instructed not to.
                 else:
                     self.converged = torch.tensor(False)
