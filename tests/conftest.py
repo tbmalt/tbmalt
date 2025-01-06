@@ -57,7 +57,7 @@ def skf_file(tmpdir_factory):
 
     tempdir = tmpdir_factory.mktemp('tmp')
     # Link to the auorg-1-1 parameter set
-    link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+    link = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
 
     # Elements of interest
     elements = ['H', 'C', 'O', 'Au', 'S']
