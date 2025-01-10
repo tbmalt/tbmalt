@@ -21,11 +21,11 @@ class _Scheme(Protocol):
 
 def entropy_term(func, eigenvalues: Tensor, fermi_energy: Tensor,
                  kT: float_like, e_mask: Optional[Union[Tensor, OrbitalInfo]] = None,
-                 **kwargs) -> Tensor:
+                 ) -> Tensor:
     if func == fermi_smearing:
-        return fermi_entropy(eigenvalues, fermi_energy, kT, e_mask, **kwargs)
+        return fermi_entropy(eigenvalues, fermi_energy, kT, e_mask)
     elif func == gaussian_smearing:
-        return gaussian_entropy(eigenvalues, fermi_energy, kT, e_mask, **kwargs)
+        return gaussian_entropy(eigenvalues, fermi_energy, kT, e_mask)
     else:
         NotImplementedError(
             'Can\'t identify associate entropy function for the broadening '
@@ -33,8 +33,8 @@ def entropy_term(func, eigenvalues: Tensor, fermi_energy: Tensor,
 
 
 def fermi_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
-                  e_mask: Optional[Union[Tensor, OrbitalInfo]] = None,
-                  **kwargs) -> Tensor:
+                  e_mask: Optional[Union[Tensor, OrbitalInfo]] = None
+                  ) -> Tensor:
     r"""Calculates the electronic entropy term for Fermi-Dirac smearing.
 
         Calculate a system's electronic entropy term. The entropy term is
@@ -98,8 +98,8 @@ def fermi_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
 
 
 def gaussian_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
-                     e_mask: Optional[Union[Tensor, OrbitalInfo]] = None,
-                     **kwargs) -> Tensor:
+                     e_mask: Optional[Union[Tensor, OrbitalInfo]] = None
+                     ) -> Tensor:
     r"""Calculates the electronic entropy term for Gaussian bases smearing.
 
         Arguments:

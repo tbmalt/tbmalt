@@ -113,7 +113,7 @@ class Dftb1(Calculator):
             for the requested species.
         r_feed: this feed describes the repulsive interaction. [DEFAULT: None]
         filling_temp: Electronic temperature used to calculate Fermi-energy.
-            [DEFAULT: None]
+            [DEFAULT: 0.0]
         filling_scheme: The scheme used for finite temperature broadening.
             There are two broadening methods, Fermi-Dirac broadening and
             Gaussian broadening, supported in TBMaLT. [DEFAULT: fermi]
@@ -185,7 +185,7 @@ class Dftb1(Calculator):
     """
     def __init__(
             self, h_feed: IntegralFeed, s_feed: IntegralFeed, o_feed: Feed,
-            r_feed: Optional[Feed] = None, filling_temp: Optional[float] = 0,
+            r_feed: Optional[Feed] = None, filling_temp: Optional[float] = 0.0,
             filling_scheme: str = 'fermi', **kwargs):
 
         super().__init__(h_feed.dtype, h_feed.device)
@@ -482,7 +482,7 @@ class Dftb2(Calculator):
             for the target system.
         r_feed: this feed describes the repulsive interaction. [DEFAULT: None]
         filling_temp: Electronic temperature used to calculate Fermi-energy.
-            [DEFAULT: None]
+            [DEFAULT: 0.0]
         filling_scheme: The scheme used for finite temperature broadening.
             There are two broadening methods, Fermi-Dirac broadening and
             Gaussian broadening, supported in TBMaLT. [DEFAULT: fermi]
@@ -605,7 +605,7 @@ class Dftb2(Calculator):
     def __init__(
             self, h_feed: IntegralFeed, s_feed: IntegralFeed, o_feed: Feed,
             u_feed: Feed, r_feed: Optional[Feed] = None,
-            filling_temp: Optional[float] = 0, filling_scheme: str = 'fermi',
+            filling_temp: Optional[float] = 0.0, filling_scheme: str = 'fermi',
             max_scc_iter: int = 200,
             mixer: Union[_Mixer, Literal['anderson', 'simple']] = 'anderson',
             **kwargs):
@@ -1080,7 +1080,7 @@ class Dftb2(Calculator):
 
         # Calculate and return the total system energy, taking into account
         # the entropy term as and when necessary.
-        return self.total_energy
+        return self.mermin_energy
 
     def __cull(self, mask: Tensor):
         """Cull converged systems from the calculator instance.
