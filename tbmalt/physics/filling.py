@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Code associated with electronic/finite temperature."""
-from typing import Union, Tuple, Optional, Callable
+from typing import Union, Tuple, Optional, Callable, Protocol
 from numbers import Real
 from numpy import sqrt, pi
 import torch
@@ -11,15 +11,21 @@ from tbmalt import OrbitalInfo
 from tbmalt.common import float_like
 from tbmalt.common.batch import psort, bT
 
-_Scheme = Callable[[Tensor, Tensor, float_like], Tensor]
+
+class _Scheme(Protocol):
+    def __call__(
+            self, eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
+            e_mask: Optional[Union[Tensor, OrbitalInfo]] = None) -> Tensor:
+        pass
+
 
 def entropy_term(func, eigenvalues: Tensor, fermi_energy: Tensor,
                  kT: float_like, e_mask: Optional[Union[Tensor, OrbitalInfo]] = None,
-                 **kwargs) -> Tensor:
+                 ) -> Tensor:
     if func == fermi_smearing:
-        return fermi_entropy(eigenvalues, fermi_energy, kT, e_mask, **kwargs)
+        return fermi_entropy(eigenvalues, fermi_energy, kT, e_mask)
     elif func == gaussian_smearing:
-        return gaussian_entropy(eigenvalues, fermi_energy, kT, e_mask, **kwargs)
+        return gaussian_entropy(eigenvalues, fermi_energy, kT, e_mask)
     else:
         NotImplementedError(
             'Can\'t identify associate entropy function for the broadening '
@@ -119,7 +125,7 @@ def gaussian_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
 
             # An example H2 system
             >>> e_vals = torch.tensor([-0.3405911944959140,
-                                       0.2311892808528265])
+            ...                        0.2311892808528265])
             >>> kt = torch.tensor(0.0036749324000000)
             >>> e_fermi = torch.tensor(-0.0547009568215437)
 
@@ -336,7 +342,7 @@ def gaussian_smearing(
 
         # An example H2 system
         >>> e_vals = torch.tensor([-0.3405911944959140,
-                                   0.2311892808528265])
+        ...                        0.2311892808528265])
         >>> kt = torch.tensor(0.0036749324000000)
         >>> e_fermi = torch.tensor(-0.0547009568215437)
 
@@ -360,7 +366,7 @@ def gaussian_smearing(
 def _middle_gap_approximation(
         eigenvalues: Tensor, n_electrons: Tensor, scale_factor: Tensor,
         e_mask: Optional[Tensor] = None, return_occupations: bool = False
-        ) -> Tuple[Tensor, Tensor]:
+        ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
     """Returns the midpoint between the HOMO and LUMO."""
 
     # Shape of Ɛ tensor where k-points & spin-channels have been flattened out.
@@ -503,7 +509,7 @@ def fermi_search(
 
         # An example H2 system
         >>> e_vals = torch.tensor([-0.3405911944959140,
-                                   0.2311892808528265])
+        ...                        0.2311892808528265])
         >>> kt = torch.tensor(0.0036749324000000)
         >>> n_elec = 2.0
 
@@ -662,7 +668,7 @@ def aufbau_filling(
         k_weights: Optional[Tensor] = None) -> Tensor:
     """Fractional orbital occupancies due to the Aufbau principle.
 
-    Returns the fractional occupancy of each orbital according the the Aufbau
+    Returns the fractional occupancy of each orbital according the Aufbau
     principle in which states are filled from lowest to highest energy until
     the specified electron count is reached. Any given state will only be
     occupied if all states of lower energy are also occupied.
