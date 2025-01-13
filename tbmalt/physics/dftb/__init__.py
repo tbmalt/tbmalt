@@ -644,7 +644,7 @@ class Dftb2(Calculator):
             None: None
         }[filling_scheme]
         self.max_scc_iter = max_scc_iter
-        self.suppress_SCF_error = kwargs.get('supress_SCF_error', False)
+        self.suppress_SCF_error = kwargs.get('suppress_SCF_error', False)
         self.gamma_scheme = kwargs.get('gamma_scheme', 'exponential')
         self.coulomb_scheme = kwargs.get('coulomb_scheme', 'search')
 
