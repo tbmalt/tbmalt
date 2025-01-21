@@ -57,7 +57,7 @@ class Skf:
         >>> import urllib, tarfile
         >>> from os.path import join
         >>> from tbmalt.io.skf import Skf
-        >>> link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+        >>> link = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
         >>> taraug = urllib.request.urlretrieve(link, path := join('./auorg-1-1.tar.xz'))
         >>> tartmp = tarfile.open(path)
         >>> tartmp.extractall('./')

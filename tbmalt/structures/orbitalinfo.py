@@ -499,7 +499,7 @@ class OrbitalInfo:
                 - "full": 1 matrix-element per orbital-orbital interaction.
                 - "shell": 1 matrix-element per shell-shell interaction block.
 
-                A more in-depth description of the this argument's effects is
+                A more in-depth description of this argument's effects is
                 given in :meth:`.azimuthal_matrix`. [DEFAULT="full"]
 
         Returns:
@@ -540,7 +540,7 @@ class OrbitalInfo:
                 - "shell": 1 matrix-element per shell-shell interaction block.
                 - "atomic": 1 matrix-element per atom-atom interaction block.
 
-                A more in-depth description of the this argument's effects is
+                A more in-depth description of this argument's effects is
                 given in :meth:`.azimuthal_matrix`. [DEFAULT="full"]
 
         Returns:
@@ -589,7 +589,7 @@ class OrbitalInfo:
                 - "shell": 1 matrix-element per shell-shell interaction block.
                 - "atomic": 1 matrix-element per atom-atom interaction block.
 
-                A more in-depth description of the this argument's effects is
+                A more in-depth description of this argument's effects is
                 given in :meth:`.azimuthal_matrix`. [DEFAULT="full"]
 
         Returns:

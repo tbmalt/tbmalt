@@ -11,8 +11,7 @@ from tbmalt import Geometry, OrbitalInfo
 
 class Calculator(ABC):
 
-    def __init__(self, dtype: torch.dtype, device: torch.device,
-                 mass: Optional[Dict[int, float]] = None):
+    def __init__(self, dtype: torch.dtype, device: torch.device):
 
         self.__dtype = dtype
         self.__device = device

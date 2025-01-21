@@ -9,7 +9,7 @@ from sklearn.ensemble import RandomForestRegressor
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
-from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
+from tbmalt.physics.dftb.feeds import SkFeed, VcrSkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.io.dataset import DataSetIM
 from tbmalt.ml.acsf import Acsf
 from tbmalt.common.batch import pack
@@ -27,7 +27,7 @@ device = torch.device('cpu')
 # 1.1: System settings
 # --------------------
 
-# Provide a list of moecules upon which TBMaLT is to be run
+# Provide a list of molecules upon which TBMaLT is to be run
 targets = ['dipole']
 sources_train = ['run1/train', 'run2/train', 'run3/train']
 sources_test = ['run1/test', 'run2/test', 'run3/test']
@@ -124,14 +124,12 @@ species = torch.tensor([1, 6, 7, 8])
 species = species[species != 0].tolist()
 
 # Load the Hamiltonian feed model
-h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation='bicubic')
+h_feed = VcrSkFeed.from_database(parameter_db_path, species, 'hamiltonian')
 h_feed_std = SkFeed.from_database(
     parameter_db_path_std, species, 'hamiltonian')
 
 # Load the overlap feed model
-s_feed = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation='bicubic')
+s_feed = VcrSkFeed.from_database(parameter_db_path, species, 'overlap')
 s_feed_std = SkFeed.from_database(
     parameter_db_path_std, species, 'overlap')
 
@@ -272,8 +270,8 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
                     for iatm in data.geometry.unique_atomic_numbers().tolist()}
 
         # Perform the forwards operation
-        dftb_calculator.h_feed.vcr = this_cr
-        dftb_calculator.s_feed.vcr = this_cr
+        dftb_calculator.h_feed.compression_radii = this_cr
+        dftb_calculator.s_feed.compression_radii = this_cr
         dftb_calculator(data.geometry, orbs)
 
         # Calculate the loss
@@ -303,7 +301,7 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
 
     # store optimized results to dftb calculator
     if global_r:
-        dftb_calculator.h_feed.vcr = comp_r
+        dftb_calculator.h_feed.compression_radii = comp_r
     else:
         dftb_calculator.h_feed.on_sites = onsite_dict
 
@@ -360,7 +358,7 @@ def single_test(dftb_calculator: Dftb2,
 
         # Collect ML input and reference
         x_fit = build_feature(geometry_fit, orbs_fit)
-        y_fit = dftb_calculator.h_feed.vcr.detach()
+        y_fit = dftb_calculator.h_feed.compression_radii.detach()
         y_fit = y_fit[geometry_fit.atomic_numbers.ne(0)]
         x_test = build_feature(geometry_test, orbs_test)
 
@@ -383,17 +381,17 @@ def single_test(dftb_calculator: Dftb2,
                 for iatm in geometry_test.unique_atomic_numbers().tolist()}
 
         # Update predicted compression radii and onsite
-        dftb_calculator.h_feed.vcr = y_pred
-        dftb_calculator.s_feed.vcr = y_pred
+        dftb_calculator.h_feed.compression_radii = y_pred
+        dftb_calculator.s_feed.compression_radii = y_pred
     else:
-        comp_r = dftb_calculator.h_feed.vcr
+        comp_r = dftb_calculator.h_feed.compression_radii
         this_cr = torch.ones(geometry_test.atomic_numbers.shape)
         for ii, iatm in enumerate(geometry_test.unique_atomic_numbers()):
             this_cr[iatm == geometry_test.atomic_numbers] = comp_r[ii]
 
         # Perform the forwards operation
-        dftb_calculator.h_feed.vcr = this_cr
-        dftb_calculator.s_feed.vcr = this_cr
+        dftb_calculator.h_feed.compression_radii = this_cr
+        dftb_calculator.s_feed.compression_radii = this_cr
 
     # Perform DFTB calculations
     dftb_calculator_std(geometry_test, orbs_test)
