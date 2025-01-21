@@ -14,6 +14,7 @@ torch.set_default_dtype(torch.float64)
 torch.autograd.set_detect_anomaly(True)
 torch.set_printoptions(precision=20, sci_mode=False, linewidth=200, profile="full")
 
+#Function to obtain skf file
 def skf_file(output_path: str):
     """Path to auorg-1-1 HDF5 database.
 
@@ -29,7 +30,8 @@ def skf_file(output_path: str):
 
     """
     # Link to the auorg-1-1 parameter set
-    link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+    #link = 'https://dftb.org/fileadmin/DFTB/public/slako/auorg/auorg-1-1.tar.xz'
+    link = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
 
     # Elements of interest
     elements = ['H', 'C', 'N', 'O', 'S', 'Au']
@@ -47,8 +49,6 @@ def skf_file(output_path: str):
 
         for skf_file in skf_files:
             Skf.read(skf_file).write(output_path)
-
-
 
 print('-------------------------')
 print('Analytical')
