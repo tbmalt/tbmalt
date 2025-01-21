@@ -5,7 +5,6 @@ This contains all Slater-Koster integral feed objects. These objects are
 responsible for generating the Slater-Koster integrals and for constructing
 the associated Hamiltonian and overlap matrices.
 """
-import time
 from __future__ import annotations
 import warnings
 import re
@@ -29,6 +28,7 @@ from tbmalt.common.maths.interpolation import PolyInterpU, BicubInterpSpl
 from tbmalt.common.maths.interpolation import CubicSpline
 from tbmalt.common import unique
 
+import time
 # Todo:
 #   - Need to determine why this is so slow for periodic systems.
 
