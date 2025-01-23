@@ -438,7 +438,9 @@ class Dftb1(Calculator):
 
     @property
     def forces(self):
-        """Forces acting on the atoms"""
+        """Forces acting on the atoms calculated using the analytical expression.
+
+        Note: This method still uses finite differences to calculated the gradient of the overlap and core hamiltonian."""
 
         doverlap, dh0 = self._finite_diff_overlap_h0()
         # Use the already calculated density matrix rho_mu,nu
@@ -1012,7 +1014,9 @@ class Dftb2(Calculator):
 
     @property
     def forces(self):
-        """Forces acting on the atoms"""
+        """Forces acting on the atoms calculated using the analytical expression.
+
+        Note: This method still uses finite differences to calculated the gradient of the overlap and core hamiltonian."""
 
         doverlap, dh0 = self._finite_diff_overlap_h0()
         # Use the already calculated density matrix rho_mu,nu

@@ -582,7 +582,7 @@ def build_gamma_matrix(
 
 def gamma_exponential_gradient(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
                       ) -> Tensor:
-    """Construct the gamma matrix via the exponential method.
+    """Construct the gradient of the gamma matrix via the exponential method.
 
     Arguments:
         geometry: `Geometry` object of the system(s) whose gamma matrix is to
@@ -593,7 +593,7 @@ def gamma_exponential_gradient(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us
             or shell resolved.
 
     Returns:
-        gamma: gamma matrix.
+        gamma_grad: gradient of gamma matrix.
 
     Examples:
         >>> from tbmalt import OrbitalInfo, Geometry

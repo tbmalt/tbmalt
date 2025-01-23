@@ -1970,6 +1970,14 @@ class RepulsiveSplineFeed(Feed):
         return Erep
 
     def gradient(self, geo: Union[Geometry, Tensor]) -> Tensor:
+        """Calculate the gradient of the repulsive energy.
+
+        Arguments:
+            geo: Geometry object(s) for which the gradient of the repulsive energy should be calculated. Either a single Geometry object or a batch of Geometry objects.
+
+        returns:
+            dErep: The gradient of the repulsive energy.
+        """
         batch_size, indxs, indx_pairs, normed_distance_vectors = self._calculation_prep(geo)
         
         dErep = torch.zeros((batch_size, geo.atomic_numbers.size(dim=-1), 3), device=self.device, dtype=self.dtype)
@@ -1991,6 +1999,17 @@ class RepulsiveSplineFeed(Feed):
         return dErep
 
     def _calculation_prep(self, geo: Union[Geometry, Tensor]):
+        """Performs preliminary calculations for the repulsive energy calculation and gradient calculation.
+
+        Arguments:
+            geo: Geometry object(s) for which the repulsive energy should be calculated. Either a single Geometry object or a batch of Geometry objects.
+
+        returns:
+            batch_size: The number of geometries in the batch.
+            indxs: The indices of the atoms.
+            indx_pairs: The indices of the interacting atom pairs as tuples.
+            normed_distance_vectors: The normalized distance vectors between the atoms
+        """
         if geo.atomic_numbers.dim() == 1: #this means it is not a batch
             batch_size = 1
         else:
