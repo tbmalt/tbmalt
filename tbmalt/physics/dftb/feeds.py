@@ -1949,7 +1949,6 @@ class RepulsiveSplineFeed(Feed):
         Returns:
             Erep: The repulsive energy of the Geometry object(s).
         """
-        print("RepulsiveSplineFeed.__call__")
         start_time = time.time()
 
         batch_size, indxs, indx_pairs, normed_distance_vectors = self._calculation_prep(geo)
@@ -1968,15 +1967,9 @@ class RepulsiveSplineFeed(Feed):
                 add_Erep = self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx])
                 Erep[batch_indx] += add_Erep
 
-        end_time = time.time()
-        print("Time for RepulsiveSplineFeed.__call__:", end_time-start_time)
-
         return Erep
 
     def gradient(self, geo: Union[Geometry, Tensor]) -> Tensor:
-        print("RepulsiveSplineFeed.gradient")
-        start_time = time.time()
-
         batch_size, indxs, indx_pairs, normed_distance_vectors = self._calculation_prep(geo)
         
         dErep = torch.zeros((batch_size, geo.atomic_numbers.size(dim=-1), 3), device=self.device, dtype=self.dtype)
@@ -1994,9 +1987,6 @@ class RepulsiveSplineFeed(Feed):
                 #TODO: Not yet batched
                 dErep[batch_indx, indx_pair[0]] += add_dErep*normed_distance_vectors[batch_indx, indx_pair[0], indx_pair[1]]
                 dErep[batch_indx, indx_pair[1]] += add_dErep*normed_distance_vectors[batch_indx,indx_pair[1], indx_pair[0]]
-
-        end_time = time.time()
-        print("Time for RepulsiveSplineFeed.gradient:", end_time-start_time)
         
         return dErep
 

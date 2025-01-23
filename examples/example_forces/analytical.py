@@ -111,9 +111,6 @@ geos = CO2
 #geos = C2H2Au2S3
 #geos = H2
 
-print("Atomic numbers:", geos.atomic_numbers)
-print("Positions:", geos._positions)
-
 orbital_info = OrbitalInfo(geos.atomic_numbers, shell_dict, shell_resolved=False)
 
 # Set up the feeds
@@ -128,11 +125,8 @@ dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard
 #dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, r_feed=repulsive_feed)
 
 # Run a SCF calculation
-start_time = time.time()
 energy = dftb_calculator(geos, orbital_info)
-end_time = time.time()
 print('Energy:', energy)
-print('Time:', end_time - start_time)
 
 # Get total energy
 total_energy = dftb_calculator.total_energy
@@ -143,8 +137,5 @@ repulsive_energy = dftb_calculator.repulsive_energy
 print('Repulsive energy:', repulsive_energy)
 
 #Get forces
-start_time = time.time()
 forces = dftb_calculator.forces
-end_time = time.time()
 print('Forces:', forces)
-print('Time:', end_time - start_time)
