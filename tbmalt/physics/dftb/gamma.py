@@ -626,41 +626,29 @@ def gamma_exponential_gradient(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us
     normed_distance_vectors = geometry.distance_vectors / geometry.distances.unsqueeze(-1)
     normed_distance_vectors[normed_distance_vectors.isnan()] = 0
 
-    print('normed_distance_vectors: ', normed_distance_vectors)
-
-
     dtype, device = r.dtype, r.device
 
     if orbs.shell_resolved:  # and expand it if this is shell resolved calc.
-        print('Entered shell resolved gamma calc')
         def dri(t, ind):  # Abstraction of lengthy double interleave operation
             return t.repeat_interleave(ind, -1).repeat_interleave(ind, -2)
 
         # Get № shells per atom & determine batch status, then expand.
         batch = (spa := orbs.shells_per_atom).ndim >= 2
-        print('batch: ', batch)
         r = pack([dri(i, j) for i, j in zip(r, spa)]) if batch else dri(r, spa)
-        print('r: ', r)
 
         z = prepeat_interleave(z, orbs.n_shells_on_species(z))
-        print('z: ', z)
 
     # Construct index list for upper triangle gather operation
     ut = torch.unbind(torch.triu_indices(U.shape[-1], U.shape[-1], 0))
-    print('ut: ', ut)
     distance_tr = r[..., ut[0], ut[1]]
-    print('distance_tr: ', distance_tr)
     an1 = z[..., ut[0]]
     an2 = z[..., ut[1]]
-    print('an1, an2: ', an1, " ", an2)
 
     # build the whole gamma, shortgamma (without 1/R) and triangular gamma
     gamma = torch.zeros(r.shape, dtype=dtype, device=device)
     gamma_tr = torch.zeros(distance_tr.shape, dtype=dtype, device=device)
     #build the gamma gradient matrix
-    print('Gamma shape: ', gamma.size() + (3,))
     gamma_grad = torch.ones(gamma.size() + (3,), dtype=dtype, device=device)
-    #print('gamma_grad shape: ', gamma_grad * torch.tensor([[1, 2],[3,4]], dtype=dtype, device=device).unsqueeze(-1))
 
     # diagonal values is so called chemical hardness Hubbard
     gamma_tr[..., ut[0] == ut[1]] = 0
@@ -715,10 +703,7 @@ def gamma_exponential_gradient(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us
     # result.
     r[r != 0.0] = 1.0 / r[r != 0.0]
     gamma = -r**2 - gamma
-    print('gamma: ', gamma)
-    print('gamma unsqueezed: ', gamma.unsqueeze(-1))
     gamma_grad = normed_distance_vectors * gamma.unsqueeze(-1)
-    print('gamma gradient: ', gamma_grad.squeeze())
 
     return gamma_grad
 
