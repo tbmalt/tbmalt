@@ -12,7 +12,7 @@ from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed, Re
 # Define global constants
 torch.set_default_dtype(torch.float64)
 torch.autograd.set_detect_anomaly(True)
-torch.set_printoptions(precision=20, sci_mode=False, linewidth=200, profile="full")
+torch.set_printoptions(precision=16, sci_mode=False, linewidth=200, profile="full")
 
 #Function to obtain skf file
 def skf_file(output_path: str):
@@ -67,18 +67,18 @@ shell_dict = {1: [0], 6: [0,1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
 #shell_dict = {6: [0,1], 8: [0, 1]}
 #shell_dict = {1: [0]}
 # Set up geometry
-#H2O = Geometry(torch.tensor([8, 1, 1]), 
-#               torch.tensor([[0.0, 0.0, 0.0],
-#                             [0.0, 0.8, -0.5],
-#                             [0.0, -0.8, -0.5]], requires_grad=False),
-#               units='angstrom'
-#               )
-#CO2 = Geometry(torch.tensor([6, 8, 8]), 
-#               torch.tensor([[0.0, 0.0, 0.0],
-#                             [0.0, 0.0, 1.16],
-#                             [0.0, 0.0, -1.16]], requires_grad=False),
-#               units='angstrom'
-#               )
+H2O = Geometry(torch.tensor([8, 1, 1]), 
+               torch.tensor([[0.0, 0.0, 0.0],
+                             [0.0, 0.8, -0.5],
+                             [0.0, -0.8, -0.5]], requires_grad=False),
+               units='angstrom'
+               )
+CO2 = Geometry(torch.tensor([6, 8, 8]), 
+               torch.tensor([[0.0, 0.0, 0.0],
+                             [0.0, 0.0, 1.16],
+                             [0.0, 0.0, -1.16]], requires_grad=False),
+               units='angstrom'
+               )
 C2H2Au2S3 = Geometry(torch.tensor([1, 6, 16, 79, 16, 79, 16, 6, 1]),
                      torch.tensor([
                          [+0.00, +0.00, +0.00],
@@ -104,10 +104,11 @@ H2 = Geometry(torch.tensor([1, 1]),
                )
 #geos = H2O + CO2
 #geos = Geometry.from_ase_atoms(molecule('CO2'))
-#geos = CO2
+geos = CO2
+#geos = H2O
 #print(geos)
 
-geos = C2H2Au2S3
+#geos = C2H2Au2S3
 #geos = H2
 
 print("Atomic numbers:", geos.atomic_numbers)
@@ -123,8 +124,8 @@ hubbard_feed = HubbardFeed.from_database(path, species)
 repulsive_feed = RepulsiveSplineFeed.from_database(path, species)
 
 # Set up the calculator
-#dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
-dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, r_feed=repulsive_feed)
+dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
+#dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, r_feed=repulsive_feed)
 
 # Run a SCF calculation
 start_time = time.time()

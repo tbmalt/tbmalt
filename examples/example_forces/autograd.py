@@ -14,7 +14,7 @@ print('-------------------------')
 print('autograd')
 
 # File with the sk data
-path = './auorg.hdf5'
+path = './test_auorg.hdf5'
 
 #species = [1, 6, 8]
 species = [1, 6, 8, 16, 79]
@@ -91,8 +91,8 @@ print('Repulsive energy:', repulsive_energy)
 
 # Calculate the gradient
 start_time = time.time()
-#gradient = torch.autograd.grad(total_energy, H2O.positions, grad_outputs=torch.ones_like(total_energy))[0]
-(gradient,) = torch.autograd.grad(total_energy, H2O.positions, retain_graph=True)
+gradient = torch.autograd.grad(total_energy, H2O.positions, grad_outputs=torch.ones_like(total_energy))[0]
+#(gradient,) = torch.autograd.grad(total_energy, H2O.positions, retain_graph=True)
 print(H2O.positions)
 forces = -gradient
 end_time = time.time()
