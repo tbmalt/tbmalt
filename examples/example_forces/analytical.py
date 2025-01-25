@@ -12,7 +12,7 @@ from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed, Re
 # Define global constants
 torch.set_default_dtype(torch.float64)
 torch.autograd.set_detect_anomaly(True)
-torch.set_printoptions(precision=16, sci_mode=False, linewidth=200, profile="full")
+torch.set_printoptions(precision=9, sci_mode=False, linewidth=200, profile="full")
 
 #Function to obtain skf file
 def skf_file(output_path: str):
@@ -93,18 +93,31 @@ C2H2Au2S3 = Geometry(torch.tensor([1, 6, 16, 79, 16, 79, 16, 6, 1]),
                      units='angstrom'
                      )
 
+
+CH4 = Geometry(torch.tensor([6, 1, 1, 1, 1]),
+               torch.tensor([
+                   [+0.00, +0.00, +0.00],
+                   [+0.63, +0.63, +0.63],
+                   [-0.63, -0.63, +0.63],
+                   [+0.63, -0.63, -0.63],
+                   [-0.63, +0.63, -0.63]],
+                   ),
+               units='angstrom')
+
+
+
 #geos = Geometry.from_ase_atoms([molecule('H2O'), molecule('CO2')])
 #print(geos._positions)
 #print(geos.atomic_numbers)
 
 H2 = Geometry(torch.tensor([1, 1]), 
-               torch.tensor([[0.0, 0.0, 0.0],
-                             [0.0, 0.0, 0.5]], requires_grad=False),
+               torch.tensor([[0.0, 0.0, 0.37],
+                             [0.0, 0.0, -0.37]], requires_grad=False),
                units='angstrom'
                )
 #geos = H2O + CO2
 #geos = Geometry.from_ase_atoms(molecule('CO2'))
-geos = CO2
+geos = H2O
 #geos = H2O
 #print(geos)
 

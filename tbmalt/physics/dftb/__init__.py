@@ -1047,7 +1047,7 @@ class Dftb2(Calculator):
         h1_correction = torch.einsum('...nm,...nm,...acmn->...ac', density, h1, doverlap)
 
         # Gamma gradient correction
-        gamma_grad = gamma_exponential_gradient(self.geometry, self.orbs, self.u_feed(self.orbs))
+        gamma_grad = gamma_exponential_gradient(self.geometry, self.orbs, self.u_feed(self.orbs)) #TODO change self.u_feed(self.orbs) to self.u_feed.forward(self.orbs)
         gamma_correction = torch.einsum('...a,...abc,...b->...ac', self.q_delta_atomic, gamma_grad, self.q_delta_atomic)
 
         force = force - h1_correction - gamma_correction
