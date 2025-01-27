@@ -46,8 +46,6 @@ def gamma_exponential(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
                 [0.3234, 0.2654, 0.2654, 0.2654, 0.4196]])
 
     """
-    gamma_gradient = gamma_exponential_gradient(geometry, orbs, hubbard_Us)
-
     # Build the Slater type gamma in second-order term.
     U = hubbard_Us
     r = geometry.distances

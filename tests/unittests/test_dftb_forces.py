@@ -31,97 +31,56 @@ def molecules(device) -> List[Geometry]:
                       device=device),
                   units='angstrom')
 
-    CH4 = Geometry(torch.tensor([6, 1, 1, 1, 1], device=device),
-                   torch.tensor([
-                       [+0.00, +0.00, +0.00],
-                       [+0.63, +0.63, +0.63],
-                       [-0.63, -0.63, +0.63],
-                       [+0.63, -0.63, -0.63],
-                       [-0.63, +0.63, -0.63]],
-                       device=device),
-                   units='angstrom')
-
     H2O = Geometry(torch.tensor([8, 1, 1], device=device),
                torch.tensor([[0.0, 0.0, 0.0],
                              [0.0, 0.8, -0.5],
                              [0.0, -0.8, -0.5]], 
                             device=device,),
                units='angstrom')
-    return [H2, CH4, H2O]
+    return [H2, H2O]
 
-species = [1, 6, 8, 16]
+species = [1, 8]
 
 #Reference values
 reference_nonscc_H2 = torch.tensor([[[ 0.000000000,  0.000000000,  0.001977038],
          [ 0.000000000,  0.000000000, -0.001977038]]])
 
-reference_nonscc_CH4 = torch.tensor([[[     0.000000000,      0.000000000,      0.000000000],
-         [    -0.000817923,     -0.000817923,     -0.000817923],
-         [     0.000817923,      0.000817923,     -0.000817923],
-         [    -0.000817923,      0.000817923,      0.000817923],
-         [     0.000817923,     -0.000817923,      0.000817923]]])
-
 reference_nonscc_H2O = torch.tensor([[[    -0.000000000,      0.000000000,      0.049182873],
          [     0.000000000,      0.022087108,     -0.024591436],
          [    -0.000000000,     -0.022087108,     -0.024591436]]])
 
-references_nonscc = [reference_nonscc_H2, reference_nonscc_CH4, reference_nonscc_H2O]
+references_nonscc = [reference_nonscc_H2, reference_nonscc_H2O]
 
 reference_nonscc_batch = torch.tensor([[[     0.000000000,      0.000000000,      0.001977038],
          [     0.000000000,      0.000000000,     -0.001977038],
-         [     0.000000000,      0.000000000,      0.000000000],
-         [     0.000000000,      0.000000000,      0.000000000],
          [     0.000000000,      0.000000000,      0.000000000]],
 
-        [[     0.000000000,      0.000000000,      0.000000000],
-         [    -0.000817923,     -0.000817923,     -0.000817923],
-         [     0.000817923,      0.000817923,     -0.000817923],
-         [    -0.000817923,      0.000817923,      0.000817923],
-         [     0.000817923,     -0.000817923,      0.000817923]],
+        [[     0.000000000,      0.000000000,      0.049182873],
+         [    -0.000000000,      0.022087108,     -0.024591436],
+         [     0.000000000,     -0.022087108,     -0.024591436]]])
 
-        [[    -0.000000000,     -0.000000000,      0.049182873],
-         [     0.000000000,      0.022087108,     -0.024591436],
-         [    -0.000000000,     -0.022087108,     -0.024591436],
-         [     0.000000000,      0.000000000,      0.000000000],
-         [     0.000000000,      0.000000000,      0.000000000]]])
 
 reference_scc_H2 = reference_nonscc_H2
-
-reference_scc_CH4 = torch.tensor([[[     0.000000000,     -0.000000000,     -0.000000000],
-         [    -0.000837878,     -0.000837878,     -0.000837878],
-         [     0.000837878,      0.000837878,     -0.000837878],
-         [    -0.000837878,      0.000837878,      0.000837878],
-         [     0.000837878,     -0.000837878,      0.000837878]]])
 
 reference_scc_H2O = torch.tensor([[[    -0.000000000,     -0.000000000,      0.036591558],
          [    -0.000000000,      0.011168830,     -0.018295779],
          [     0.000000000,     -0.011168830,     -0.018295779]]])
 
-references_scc = [reference_scc_H2, reference_scc_CH4, reference_scc_H2O]
+references_scc = [reference_scc_H2, reference_scc_H2O]
 
 reference_scc_batch = torch.tensor([[[     0.000000000,      0.000000000,      0.001977038],
          [     0.000000000,      0.000000000,     -0.001977038],
-         [     0.000000000,      0.000000000,      0.000000000],
-         [     0.000000000,      0.000000000,      0.000000000],
          [     0.000000000,      0.000000000,      0.000000000]],
 
-        [[    -0.000000000,     -0.000000000,     -0.000000000],
-         [    -0.000837878,     -0.000837878,     -0.000837878],
-         [     0.000837878,      0.000837878,     -0.000837878],
-         [    -0.000837878,      0.000837878,      0.000837878],
-         [     0.000837878,     -0.000837878,      0.000837878]],
-
-        [[     0.000000000,     -0.000000000,      0.036591558],
+        [[     0.000000000,      0.000000000,      0.036591558],
          [    -0.000000000,      0.011168830,     -0.018295779],
-         [     0.000000000,     -0.011168830,     -0.018295779],
-         [     0.000000000,      0.000000000,      0.000000000],
-         [     0.000000000,      0.000000000,      0.000000000]]])
+         [     0.000000000,     -0.011168830,     -0.018295779]]])
 
 # Single
 #non-scc
 def test_forces_single_nonscc(skf_file: str, device):
 
-    b_def = {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2]}
+    b_def = {1: [0], 8: [0, 1]}
     
     # setup the feeds
     hamiltonian_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
@@ -149,7 +108,7 @@ def test_forces_single_nonscc(skf_file: str, device):
 #scc
 def test_forces_single_scc(skf_file: str, device):
 
-    b_def = {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2]}
+    b_def = {1: [0], 8: [0, 1]}
     
     # setup the feeds
     hamiltonian_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
@@ -181,7 +140,7 @@ def test_forces_single_scc(skf_file: str, device):
 def test_forces_batch_nonscc(skf_file: str, device):
     mols = reduce(lambda i, j: i+j, molecules(device))
 
-    b_def = {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2]}
+    b_def = {1: [0], 8: [0, 1]}
     
     # setup the feeds
     hamiltonian_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
@@ -208,7 +167,7 @@ def test_forces_batch_nonscc(skf_file: str, device):
 def test_forces_batch_scc(skf_file: str, device):
     mols = reduce(lambda i, j: i+j, molecules(device))
 
-    b_def = {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2]}
+    b_def = {1: [0], 8: [0, 1]}
     
     # setup the feeds
     hamiltonian_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)

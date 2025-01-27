@@ -117,8 +117,8 @@ H2 = Geometry(torch.tensor([1, 1]),
                )
 #geos = H2O + CO2
 #geos = Geometry.from_ase_atoms(molecule('CO2'))
-geos = H2O
-#geos = H2O
+#geos = CH4
+geos = H2 + H2O
 #print(geos)
 
 #geos = C2H2Au2S3
