@@ -46,6 +46,7 @@ def gamma_exponential(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
                 [0.3234, 0.2654, 0.2654, 0.2654, 0.4196]])
 
     """
+
     # Build the Slater type gamma in second-order term.
     U = hubbard_Us
     r = geometry.distances
@@ -60,6 +61,7 @@ def gamma_exponential(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
         # Get № shells per atom & determine batch status, then expand.
         batch = (spa := orbs.shells_per_atom).ndim >= 2
         r = pack([dri(i, j) for i, j in zip(r, spa)]) if batch else dri(r, spa)
+
         z = prepeat_interleave(z, orbs.n_shells_on_species(z))
 
     # Construct index list for upper triangle gather operation
