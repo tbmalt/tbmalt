@@ -28,7 +28,6 @@ from tbmalt.common.maths.interpolation import PolyInterpU, BicubInterpSpl
 from tbmalt.common.maths.interpolation import CubicSpline
 from tbmalt.common import unique
 
-import time
 # Todo:
 #   - Need to determine why this is so slow for periodic systems.
 
@@ -1949,8 +1948,6 @@ class RepulsiveSplineFeed(Feed):
         Returns:
             Erep: The repulsive energy of the Geometry object(s).
         """
-        start_time = time.time()
-
         batch_size, indxs, indx_pairs, normed_distance_vectors = self._calculation_prep(geo)
         
         Erep = torch.zeros((batch_size), device=self.device, dtype=self.dtype)
