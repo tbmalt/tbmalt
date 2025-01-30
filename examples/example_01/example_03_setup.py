@@ -8,20 +8,8 @@ torch.set_default_dtype(torch.float64)
 
 
 def skf_file(output_path: str):
-    """Path to auorg-1-1 HDF5 database.
+    """Download VCR dataset."""
 
-    This function downloads the auorg-1-1 Slater-Koster parameter set & converts
-    it to HDF5 database stored at the path provided.
-
-    Arguments:
-         output_path: location to where the auorg-1-1 HDF5 database file should
-            be stored.
-
-    Warnings:
-        This will fail without an internet connection.
-
-    """
-    # Link to the auorg-1-1 parameter set
     link = 'https://seafile.zfn.uni-bremen.de/f/82656301e2bb4d4a8d77/?dl=1'
 
     # Elements of interest

@@ -18,7 +18,7 @@ torch.set_default_dtype(torch.float64)
 def systems(device) -> List[Geometry]:
     """Returns a selection of `Geometry` entities for testing.
 
-    Currently returned systems are CH4, H2O, C2H6 and C2H2Au2S3. The last of
+    Currently, returned systems are CH4, H2O, C2H6 and C2H2Au2S3. The last of
     which is designed to ensure most possible interaction types are checked.
 
     Arguments:
@@ -30,20 +30,23 @@ def systems(device) -> List[Geometry]:
     """
 
     # Cutoff in bohr
-    cutoff = torch.tensor([9.98], device=device)
-    cutoff2 = torch.tensor([18.38], device=device)  # Au-Au cutoff
+    cutoff = torch.tensor([9.98], device=device) / length_units['angstrom']
+    # Au-Au cutoff
+    cutoff_2 = torch.tensor([18.38], device=device) / length_units['angstrom']
 
     H2 = Geometry(
         torch.tensor([1, 1], device=device),
         torch.tensor([
-            [+0.000000000000000E+00, +0.000000000000000E+00, 0.696520874048385252],
-            [+0.000000000000000E+00, +0.000000000000000E+00, -0.696520874048385252]],
+            [0., 0., 0.368583],
+            [0., 0., -0.368583]],
             device=device),
         torch.tensor([
             [1.5, 0.0, 0.0],
             [0.0, 1.5, 0.0],
             [0.0, 0.0, 1.5]],
-            device=device), cutoff=cutoff)
+            device=device),
+        units='angstrom',
+        cutoff=cutoff)
 
     CH4 = Geometry(torch.tensor([6, 1, 1, 1, 1], device=device),
                    torch.tensor([
@@ -59,7 +62,7 @@ def systems(device) -> List[Geometry]:
                         [0.0, 0.0, 6.0]],
                        device=device),
                    units='angstrom',
-                   cutoff = cutoff / length_units['angstrom'])
+                   cutoff=cutoff)
 
     H2O = Geometry(torch.tensor([1, 8, 1], device=device),
                    torch.tensor([
@@ -73,7 +76,7 @@ def systems(device) -> List[Geometry]:
                         [0.0, 0.0, 6.0]],
                        device=device),
                    units='angstrom',
-                   cutoff = cutoff / length_units['angstrom'])
+                   cutoff=cutoff)
 
     C2H6 = Geometry(torch.tensor([6, 6, 1, 1, 1, 1, 1, 1], device=device),
                     torch.tensor([
@@ -92,7 +95,7 @@ def systems(device) -> List[Geometry]:
                         [0.0, 4.0, 4.0]],
                        device=device),
                     units='angstrom',
-                    cutoff = cutoff / length_units['angstrom'])
+                    cutoff=cutoff)
 
     C2H2Au2S3 = Geometry(torch.tensor([1, 6, 16, 79, 16, 79, 16, 6, 1], device=device),
                          torch.tensor([
@@ -112,7 +115,7 @@ def systems(device) -> List[Geometry]:
                               [0.0, 0.0, 5.0]],
                              device=device),
                          units='angstrom',
-                         cutoff = cutoff2 / length_units['angstrom'])
+                         cutoff=cutoff_2)
 
     return [H2, CH4, H2O, C2H6, C2H2Au2S3]
 

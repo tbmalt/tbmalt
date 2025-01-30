@@ -274,6 +274,13 @@ class Skf:
         # 0th line, grid distance and grid points number
         g_step, n_grids = lines[0].replace(',', ' ').split()[:2]
         g_step, n_grids = float(g_step), int(n_grids)
+
+        # In line with file specification only "nGridPoints - 1" points are
+        # guaranteed to be present. This is because the grid point at r=0 is
+        # implicit rather than explicit. It is worth remarking that some skf
+        # files will actually provide nGridPoints rows; in these cases the
+        # last row is ignored.
+        n_grids = n_grids - 1
         grid = torch.arange(1, n_grids + 1, **dd) * g_step
 
         # Determine if this is the homo/atomic case (from the file's contents)
@@ -408,7 +415,9 @@ class Skf:
         # Format: {grid step size} {number of grid points}
         grid_n = len(self.grid)
         grid_step = self.grid.diff()[0]
-        output = f'{grid_step:<12.8f}{grid_n:>5}'
+        # Note that nGridPoints is always one more than the actual number
+        # of integral rows provided as the zeroth point is implicit.
+        output = f'{grid_step:<12.8f}{grid_n + 1:>5}'
 
         # Parse the atomic data into a string.
         # Format: {on site terms} {SPE} {hubbard u values} {occupancies}
