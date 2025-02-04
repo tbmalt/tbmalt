@@ -579,3 +579,132 @@ def build_gamma_matrix(
             return gamma_exponential_pbc(geometry, orbs, invr, hubbard_Us)
         elif scheme == 'gaussian':
             raise NotImplementedError('Not implement gaussian for pbc yet.')
+
+def gamma_exponential_gradient(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
+                      ) -> Tensor:
+    """Construct the gradient of the gamma matrix via the exponential method.
+
+    Arguments:
+        geometry: `Geometry` object of the system(s) whose gamma matrix is to
+            be constructed.
+        orbs: `OrbitalInfo` instance associated with the target system.
+        hubbard_Us: Hubbard U values. one value should be specified for each
+            atom or shell depending if the calculation being performed is atom
+            or shell resolved.
+
+    Returns:
+        gamma_grad: gradient of gamma matrix.
+
+    Examples:
+        >>> from tbmalt import OrbitalInfo, Geometry
+        >>> from tbmalt.physics.dftb.gamma import gamma_exponential
+        >>> from ase.build import molecule
+
+        # Preparation of system to calculate
+        >>> geo = Geometry.from_ase_atoms(molecule('CH4'))
+        >>> orbs = OrbitalInfo(geo.atomic_numbers,
+                               shell_dict= {1: [0], 6: [0, 1]})
+        >>> hubbard_U = torch.tensor([0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
+
+        # Build the gamma matrix
+        >>> gamma = gamma_exponential(geo, orbs, hubbard_U)
+        >>> print(gamma)
+        tensor([[0.3647, 0.3234, 0.3234, 0.3234, 0.3234],
+                [0.3234, 0.4196, 0.2654, 0.2654, 0.2654],
+                [0.3234, 0.2654, 0.4196, 0.2654, 0.2654],
+                [0.3234, 0.2654, 0.2654, 0.4196, 0.2654],
+                [0.3234, 0.2654, 0.2654, 0.2654, 0.4196]])
+
+    """
+
+    # Build the Slater type gamma in second-order term.
+    U = hubbard_Us
+    r = geometry.distances
+    z = geometry.atomic_numbers
+
+    # normed version of the distance vectors
+    normed_distance_vectors = geometry.distance_vectors / geometry.distances.unsqueeze(-1)
+    normed_distance_vectors[normed_distance_vectors.isnan()] = 0
+
+    dtype, device = r.dtype, r.device
+
+    if orbs.shell_resolved:  # and expand it if this is shell resolved calc.
+        def dri(t, ind):  # Abstraction of lengthy double interleave operation
+            return t.repeat_interleave(ind, -1).repeat_interleave(ind, -2)
+
+        # Get № shells per atom & determine batch status, then expand.
+        batch = (spa := orbs.shells_per_atom).ndim >= 2
+        r = pack([dri(i, j) for i, j in zip(r, spa)]) if batch else dri(r, spa)
+
+        z = prepeat_interleave(z, orbs.n_shells_on_species(z))
+
+    # Construct index list for upper triangle gather operation
+    ut = torch.unbind(torch.triu_indices(U.shape[-1], U.shape[-1], 0))
+    distance_tr = r[..., ut[0], ut[1]]
+    an1 = z[..., ut[0]]
+    an2 = z[..., ut[1]]
+
+    # build the whole gamma, shortgamma (without 1/R) and triangular gamma
+    gamma = torch.zeros(r.shape, dtype=dtype, device=device)
+    gamma_tr = torch.zeros(distance_tr.shape, dtype=dtype, device=device)
+    #build the gamma gradient matrix
+    gamma_grad = torch.ones(gamma.size() + (3,), dtype=dtype, device=device)
+
+    # diagonal values is so called chemical hardness Hubbard
+    gamma_tr[..., ut[0] == ut[1]] = 0
+
+    # off-diagonal values of on-site part for shell resolved calc
+    if orbs.shell_resolved:
+        mask_shell = (ut[0] != ut[1]).to(device) * distance_tr.eq(0)
+        ua, ub = U[..., ut[0]][mask_shell], U[..., ut[1]][mask_shell]
+        mask_diff = (ua - ub).abs() < 1E-8
+        gamma_shell = torch.zeros_like(ua, dtype=dtype, device=device)
+        gamma_shell[mask_diff] = -0.5 * (ua[mask_diff] + ub[mask_diff])
+        if torch.any(~mask_diff):
+            ta, tb = 3.2 * ua[~mask_diff], 3.2 * ub[~mask_diff]
+            gamma_shell[~mask_diff] = 0.0
+        gamma_tr[mask_shell] = gamma_shell
+
+    mask_homo = (an1 == an2) * distance_tr.ne(0)
+    mask_hetero = (an1 != an2) * distance_tr.ne(0)
+    alpha, beta = U[..., ut[0]] * 3.2, U[..., ut[1]] * 3.2
+    r_homo = 1.0 / distance_tr[mask_homo]
+    r_hetero = 1.0 / distance_tr[mask_hetero]
+
+    # homo Hubbard
+    aa, dd_homo = alpha[mask_homo], distance_tr[mask_homo]
+    tau_r = aa * dd_homo
+    e_fac = torch.exp(-tau_r) / 48.0 * r_homo**2
+    gamma_tr[mask_homo] = \
+        -(48.0 + 48.0 * tau_r + 24.0 * tau_r**2 + 7.0 * tau_r**3 + tau_r**4) * e_fac
+
+    # hetero Hubbard
+    aa, bb = alpha[mask_hetero], beta[mask_hetero]
+    dd_hetero = distance_tr[mask_hetero]
+    aa2, aa4, aa6 = aa ** 2, aa ** 4, aa ** 6
+    bb2, bb4, bb6 = bb ** 2, bb ** 4, bb ** 6
+    rab, rba = 1 / (aa2 - bb2), 1 / (bb2 - aa2)
+    exp_a, exp_b = torch.exp(-aa * dd_hetero), torch.exp(-bb * dd_hetero)
+    val_ab = exp_a * ( ((bb6 - 3. * aa2 * bb4) * rab ** 3 * r_hetero**2) -
+                      aa * (0.5 * aa * bb4 * rab ** 2 -
+                      (bb6 - 3. * aa2 * bb4) * rab ** 3 * r_hetero) )
+    val_ba = exp_b * ( ((aa6 - 3. * bb2 * aa4) * rba ** 3 * r_hetero**2) -
+                      bb *(0.5 * bb * aa4 * rba ** 2 -
+                      (aa6 - 3. * bb2 * aa4) * rba ** 3 * r_hetero) )
+    gamma_tr[mask_hetero] = val_ab + val_ba
+
+    # to make sure gamma values symmetric
+    gamma[..., ut[0], ut[1]] = gamma_tr
+    gamma[..., ut[1], ut[0]] = gamma[..., ut[0], ut[1]]
+
+    gamma = gamma.squeeze()
+
+    # Subtract the gamma matrix from the inverse distance to get the final
+    # result.
+    r[r != 0.0] = 1.0 / r[r != 0.0]
+    gamma = -r**2 - gamma
+    gamma_grad = normed_distance_vectors * gamma.unsqueeze(-1)
+
+    return gamma_grad
+
+

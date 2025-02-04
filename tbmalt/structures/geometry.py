@@ -270,11 +270,10 @@ class Geometry:
     def distances(self) -> Tensor:
         """Distance matrix between atoms in the system."""
         # Todo: Modify to account for PBC
-
-        dist_raw = torch.cdist(self.positions, self.positions, p=2)
+        
         # Ensure padding area is zeroed out
         # But don't modify in place
-        dist = dist_raw.clone()
+        dist = torch.cdist(self.positions, self.positions, p=2).clone()
         dist[self._mask_dist] = 0
 
         # cdist bug, sometimes distances diagonal is not zero
@@ -664,6 +663,32 @@ class Geometry:
         """Creates a printable representation of the System."""
         # Just redirect to the `__repr__` method
         return repr(self)
+
+    def clone(self) -> 'Geometry':
+        """Returns a copy of the `Geometry` instance.
+        This method creates and returns a new copy of the `Geometry` instance.
+        Returns:
+            geometry: A copy of the `Geometry` instance.
+        """
+        if self.periodicity is None:
+            return self.__class__(self.atomic_numbers.clone(),
+                                  self.positions.clone())
+        else:
+            raise NotImplementedError(
+                "This operation does not support periodic systems")
+
+    def detach(self) -> 'Geometry':
+        """Returns a copy of the `Geometry` instance.
+        This method creates and returns a new copy of the `Geometry` instance.
+        Returns:
+            geometry: A copy of the `Geometry` instance.
+        """
+        if self.periodicity is None:
+            return self.__class__(self.atomic_numbers.detach(),
+                                  self.positions.detach())
+        else:
+            raise NotImplementedError(
+                "This operation does not support periodic systems")
 
 
 ####################

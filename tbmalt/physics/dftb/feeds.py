@@ -1948,15 +1948,10 @@ class RepulsiveSplineFeed(Feed):
         Returns:
             Erep: The repulsive energy of the Geometry object(s).
         """
-        if geo.atomic_numbers.dim() == 1: #this means it is not a batch
-            batch_size = 1
-        else:
-            batch_size = geo.atomic_numbers.size(dim=0)
-
-        indxs = torch.tensor(range(geo.atomic_numbers.size(dim=-1)), device=self.device)
-        indx_pairs = torch.combinations(indxs)
+        batch_size, indxs, indx_pairs, normed_distance_vectors = self._calculation_prep(geo)
         
         Erep = torch.zeros((batch_size), device=self.device, dtype=self.dtype)
+        
         for indx_pair in indx_pairs:
             atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
             atomnum2 = geo.atomic_numbers[..., indx_pair[1]].reshape((batch_size, ))
@@ -1966,11 +1961,69 @@ class RepulsiveSplineFeed(Feed):
             for batch_indx in range(batch_size):
                 if atomnum1[batch_indx] == 0 or atomnum2[batch_indx] == 0:
                     continue
-                Erep[batch_indx] += self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx])
+                add_Erep = self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx])
+                Erep[batch_indx] += add_Erep
 
         return Erep
 
-    def _repulsive_calc(self, distance: Tensor, atomnum1: Union[Tensor, int], atomnum2: Union[Tensor, int]) -> Tensor:
+    def gradient(self, geo: Union[Geometry, Tensor]) -> Tensor:
+        """Calculate the gradient of the repulsive energy.
+
+        Arguments:
+            geo: Geometry object(s) for which the gradient of the repulsive energy should be calculated. Either a single Geometry object or a batch of Geometry objects.
+
+        returns:
+            dErep: The gradient of the repulsive energy.
+        """
+        batch_size, indxs, indx_pairs, normed_distance_vectors = self._calculation_prep(geo)
+        
+        dErep = torch.zeros((batch_size, geo.atomic_numbers.size(dim=-1), 3), device=self.device, dtype=self.dtype)
+        
+        for indx_pair in indx_pairs:
+            atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
+            atomnum2 = geo.atomic_numbers[..., indx_pair[1]].reshape((batch_size, ))
+
+            distance = geo.distances[..., indx_pair[0], indx_pair[1]].reshape((batch_size, ))
+
+            for batch_indx in range(batch_size):
+                if atomnum1[batch_indx] == 0 or atomnum2[batch_indx] == 0:
+                    continue
+                add_dErep = self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx], grad=True)
+                #TODO: Not yet batched
+                dErep[batch_indx, indx_pair[0]] += add_dErep*normed_distance_vectors[batch_indx, indx_pair[0], indx_pair[1]]
+                dErep[batch_indx, indx_pair[1]] += add_dErep*normed_distance_vectors[batch_indx,indx_pair[1], indx_pair[0]]
+        
+        return dErep
+
+    def _calculation_prep(self, geo: Union[Geometry, Tensor]):
+        """Performs preliminary calculations for the repulsive energy calculation and gradient calculation.
+
+        Arguments:
+            geo: Geometry object(s) for which the repulsive energy should be calculated. Either a single Geometry object or a batch of Geometry objects.
+
+        returns:
+            batch_size: The number of geometries in the batch.
+            indxs: The indices of the atoms.
+            indx_pairs: The indices of the interacting atom pairs as tuples.
+            normed_distance_vectors: The normalized distance vectors between the atoms
+        """
+        if geo.atomic_numbers.dim() == 1: #this means it is not a batch
+            batch_size = 1
+        else:
+            batch_size = geo.atomic_numbers.size(dim=0)
+
+        indxs = torch.tensor(range(geo.atomic_numbers.size(dim=-1)), device=self.device)
+        indx_pairs = torch.combinations(indxs)
+
+        normed_distance_vectors = geo.distance_vectors / geo.distances.unsqueeze(-1)
+        normed_distance_vectors[normed_distance_vectors.isnan()] = 0
+        normed_distance_vectors = torch.reshape(normed_distance_vectors, (batch_size, normed_distance_vectors.shape[-3], normed_distance_vectors.shape[-2], normed_distance_vectors.shape[-1]))
+
+        return batch_size, indxs, indx_pairs, normed_distance_vectors
+ 
+
+
+    def _repulsive_calc(self, distance: Tensor, atomnum1: Union[Tensor, int], atomnum2: Union[Tensor, int], grad: bool = False) -> Tensor:
         """Calculate the repulsive energy contribution between two atoms.
 
         Arguments:
@@ -1987,17 +2040,17 @@ class RepulsiveSplineFeed(Feed):
 
         if distance < spline.cutoff:
             if distance > tail_start:
-                return self._tail(distance, tail_start, spline.tail_coef)
+                return self._tail(distance, tail_start, spline.tail_coef, grad=grad)
             elif distance > exp_head_cutoff:
                 for ind in range(len(spline.grid)):
                     if distance < spline.grid[ind]:
-                        return self._spline(distance, spline.grid[ind-1], spline.spline_coef[ind-1])
+                        return self._spline(distance, spline.grid[ind-1], spline.spline_coef[ind-1], grad=grad)
             else:
-                return self._exponential_head(distance, spline.exp_coef)
+                return self._exponential_head(distance, spline.exp_coef, grad=grad)
         return 0
    
     @classmethod
-    def _exponential_head(cls, distance: Tensor, coeffs: Tensor) -> Tensor:
+    def _exponential_head(cls, distance: Tensor, coeffs: Tensor, grad: bool = False) -> Tensor:
         r"""Exponential head calculation of the repulsive spline. 
 
         Arguments:
@@ -2011,11 +2064,13 @@ class RepulsiveSplineFeed(Feed):
         a1 = coeffs[0]
         a2 = coeffs[1]
         a3 = coeffs[2]
-
-        return torch.exp(-a1*distance + a2) + a3
+        if not grad:
+            return torch.exp(-a1*distance + a2) + a3
+        else:
+            return -a1*torch.exp(-a1*distance + a2)
 
     @classmethod 
-    def _spline(cls, distance: Tensor, start: Tensor, coeffs: Tensor) -> Tensor:
+    def _spline(cls, distance: Tensor, start: Tensor, coeffs: Tensor, grad: bool = False) -> Tensor:
         r"""3rd order polynomial Spline calculation of the repulsive spline.
 
         Arguments:
@@ -2028,11 +2083,15 @@ class RepulsiveSplineFeed(Feed):
                 The energy is calculated as :math:`coeffs[0] + coeffs[1]*(distance - start) + coeffs[2]*(distance - start)^2 + coeffs[3]*(distance - start)^3`.
         """
         rDiff = distance - start
-        energy = coeffs[0] + coeffs[1]*rDiff + coeffs[2]*rDiff**2 + coeffs[3]*rDiff**3
-        return energy
+        if not grad:
+            energy = coeffs[0] + coeffs[1]*rDiff + coeffs[2]*rDiff**2 + coeffs[3]*rDiff**3
+            return energy
+        else:
+            denergy = coeffs[1] + 2*coeffs[2]*rDiff + 3*coeffs[3]*rDiff**2
+            return denergy
 
     @classmethod 
-    def _tail(cls, distance: Tensor, start: Tensor, coeffs: Tensor) -> Tensor:
+    def _tail(cls, distance: Tensor, start: Tensor, coeffs: Tensor, grad: bool = False) -> Tensor:
         r"""5th order polynomial trailing tail calculation of the repulsive spline.
 
         Arguments:
@@ -2045,8 +2104,12 @@ class RepulsiveSplineFeed(Feed):
                 The energy is calculated as :math:`coeffs[0] + coeffs[1]*(distance - start) + coeffs[2]*(distance - start)^2 + coeffs[3]*(distance - start)^3 + coeffs[4]*(distance - start)^4 + coeffs[5]*(distance - start)^5`.
         """
         rDiff = distance - start
-        energy = coeffs[0] + coeffs[1]*rDiff + coeffs[2]*rDiff**2 + coeffs[3]*rDiff**3 + coeffs[4]*rDiff**4 + coeffs[5]*rDiff**5
-        return energy
+        if not grad:
+            energy = coeffs[0] + coeffs[1]*rDiff + coeffs[2]*rDiff**2 + coeffs[3]*rDiff**3 + coeffs[4]*rDiff**4 + coeffs[5]*rDiff**5
+            return energy
+        else:
+            denergy = coeffs[1] + 2*coeffs[2]*rDiff + 3*coeffs[3]*rDiff**2 + 4*coeffs[4]*rDiff**3 + 5*coeffs[5]*rDiff**4
+            return denergy
 
 
 
