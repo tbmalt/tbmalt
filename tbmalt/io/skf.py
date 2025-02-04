@@ -72,6 +72,10 @@ class Skf:
         >>> print(cch5.hamiltonian.keys())
         dict_keys([(0, 0), (0, 1), (1, 1)])
 
+        Note Slater-Koster parameter sets can be downloaded and parsed into
+        an HDF5 file using the method
+        `tbmalt.tools.downloaders.download_dftb_parameter_set`.
+
     Attributes:
         atomic: True if the system contains atomic data, only relevant to the
             homo-atomic cases.
