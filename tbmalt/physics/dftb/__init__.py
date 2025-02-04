@@ -133,36 +133,24 @@ class Dftb1(Calculator):
         in DFTB+ for examples.
 
     Examples:
+        >>> import torch
         >>> from tbmalt import OrbitalInfo, Geometry
         >>> from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed
         >>> from tbmalt.physics.dftb import Dftb1
-        >>> from tbmalt.io.skf import Skf
+        >>> from tbmalt.tools.downloaders import download_dftb_parameter_set
         >>> from ase.build import molecule
-        >>> import urllib
-        >>> import tarfile
-        >>> from os.path import join
         >>> torch.set_default_dtype(torch.float64)
-
-        # Link to the auorg-1-1 parameter set
-        >>> link = \
-        'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
-
-        # Preparation of sk file
-        >>> elements = ['H', 'C', 'O', 'Au', 'S']
-        >>> tmpdir = './'
-        >>> urllib.request.urlretrieve(
-        ...     link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
-        >>> with tarfile.open(path) as tar:
-        ...     tar.extractall(tmpdir)
-        >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-        ...              for i in elements for j in elements]
-        >>> for skf_file in skf_files:
-        ...     Skf.read(skf_file).write(path := join(tmpdir, 'auorg.hdf5'))
+        # Download the auorg-1-1 parameter set
+        >>> url = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
+        >>> path = "auorg.h5"
+        >>> download_dftb_parameter_set(url, path)
 
         # Preparation of system to calculate
+
         # Single system
         >>> geos = Geometry.from_ase_atoms(molecule('CH4'))
         >>> orbs_s = OrbitalInfo(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
+
         # Batch systems
         >>> geob = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
         >>> orbs_b = OrbitalInfo(geob.atomic_numbers, shell_dict={
@@ -597,40 +585,29 @@ class Dftb2(Calculator):
         eig_vectors: eigen vectors.
 
     Examples:
+        >>> import torch
         >>> from tbmalt import OrbitalInfo, Geometry
         >>> from tbmalt.physics.dftb.feeds import HubbardFeed, SkFeed, SkfOccupationFeed
         >>> from tbmalt.physics.dftb import Dftb2
-        >>> from tbmalt.io.skf import Skf
+        >>> from tbmalt.tools.downloaders import download_dftb_parameter_set
         >>> from ase.build import molecule
-        >>> import urllib
-        >>> import tarfile
-        >>> from os.path import join
         >>> torch.set_default_dtype(torch.float64)
-
-        # Link to the auorg-1-1 parameter set
-        >>> link = \
-        'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
-
-        # Preparation of sk file
-        >>> elements = ['H', 'C', 'O', 'Au', 'S']
-        >>> tmpdir = './'
-        >>> urllib.request.urlretrieve(
-        ...     link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
-        >>> with tarfile.open(path) as tar:
-        ...     tar.extractall(tmpdir)
-        >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-        ...              for i in elements for j in elements]
-        >>> for skf_file in skf_files:
-        ...     Skf.read(skf_file).write(path := join(tmpdir, 'auorg.hdf5'))
+        # Download the auorg-1-1 parameter set
+        >>> url = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
+        >>> path = "auorg.h5"
+        >>> download_dftb_parameter_set(url, path)
 
         # Preparation of system to calculate
+
         # Single system
         >>> geos = Geometry.from_ase_atoms(molecule('CH4'))
         >>> orbs_s = OrbitalInfo(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
+
         # Batch systems
         >>> geob = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
-        >>> orbs_b = OrbitalInfo(geob.atomic_numbers, shell_dict={1: [0], 6: [0, 1],
-        ...                                                 8: [0, 1]})
+        >>> orbs_b = OrbitalInfo(geob.atomic_numbers, shell_dict={
+        ...     1: [0], 6: [0, 1], 8: [0, 1]})
+
         # Single system with pbc
         >>> geop = Geometry(
         ...     torch.tensor([6, 1, 1, 1, 1]),
@@ -644,7 +621,6 @@ class Dftb2(Calculator):
         ...                   [0.0, 6.0, 6.0]]),
         ...     units='a', cutoff=torch.tensor([9.98]))
         >>> orbs_p = OrbitalInfo(geop.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
-
 
         # Definition of feeds
         >>> h_feed = SkFeed.from_database(path, [1, 6, 8], 'hamiltonian')

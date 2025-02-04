@@ -364,62 +364,54 @@ class PolyInterpU(Feed):
             result: Interpolation values with given rr.
 
         """
-        n_grid_point = len(self._x)  # -> number of grid points
+        n_grid_points = len(self._x)  # -> number of grid points
 
         grid_step = self.x[1] - self.x[0]
+        r_max = self._x[-1] + self._tail
 
-        ind = torch.searchsorted(self._x_ext, rr).to(self._device)
+        interpolate = torch.logical_and(self._x[0] <= rr, rr <= self._x[-1])
+        extrapolate = torch.logical_and(self._x[-1] < rr, rr <= r_max)
+
         result = (
             torch.zeros(rr.shape, device=self._device)
             if self._y.dim() == 1
             else torch.zeros(rr.shape[0], *self._y.shape[1:], device=self._device)
         )
 
-        # => polynomial fit
-        if (ind <= n_grid_point).any():
-            _mask = torch.logical_and(ind <= n_grid_point, ind != 0)
+        if interpolate.any():
 
-            # get the index of rr in grid points
-            ind_last = (ind[_mask] + self.n_interp_r + 1).long()
-            ind_last[ind_last > n_grid_point] = n_grid_point
-            ind_last[ind_last < self.n_interp + 1] = self.n_interp + 1
+            ind = torch.floor((rr[interpolate] - self.x[0]) / grid_step).long()
 
-            # gather x and y for both single and batch
-            xa = self._x[0] + (ind_last.unsqueeze(1) - self.n_interp - 1 +
-                               torch.arange(self.n_interp, device=self._device)
-                               ) * grid_step
+            ind_last = torch.clamp(ind + self.n_interp_r, min=self.n_interp_r, max=n_grid_points - 1)
 
-            start_idx = (ind_last - self.n_interp - 1)
-            idx_matrix = start_idx.unsqueeze(-1) + torch.arange(
-                self.n_interp, device=self.device)
-            yb = self._y[idx_matrix]
+            idxs = (ind_last - self.n_interp + 1)[:, None] + torch.arange(self.n_interp, device=self._device)
 
-            result[_mask] = poly_interp(xa, yb, rr[_mask])
+            result[interpolate] = poly_interp(
+                self._x[idxs], self._y[idxs], rr[interpolate])
 
         # Beyond the grid => extrapolation with polynomial of 5th order
-        max_ind = n_grid_point - 1 + int(self._tail / grid_step)
-        is_tail = ind.masked_fill(ind.ge(n_grid_point) * ind.le(max_ind), -1).eq(-1)
-        if is_tail.any():
-            r_max = self._x[-2] + self._tail
-            dr = rr[is_tail] - r_max
-            dr = dr.unsqueeze(-1) if self._y.dim() == 2 else dr
-            ilast = n_grid_point
+        if extrapolate.any():
 
-            # get grid points and grid point values
-            xa = (ilast - self.n_interp + torch.arange(
-                self.n_interp, device=self._device) - 1) * grid_step + self._x[0]
-            yb = self._y[ilast - self.n_interp - 1: ilast - 1]
+            dr = rr[extrapolate] - r_max
+
+            dr = dr.unsqueeze(-1) if self._y.dim() == 2 else dr
+
+            xa = self.x[-self.n_interp:]
+
             xa = xa.repeat(dr.shape[0]).reshape(dr.shape[0], -1)
+
+            yb = self._y[-self.n_interp:]
+
             yb = yb.unsqueeze(0).repeat_interleave(dr.shape[0], dim=0)
 
-            # get derivative
             y0 = poly_interp(xa, yb, xa[:, self.n_interp - 1] - self.delta_r)
             y2 = poly_interp(xa, yb, xa[:, self.n_interp - 1] + self.delta_r)
-            y1 = self._y[ilast - 2]
+
+            y1 = self._y[-1]
             y1p = (y2 - y0) / (2.0 * self.delta_r)
             y1pp = (y2 + y0 - 2.0 * y1) / (self.delta_r * self.delta_r)
 
-            result[is_tail] = poly_to_zero(
+            result[extrapolate] = poly_to_zero(
                 dr, -1.0 * self._tail, -1.0 / self._tail, y1, y1p, y1pp)
 
         return result
@@ -553,8 +545,6 @@ class CubicSpline(Feed):
             tensor. Note that this must be a `Parameter` rather than `Tensor`
             instance.
         tail: Distance over which to smooth the tail.
-        delta_r: Delta distance for 1st and 2nd derivative.
-        n_interp: Number of total interpolation grid points for the tail.
 
     Keyword Args:
         coefficients: 0th, 1st, 2nd and 3rd order parameters in cubic spline.
@@ -577,7 +567,7 @@ class CubicSpline(Feed):
     """
 
     def __init__(self, x: Tensor, y: Parameter, tail: Real = 1.0,
-                 delta_r: Real = 1E-5, n_interp: int = 8, **kwargs):
+                 **kwargs):
         super().__init__()
 
         # X-knot values must be of an anticipated type
@@ -588,7 +578,7 @@ class CubicSpline(Feed):
         # Same for the y-knot values
         if not isinstance(y, Parameter):
             raise TypeError(
-                "The y-knot values must be a  or `torch.nn.Parameter` instance.")
+                "The y-knot values must be a `torch.nn.Parameter` instance.")
 
         assert y.dim() <= 2, '"CubicSpline" only support 1D or 2D interpolation'
 
@@ -633,9 +623,7 @@ class CubicSpline(Feed):
             self._coefficients: Optional[Tensor] = kwargs.get("coefficients")
 
         self.grid_step = x[1] - x[0]
-        self.delta_r = delta_r
         self.tail = tail
-        self.n_interp = n_interp
 
         # Device type of the tensor in this class
         self._device = x.device
@@ -721,10 +709,19 @@ class CubicSpline(Feed):
 
         """
         # boundary condition of xnew
-        assert xnew.ge(self.xp[0]).all(),\
+        assert xnew.ge(self.xp[0]).all(), \
             f'input should not be less than {self.xp[0]}'
-        n_grid_point = len(self.xp)
 
+        # Note that this deviates from the DFTB+ implementation in that
+        # the there is no special treatment for the region between the
+        # penultimate and final grid points. Furthermore, distances
+        # less than the first grid point will trigger an error.
+
+        # Note here that the tail actually ends one grid point earlier
+        r_max = (self.xp[-1] + self.tail - self.grid_step)
+
+        interpolate = torch.logical_and(self.xp[0] <= xnew, xnew <= self.xp[-1])
+        extrapolate = torch.logical_and(self.xp[-1] < xnew, xnew <= r_max)
         ypt = bT(self.y)
 
         result = (
@@ -734,21 +731,34 @@ class CubicSpline(Feed):
                              device=self._device)
         )
 
-        # get the nearest grid point index of distance in grid points
-        ind = self.__get_nearest_grid_point_indices(xnew)
-
         # interpolation of xx which not in the tail
-        if (ind <= n_grid_point).any():
-            _mask = torch.logical_and(ind <= n_grid_point, ind != 0)
-            result[_mask] = self._cubic(xnew[_mask], ind[_mask] - 1)
+        if interpolate.any():
+            # get the nearest grid point index of distance in grid points
+            ind = torch.round(
+                ((xnew - self.xp[0]) / self.grid_step)).detach().long()
+            ind = ind[interpolate] - 1
+            dx = xnew[interpolate] - self.xp[ind]
+            aa, bb, cc, dd = self.coefficients[..., ind]
+            interp = aa + bb * dx + cc * dx**2 + dd * dx**3
+            interp = interp.transpose(0, -1) if interp.ndim > 1 else interp
+            result[interpolate] = interp
 
-        # Adjust the results to account for tail interpolation, if required
-        r_max = self.xp[-2] + self.tail
-        max_ind = n_grid_point - 1 + int(self.tail / self.grid_step)
-        is_tail = ind.masked_fill(ind.ge(n_grid_point) * ind.le(max_ind), -1).eq(-1)
+        if extrapolate.any():
+            dr = xnew[extrapolate] - r_max
 
-        if is_tail.any():
-            self.__compute_tail_interpolation(xnew, is_tail, r_max, result)
+            y0, y1, y2 = self._y[-3:]
+            r1 = (y2 - y0) / (2.0 * self.grid_step)
+            r2 = (y2 + y0 - 2.0 * y1) / self.grid_step ** 2
+
+            dx1 = 1.0 / self.grid_step
+            dd = (((y2 - y1) * dx1 - r1) * dx1 - 0.5 * r2) * dx1
+            y1p = (3.0 * dd * self.grid_step + r2) * self.grid_step + r1
+            y1pp = 6.0 * dd * self.grid_step + r2
+
+            dx = self.grid_step - self.tail
+
+            result[extrapolate] = poly_to_zero(
+                dr, dx, 1.0 / dx, y2, y1p, y1pp)
 
         return result
 
@@ -757,55 +767,6 @@ class CubicSpline(Feed):
             "`CubicSpline` instances should be invoked via their "
             "`.forward` method now.")
         return self.forward(*args, **kwargs)
-
-    def __get_nearest_grid_point_indices(self, xnew: Tensor):
-        n_tail = int((self.tail / self.grid_step).round())
-        xx_ext = torch.linspace(
-            self.xp[0], self.xp[-1] + self.tail,
-            len(self.xp) + n_tail, device=self._device)
-        return torch.searchsorted(xx_ext.detach(), xnew)
-
-    def __compute_tail_interpolation(self, xnew: Tensor, is_tail, r_max, result):
-
-        ypt = bT(self.y)
-
-        dr = xnew[is_tail] - r_max
-        dr = dr.unsqueeze(-1) if ypt.dim() == 2 else dr
-        ilast = len(self.xp)
-
-        # get grid points and grid point values
-        xa = ((ilast
-              - self.n_interp
-              + torch.arange(self.n_interp, device=self._device) - 1)
-              * self.grid_step + self.xp[0])
-
-        yb = bT(ypt[..., ilast - self.n_interp - 1: ilast - 1])
-        yb = yb.unsqueeze(0).repeat_interleave(dr.shape[0], dim=0)
-        xa = xa.repeat(dr.shape[0]).reshape(dr.shape[0], -1)
-
-        # get derivative
-        y0 = poly_interp(xa, yb, xa[:, self.n_interp - 1] - self.delta_r)
-        y2 = poly_interp(xa, yb, xa[:, self.n_interp - 1] + self.delta_r)
-        y1 = ypt[..., ilast - 2]
-        y1p = (y2 - y0) / (2.0 * self.delta_r)
-        y1pp = (y2 + y0 - 2.0 * y1) / (self.delta_r * self.delta_r)
-        # dr = dr.repeat(ypt.shape[0], 1).T if ypt.dim() == 2 else dr
-
-        result[is_tail] = poly_to_zero(
-            dr, -1.0 * self.tail, -1.0 / self.tail, y1, y1p, y1pp)
-
-    def _cubic(self, xnew: Tensor, ind: Tensor):
-        """Calculate cubic spline interpolation."""
-        dx = xnew - self.xp[ind]
-        aa, bb, cc, dd = self.coefficients
-        interp = (
-            aa[..., ind]
-            + bb[..., ind] * dx
-            + cc[..., ind] * dx ** 2
-            + dd[..., ind] * dx ** 3
-        )
-
-        return interp.transpose(-1, 0) if interp.dim() > 1 else interp
 
     def _update_knot_version_tracking_data(self):
         self._y_version = self._y._version

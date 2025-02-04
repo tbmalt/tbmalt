@@ -13,6 +13,7 @@ from tbmalt.physics.dftb.feeds import SkFeed, VcrSkFeed, SkfOccupationFeed, Hubb
 from tbmalt.io.dataset import DataSetIM
 from tbmalt.ml.acsf import Acsf
 from tbmalt.common.batch import pack
+from tbmalt.tools.downloaders import download_dftb_parameter_set
 
 Tensor = torch.Tensor
 
@@ -116,7 +117,13 @@ if fit_model or pred_model:
 if not exists(parameter_db_path):
     raise FileNotFoundError(
         f'The DFTB parameter set database "{parameter_db_path}" could '
-        f'not be found, please ensure "example_01_setup.py" has been run.')
+        f'not be found, please ensure "example_03_setup.py" has been run.')
+
+# parameter_db_path_std
+if not exists(parameter_db_path_std):
+    download_dftb_parameter_set(
+        "https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz",
+        parameter_db_path_std)
 
 # Identify which species are present
 species = torch.tensor([1, 6, 7, 8])

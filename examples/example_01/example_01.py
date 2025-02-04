@@ -8,7 +8,7 @@ from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.maths.interpolation import CubicSpline
-
+from tbmalt.tools.downloaders import download_dftb_parameter_set
 from ase.build import molecule
 
 Tensor = torch.Tensor
@@ -68,9 +68,9 @@ orbs = OrbitalInfo(geometry.atomic_numbers, shell_dict, shell_resolved=False)
 # Construct the Hamiltonian and overlap matrix feeds; but ensure that the DFTB
 # parameter set database actually exists first.
 if not exists(parameter_db_path):
-    raise FileNotFoundError(
-        f'The DFTB parameter set database "{parameter_db_path}" could '
-        f'not be found, please ensure "example_01_setup.py" has been run.')
+    download_dftb_parameter_set(
+        "https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz",
+        parameter_db_path)
 
 # Identify which species are present
 species = torch.unique(geometry.atomic_numbers)

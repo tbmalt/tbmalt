@@ -410,38 +410,24 @@ class ScipySkFeed(IntegralFeed):
             This reduces overhead & file format error instabilities. The code
             block provide below shows how this can be done:
 
-            >>> from tbmalt.io.skf import Skf
-            >>> Zs = ['H', 'C', 'Au', 'S']
-            >>> for file in [f'{i}-{j}.skf' for i in Zs for j in Zs]:
-            >>>     Skf.read(file).write('my_skf.hdf5')
+            >>> from tbmalt.tools.downloaders import download_dftb_parameter_set
+            >>> url = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
+            >>> path = "auorg.h5"
+            >>> download_dftb_parameter_set(url, path)
 
         Examples:
             >>> from tbmalt import OrbitalInfo, Geometry
             >>> from tbmalt.physics.dftb.feeds import ScipySkFeed
             >>> from tbmalt.io.skf import Skf
+            >>> from tbmalt.tools.downloaders import download_dftb_parameter_set
             >>> from ase.build import molecule
-            >>> import urllib
-            >>> import tarfile
-            >>> from os.path import join
             >>> import torch
             >>> torch.set_default_dtype(torch.float64)
 
-            # Link to the auorg-1-1 parameter set
-            >>> link = \
-            'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
-
-            # Preparation of sk file
-            >>> elements = ['H', 'C', 'O', 'Au', 'S']
-            >>> tmpdir = './'
-            >>> urllib.request.urlretrieve(
-                    link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
-            >>> with tarfile.open(path) as tar:
-                    tar.extractall(tmpdir)
-            >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-                             for i in elements for j in elements]
-            >>> for skf_file in skf_files:
-                    Skf.read(skf_file).write(path := join(tmpdir,
-                                                          'auorg.hdf5'))
+            # Download the auorg-1-1 parameter set
+            >>> url = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
+            >>> path = "auorg.h5"
+            >>> download_dftb_parameter_set(url, path)
 
             # Preparation of system to calculate
             >>> geo = Geometry.from_ase_atoms(molecule('H2'))
@@ -1696,28 +1682,16 @@ class SkfOccupationFeed(Feed):
                 requested occupancy information.
 
         Examples:
+            >>> import torch
             >>> from tbmalt import OrbitalInfo
             >>> from tbmalt.physics.dftb.feeds import SkfOccupationFeed
-            >>> import urllib
-            >>> import tarfile
-            >>> from os.path import join
+            >>> from tbmalt.tools.downloaders import download_dftb_parameter_set
             >>> torch.set_default_dtype(torch.float64)
 
-            # Link to the auorg-1-1 parameter set
-            >>> link = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
-
-            # Preparation of sk file
-            >>> elements = ['H', 'C', 'O', 'Au', 'S']
-            >>> tmpdir = './'
-            >>> urllib.request.urlretrieve(
-            ...     link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
-            >>> with tarfile.open(path) as tar:
-            ...     tar.extractall(tmpdir)
-            >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-            ...              for i in elements for j in elements]
-            >>> for skf_file in skf_files:
-            ...     Skf.read(skf_file).write(path := join(tmpdir,
-            ...                                           'auorg.hdf5'))
+            # Download the auorg-1-1 parameter set
+            >>> url = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
+            >>> path = "auorg.h5"
+            >>> download_dftb_parameter_set(url, path)
 
             # Definition of feeds
             >>> o_feed = SkfOccupationFeed.from_database(path, [1, 6])
@@ -1870,28 +1844,16 @@ class HubbardFeed(Feed):
                 Hubbard-U values for the requested species.
 
         Examples:
+            >>> import torch
             >>> from tbmalt import OrbitalInfo
             >>> from tbmalt.physics.dftb.feeds import HubbardFeed
-            >>> import urllib
-            >>> import tarfile
-            >>> from os.path import join
+            from tbmalt.tools.downloaders import download_dftb_parameter_set
             >>> torch.set_default_dtype(torch.float64)
 
-            # Link to the auorg-1-1 parameter set
-            >>> link = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
-
-            # Preparation of sk file
-            >>> elements = ['H', 'C', 'O', 'Au', 'S']
-            >>> tmpdir = './'
-            >>> urllib.request.urlretrieve(
-            ...     link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
-            >>> with tarfile.open(path) as tar:
-            ...     tar.extractall(tmpdir)
-            >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-            ...              for i in elements for j in elements]
-            >>> for skf_file in skf_files:
-            ...     Skf.read(skf_file).write(
-            ...         path := join(tmpdir, 'auorg.hdf5'))
+            # Download the auorg-1-1 parameter set
+            >>> url = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
+            >>> path = "auorg.h5"
+            >>> download_dftb_parameter_set(url, path)
 
             # Definition of feeds
             >>> u_feed = HubbardFeed.from_database(path, [1, 6])
@@ -1917,12 +1879,14 @@ class HubbardFeed(Feed):
 
 
 class RepulsiveSplineFeed(Feed):
-    r"""Repulsive Feed using splines for DFTB calculations. Data is derived from a skf file.
+    r"""Repulsive Feed using splines for DFTB calculations.
 
-    This feed uses splines to calculate the repulsive energy of a Geometry in the way it is defined for DFTB.
+    Data is derived from a skf file. This feed uses splines to calculate the
+    repulsive energy of a Geometry in the way it is defined for DFTB.
 
     Arguments:
-        spline_data: Dictionary containing the the tuples of atomic number pairs as keys and the corresponding spline data as values.
+        spline_data: Dictionary containing the tuples of atomic number pairs
+            as keys and the corresponding spline data as values.
     """
 
     def __init__(self, spline_data: Dict[Tuple, Tensor]):

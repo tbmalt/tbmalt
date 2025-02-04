@@ -1,9 +1,9 @@
 import pytest
 import torch
 from os.path import join
-import urllib, tempfile, tarfile
+import urllib, tarfile
 from tbmalt.io.skf import Skf, VCRSkf
-
+from tbmalt.tools.downloaders import download_dftb_parameter_set
 # Default must be set to float64 otherwise gradcheck will not function
 torch.set_default_dtype(torch.float64)
 
@@ -51,30 +51,21 @@ def skf_file(tmpdir_factory):
 
     Warnings:
         This will fail i) without an internet connection, ii) if the auorg-1-1
-        parameter sets moves, or iii) it is used outside of a PyTest session.
+        parameter sets moves, or iii) it is used outside a PyTest session.
 
+    Notes:
+        This fixture just wraps the DFTB parameter set downloader method
+        `tbmalt.tools.downloaders.download_dftb_parameter_set` so that a
+        parameter set can be downloaded when running the unit tests.
+        The parameter set will be deleted after the tests have run.
     """
-
     tempdir = tmpdir_factory.mktemp('tmp')
-    # Link to the auorg-1-1 parameter set
-    link = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
+    parameter_set_file_path = join(tempdir, "auorg.h5")
+    download_dftb_parameter_set(
+        "https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz",
+        parameter_set_file_path)
 
-    # Elements of interest
-    elements = ['H', 'C', 'O', 'Au', 'S']
-
-    # Download and extract the auorg parameter set to the temporary directory
-    urllib.request.urlretrieve(link, location := join(tempdir, 'auorg-1-1.tar.xz'))
-    with tarfile.open(location) as tar:
-        tar.extractall(tempdir)
-
-    # Select the relevant skf files and place them into an HDF5 database
-    skf_files = [join(tempdir, 'auorg-1-1', f'{i}-{j}.skf')
-                 for i in elements for j in elements]
-
-    for skf_file in skf_files:
-        Skf.read(skf_file).write(path := join(tempdir, 'auorg.hdf5'))
-
-    return path
+    return parameter_set_file_path
 
 
 @pytest.fixture(scope='session')
