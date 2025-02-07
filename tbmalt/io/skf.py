@@ -22,6 +22,18 @@ from tbmalt.common.batch import pack
 OptTens = Optional[Tensor]
 SkDict = Dict[Tuple[int, int], Tensor]
 
+PATTERN_HYBTAG_LEGACY = (
+    r"(?i)\s*RangeSep\s*LC\s+([-+]?(?:[0-9]+\.[0-9]+|\.[0-9]+|[0-9]+)"
+    r"(?:[eE][-+]?[0-9]+)?)\s*(?:\n|$)"
+)
+
+PATTERN_HYBTAG = (
+    r"(?i)\s*RangeSep\s*CAM\s+([-+]?(?:[0-9]+\.[0-9]+|\.[0-9]+|[0-9]+)"
+    r"(?:[eE][-+]?[0-9]+)?)\s+([-+]?(?:[0-9]+\.[0-9]+|\.[0-9]+|[0-9]+)"
+    r"(?:[eE][-+]?[0-9]+)?)\s+([-+]?(?:[0-9]+\.[0-9]+|\.[0-9]+|[0-9]+)"
+    r"(?:[eE][-+]?[0-9]+)?)\s*(?:\n|$)"
+)
+
 
 class Skf:
     r"""Slater-Koster file parser.
@@ -50,6 +62,8 @@ class Skf:
          mass: Atomic mass, homo-atomic systems only. [DEFAULT=None]
          occupations: Occupations of the orbitals, homo-atomic systems only.
             [DEFAULT=None]
+         hyb_tag: A :class:`.HybTag` object detailing the hybrid functional
+            parametrization. [DEFAULT=None]
 
     Examples:
         Examples of reading and writing.
@@ -149,6 +163,20 @@ class Skf:
         exp_coef: Tensor
         tail_coef: Tensor
 
+    @dataclass
+    class HybTag:
+        """Dataclass container for the hybrid functional parameters.
+
+        Arguments:
+            alpha: Global fraction of HF-type exchange.
+            beta: Long-range fraction of HF-type exchange.
+            omega: Range-separation parameter of the CAM partitioning [1/Bohr].
+
+        """
+        omega: Tensor
+        alpha: Tensor
+        beta: Tensor
+
     # HDF5-SK version number. Updated when introducing a change that would
     # break backwards compatibility with previously created HDF5-skf file.
     version = '0.1'
@@ -158,7 +186,7 @@ class Skf:
             grid: Tensor, r_spline: Optional[RSpline] = None,
             r_poly: Optional[RPoly] = None, hubbard_us: OptTens = None,
             on_sites: OptTens = None, occupations: OptTens = None,
-            mass: OptTens = None):
+            mass: OptTens = None, hyb_tag: Optional[HybTag] = None):
 
         self.atom_pair = atom_pair
 
@@ -174,6 +202,9 @@ class Skf:
         # Repulsive attributes
         self.r_spline = r_spline
         self.r_poly = r_poly
+
+        # Hybrid functional extra tag
+        self.hyb_tag = hyb_tag
 
         # Either the system contains atomic information or it does not; it is
         # illogical to have some atomic attributes but not others.
@@ -340,6 +371,30 @@ class Skf:
                 # The exponential and tail spline's coefficients.
                 _s2t(lines[ln], **dd), _s2t(lines[ln + int(n_int)], **dd)[2:])
 
+        # Parse hybrid functional parameters (if present)
+        content = ''.join(lines)
+        matching_pattern = re.search(PATTERN_HYBTAG, content)
+        matching_pattern_legacy = re.search(PATTERN_HYBTAG_LEGACY, content)
+
+        if matching_pattern and matching_pattern_legacy:
+            raise ValueError(
+                'Found hybrid parameters in legacy and current format. '
+                'Either none or one of the two extra tags is expected.')
+
+        if matching_pattern:
+            cam_params = tuple(map(float, matching_pattern.groups()))
+            omega = torch.tensor(cam_params[0], **dd)
+            alpha = torch.tensor(cam_params[1], **dd)
+            beta = torch.tensor(cam_params[2], **dd)
+            kwargs_in['hyb_tag'] = cls.HybTag(omega, alpha, beta)
+
+        if matching_pattern_legacy:
+            cam_params = tuple(map(float, matching_pattern_legacy.groups()))
+            omega = torch.tensor(cam_params[0], **dd)
+            alpha = torch.tensor(0.0, **dd)
+            beta = torch.tensor(1.0, **dd)
+            kwargs_in['hyb_tag'] = cls.HybTag(omega, alpha, beta)
+
         return cls(atom_pair, h_data, s_data, grid, **kwargs_in)
 
     @classmethod
@@ -456,7 +511,7 @@ class Skf:
             for i in [self.hamiltonian, self.overlap]])
         output += '\n' + a2s(hs_data, '>21.12E')
 
-        # Append the repulsive spline data, is present.
+        # Append the repulsive spline data, if present.
         if (rs_data := self.r_spline) is not None:
             grid = rs_data.grid
             # Header
@@ -474,6 +529,14 @@ class Skf:
             tail = t2a(torch.cat((grid[-1:], rs_data.cutoff[None],
                                   rs_data.tail_coef)))
             output += '\n' + a2s(tail, '>21.12E')
+
+        # Append the hybrid functional parameters, if present.
+        if (hyb_tag_data := self.hyb_tag) is not None:
+            tag = "RangeSep\nCAM" + 3 * ' {:21.12E}'
+            output += '\n' + tag.format(
+                hyb_tag_data.omega.item(),
+                hyb_tag_data.alpha.item(),
+                hyb_tag_data.beta.item())
 
         # Write the results to the target file
         open(path, 'w').write(output)
@@ -504,7 +567,8 @@ class Skf:
         target.attrs.update(
             {'atoms': t2n(self.atom_pair), 'version': self.version,
              'has_r_poly': self.r_poly is not None, 'is_atomic': self.atomic,
-             'has_r_spline': self.r_spline is not None})
+             'has_r_spline': self.r_spline is not None,
+             'has_hyb_tag': self.hyb_tag is not None})
 
         # Convert electronic integral matrices into structured numpy arrays.
         dtype = np.dtype([('%s-%s' % k, np.float64, tuple(v.shape))
@@ -525,6 +589,11 @@ class Skf:
                  'step': s.grid.diff()[0], 'tail_coef': s.tail_coef,
                  'spline_coef': s.spline_coef, }, 'r_spline')
 
+        if (xc := self.hyb_tag) is not None:  # Hybrid functional parameters
+            add_data(
+                {'omega': xc.omega, 'alpha': xc.alpha, 'beta': xc.beta},
+                'hyb_tag')
+
         if self.atomic:  # Atomic
             add_data(
                 {'on_sites': self.on_sites, 'hubbard_us': self.hubbard_us,
@@ -539,9 +608,10 @@ class Skf:
         name = '-'.join([chemical_symbols[int(i)] for i in self.atom_pair])
         r_spline = 'No' if self.r_spline is None else 'Yes'
         r_poly = 'No' if self.r_poly is None else 'Yes'
+        hyb_tag = 'No' if self.hyb_tag is None else 'Yes'
         atomic = 'No' if self.atomic is None else 'Yes'
         return f'{cls_name}({name}, r-spline: {r_spline}, r-poly: {r_poly}, ' \
-               f'atomic-data: {atomic})'
+               f'atomic-data: {atomic}), hybrid-parameters: {hyb_tag}'
 
     def __repr__(self) -> str:
         """Returns a simple string representation of the `Skf` object."""
@@ -597,6 +667,11 @@ class Skf:
         if source.attrs['has_r_poly']:  # Repulsive polynomial
             r = source['r_poly']
             kwargs['r_poly'] = cls.RPoly(tt(r, 'cutoff'), tt(r, 'coef'))
+
+        if source.attrs['has_hyb_tag']:  # Hybrid functional parameters
+            xc = source['hyb_tag']
+            kwargs['hyb_tag'] = cls.HybTag(
+                tt(xc, 'omega'), tt(xc, 'alpha'), tt(xc, 'beta'))
 
         if source.attrs['is_atomic']:  # Atomic data
             a = source['atomic']

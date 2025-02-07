@@ -19,6 +19,9 @@ def skf_files():
     File 3: Hetero-atomic system with a repulsive polynomial & spline.
     File 4: Hetero-atomic system without a repulsive polynomial or spline.
     File 5: Same as file 4 but with some commonly encountered errors.
+    File 6: Same as file 1 but includes hybrid functional parameters.
+    File 7: Same as file 1 but includes hybrid functional parameters
+        (legacy format).
 
     Returns:
         path: Path to skf file.
@@ -26,13 +29,16 @@ def skf_files():
             has_atomic: True if the file contains parsable atomic data.
             has_r_poly: True if the file contains a valid repulsive polynomial.
             has_r_spline: True if the file contains a repulsive spline.
+            has_hyb_tag: True if the file contains hybrid functional parameters.
     """
     path = 'tests/unittests/data/io/skf'
-    files = {'File_1_Au-Au.skf': (True, True, True),
-             'File_2_Au-Au.skf': (True, True, True),
-             'File_3_Au-Au.skf': (False, True, True),
-             'File_4_Au-Au.skf': (False, False, False),
-             'File_5_Au-Au.skf': (False, False, False)}
+    files = {'File_1_Au-Au.skf': (True, True, True, False),
+             'File_2_Au-Au.skf': (True, True, True, False),
+             'File_3_Au-Au.skf': (False, True, True, False),
+             'File_4_Au-Au.skf': (False, False, False, False),
+             'File_5_Au-Au.skf': (False, False, False, False),
+             'File_6_Au-Au.skf': (True, True, True, True),
+             'File_7_Au-Au.skf': (True, True, True, True)}
 
     for name, args in files.items():
         yield os.path.join(path, name), args
@@ -78,13 +84,15 @@ def _ref_interaction(l1, l2, i_type, device=None):
                       data), 0).T.squeeze()
 
 
-def _check_skf_contents(skf, has_atomic, has_r_poly, has_r_spline, device):
+def _check_skf_contents(skf, has_atomic, has_r_poly, has_r_spline, has_hyb_tag,
+                        device):
     """Helper function to test the contents of an `Skf` instances.
 
     Arguments:
         has_atomic: True if the file contains parsable atomic data.
         has_r_poly: True if the file contains a valid repulsive polynomial.
         has_r_spline: True if the file contains a repulsive spline.
+        has_hyb_tag: True if the file contains hybrid functional parameters.
         device: Device on which the `Skf` object should be created.
     """
     d = {'device': device}
@@ -144,6 +152,16 @@ def _check_skf_contents(skf, has_atomic, has_r_poly, has_r_spline, device):
             pytest.fail('Unexpectedly found repulsive spline')
     elif has_r_spline:
         pytest.fail('Failed to locate repulsive spline')
+
+    # Hybrid functional parameters
+    if skf.hyb_tag is not None:
+        check_it({
+            'omega': torch.tensor(0.3, **d), 'alpha': torch.tensor(0.0, **d),
+            'beta': torch.tensor(1.0, **d)}, skf.hyb_tag)
+        if not has_hyb_tag:
+            pytest.fail('Unexpectedly found hybrid functional parameters')
+    elif has_hyb_tag:
+        pytest.fail('Failed to locate hybrid functional parameters')
 
 
 ##################
