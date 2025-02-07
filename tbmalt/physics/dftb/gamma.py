@@ -8,6 +8,7 @@ from tbmalt.physics.dftb.feeds import Feed
 import numpy as np
 from tbmalt.common.batch import pack, prepeat_interleave
 from tbmalt.data import gamma_cutoff, gamma_element_list
+from tbmalt.io.skf import HybTag
 
 
 def gamma_exponential(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
@@ -128,6 +129,168 @@ def gamma_exponential(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
     gamma = r - gamma
 
     return gamma.squeeze()
+
+
+def gamma_exp_cam(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor,
+                  hyb_tag: HybTag) -> Tensor:
+    """Construct the screened CAM gamma matrix (short- and long-range gamma).
+
+    Arguments:
+        geometry: `Geometry` object of the system(s) whose gamma matrix is to
+            be constructed.
+        orbs: `OrbitalInfo` instance associated with the target system.
+        hubbard_Us: Hubbard U values. one value should be specified for each
+            atom or shell depending if the calculation being performed is atom
+            or shell resolved.
+        hyb_tag: `HybTag` object holding the hybrid functional parameters.
+
+    Returns:
+        cam_y: CAM gamma matrix.
+
+    Examples:
+        >>> from tbmalt import OrbitalInfo, Geometry
+        >>> from tbmalt.physics.dftb.gamma import gamma_exp_cam
+        >>> from ase.build import molecule
+
+        # Preparation of system to calculate
+        >>> geo = Geometry.from_ase_atoms(molecule('CH4'))
+        >>> orbs = OrbitalInfo(geo.atomic_numbers,
+                               shell_dict= {1: [0], 6: [0, 1]})
+        >>> hubbard_U = torch.tensor([0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
+        >>> hyb_tag = HybTag(0.3, 0.25, 0.75)
+
+        # Build the CAM gamma matrix
+        >>> cam_y = gamma_exp_cam(geo, orbs, hubbard_U, hyb_tag)
+        >>> print(cam_y)
+        tensor([[0.3647, 0.3234, 0.3234, 0.3234, 0.3234],
+                [0.3234, 0.4196, 0.2654, 0.2654, 0.2654],
+                [0.3234, 0.2654, 0.4196, 0.2654, 0.2654],
+                [0.3234, 0.2654, 0.2654, 0.4196, 0.2654],
+                [0.3234, 0.2654, 0.2654, 0.2654, 0.4196]])
+
+    """
+
+    # Build the Slater type gamma in second-order term.
+    U = hubbard_Us
+    r = geometry.distances
+    z = geometry.atomic_numbers
+
+    # Hybrid functional parameters
+    cam_omega = hyb_tag.omega
+    cam_alpha = hyb_tag.alpha
+    cam_beta = hyb_tag.beta
+
+    dtype, device = r.dtype, r.device
+
+    if orbs.shell_resolved:  # unsupported at the moment
+        raise NotImplementedError(
+            'Shell-resolved hybrid CAM-DFTB calculations not yet supported.')
+
+    # Construct index list for upper triangle gather operation
+    ut = torch.unbind(torch.triu_indices(U.shape[-1], U.shape[-1], 0))
+    distance_tr = r[..., ut[0], ut[1]]
+    an1 = z[..., ut[0]]
+    an2 = z[..., ut[1]]
+
+    # build the whole gamma, shortgamma (without 1/R) and triangular gamma
+    cam_y = torch.zeros(r.shape, dtype=dtype, device=device)
+    cam_y_tr = torch.zeros(distance_tr.shape, dtype=dtype, device=device)
+
+    # ------------------------full-range HFX part-------------------------------
+
+    # diagonal values is so called chemical hardness Hubbard
+    cam_y_tr[..., ut[0] == ut[1]] = cam_alpha * U
+
+    mask_homo = (an1 == an2) * distance_tr.ne(0)
+    mask_hetero = (an1 != an2) * distance_tr.ne(0)
+    alpha, beta = U[..., ut[0]] * 3.2, U[..., ut[1]] * 3.2
+    r_homo = 1.0 / distance_tr[mask_homo]
+    r_hetero = 1.0 / distance_tr[mask_hetero]
+
+    # homo Hubbard
+    aa, dd_homo = alpha[mask_homo], distance_tr[mask_homo]
+    tau_r = aa * dd_homo
+    e_fac = torch.exp(-tau_r) / 48.0 * r_homo
+    cam_y_tr[mask_homo] = cam_alpha * (r_homo - (48.0 + 33.0 * tau_r + 9.0 \
+        * tau_r**2 + tau_r**3) * e_fac)
+
+    # hetero Hubbard
+    aa, bb = alpha[mask_hetero], beta[mask_hetero]
+    dd_hetero = distance_tr[mask_hetero]
+    aa2, aa4, aa6 = aa**2, aa**4, aa**6
+    bb2, bb4, bb6 = bb**2, bb**4, bb**6
+    rab, rba = 1 / (aa2 - bb2), 1 / (bb2 - aa2)
+    exp_a, exp_b = torch.exp(-aa * dd_hetero), torch.exp(-bb * dd_hetero)
+    val_ab = exp_a * (0.5 * aa * bb4 * rab**2 -
+                      (bb6 - 3. * aa2 * bb4) * rab**3 * r_hetero)
+    val_ba = exp_b * (0.5 * bb * aa4 * rba**2 -
+                      (aa6 - 3. * bb2 * aa4) * rba**3 * r_hetero)
+    cam_y_tr[mask_hetero] = cam_alpha * (r_hetero - val_ab - val_ba)
+
+    cam_y[..., ut[0], ut[1]] = cam_y_tr
+
+    # ------------------------long-range HFX part-------------------------------
+
+    aa = U * 3.2
+    aa2, aa3, aa4, aa5, aa6 = aa**2, aa**3, aa**4, aa**5, aa**6
+    cam_omega2, cam_omega4, cam_omega6 = cam_omega**2, cam_omega**4, cam_omega**6
+    tmp1 = 5.0 * aa6 + 15.0 * aa4 * cam_omega2 - 5.0 * aa2 \
+        * cam_omega4 + cam_omega6
+    tmp1 = tmp1 * 0.0625 - cam_omega * aa5
+    tmp1 = tmp1 * aa3 / (aa2 - cam_omega2)**4
+    cam_y_tr[..., ut[0] == ut[1]] = cam_beta * (aa * 0.3125 - tmp1)
+
+    # homo Hubbard
+    aa, dd_homo = alpha[mask_homo], distance_tr[mask_homo]
+    aa2, aa3, aa4, aa5, aa6, aa8 = aa**2, aa**3, aa**4, aa**5, aa**6, aa**8
+    tau_r = aa * dd_homo
+    e_fac = torch.exp(-tau_r) * r_homo
+    tmp2 = (tau_r**3 / 48.0 + 0.1875 * tau_r**2 + 0.6875 * tau_r + 1.0) * e_fac
+    tmp1 = -aa8 / (aa2 - cam_omega2)**4 * (tmp2 + torch.exp(-tau_r) \
+        * (dd_homo**2 * (3.0 * aa4 * cam_omega4 - 3.0 * aa6 \
+        * cam_omega2 - aa2 * cam_omega6) + dd_homo * (15.0 * aa3 \
+        * cam_omega4 - 21.0 * aa5 * cam_omega2 - 3.0 * aa \
+        * cam_omega6) + (15.0 * aa2 * cam_omega4 - 45.0 * aa4 \
+        * cam_omega2 - 3.0 * cam_omega6)) / (48.0 * aa5))
+    cam_y_tr[mask_homo] = cam_beta * (r_homo - tmp2 - (aa8 / (aa2 \
+        - cam_omega2)**4 * torch.exp(-cam_omega * dd_homo) / dd_homo + tmp1))
+
+    # hetero Hubbard
+    aa, bb = alpha[mask_hetero], beta[mask_hetero]
+    dd_hetero = distance_tr[mask_hetero]
+    aa2, aa4, aa6 = aa**2, aa**4, aa**6
+    bb2, bb4, bb6 = bb**2, bb**4, bb**6
+    prefac = aa4 / (aa2 - cam_omega2)**2
+    prefac = prefac * bb4 / (bb2 - cam_omega2)**2
+    prefac = prefac * torch.exp(-cam_omega * dd_hetero) * r_hetero
+
+    def get_gamma_subpart(tauA, tauB, dist, omega):
+        '''Helper function to construct the CAM gamma matrix.'''
+        omega2 = omega**2
+        tauA2 = tauA**2
+        tauB2, tauB4, tauB6 = tauB**2, tauB**4, tauB**6
+        tmp3 = tauA - omega
+        tmp3 = tmp3 * (tauA + omega)
+        prefac = tauA2 / tmp3
+        tmp3 = (tauB6 - 3.0 * tauA2 * tauB4 + 2.0 * omega2 * tauB4) / dist
+        tmp3 = tmp3 * prefac * prefac / (tauA2 - tauB2)**3
+        tmp3 = tauA * tauB4 * 0.5 * prefac / (tauB2 - tauA2)**2 - tmp3
+        gamma = tmp3 * torch.exp(-tauA * dist)
+        return gamma
+
+    tmp4 = prefac - get_gamma_subpart(aa, bb, dd_hetero, cam_omega) \
+        - get_gamma_subpart(bb, aa, dd_hetero, cam_omega)
+    tmp4 = r_hetero - tmp4
+    tmp4 = tmp4 - get_gamma_subpart(aa, bb, dd_hetero, 0.0) \
+        - get_gamma_subpart(bb, aa, dd_hetero, 0.0)
+    cam_y_tr[mask_hetero] = cam_beta * tmp4
+
+    cam_y[..., ut[0], ut[1]] += cam_y_tr
+
+    # symmetrize the CAM gamma matrix
+    cam_y[..., ut[1], ut[0]] = cam_y[..., ut[0], ut[1]]
+
+    return cam_y.squeeze()
 
 
 def gamma_gaussian(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor

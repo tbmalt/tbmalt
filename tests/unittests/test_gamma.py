@@ -7,10 +7,12 @@ import torch
 import pytest
 from ase.build import molecule
 from tbmalt import OrbitalInfo, Geometry
-from tbmalt.physics.dftb.gamma import gamma_exponential, build_gamma_matrix
+from tbmalt.physics.dftb.gamma import gamma_exponential, gamma_exp_cam, \
+    build_gamma_matrix
 from tbmalt.physics.dftb.coulomb import build_coulomb_matrix
 from tbmalt.physics.dftb.feeds import HubbardFeed
 from tbmalt.common.batch import pack
+from tbmalt.io.skf import HybTag
 
 torch.set_default_dtype(torch.float64)
 
@@ -68,6 +70,114 @@ def CH4(device):
               0.419617426124700, 0.265356375552299],
              [0.323400974782220, 0.265356375552299, 0.265356375552299,
               0.265356375552299, 0.419617426124700]],
+            device=device),
+        }
+
+    return geo, orbs, results
+
+
+def H2_lc(device):
+    """Non-shell-resolved LC gamma for H2."""
+    geo = Geometry.from_ase_atoms(molecule('H2'), device=device)
+    orbs = OrbitalInfo(geo.atomic_numbers, {1: [0]})
+    # omega, alpha, beta: 0.3, 0.0, 1.0
+    results = {
+        'gamma': torch.tensor(
+            [[0.196962175860027, 0.190822618532788],
+             [0.190822618532788, 0.196962175860027]],
+            device=device),
+        }
+
+    return geo, orbs, results
+
+
+def H2_cam(device):
+    """Non-shell-resolved CAM gamma for H2."""
+    geo = Geometry.from_ase_atoms(molecule('H2'), device=device)
+    orbs = OrbitalInfo(geo.atomic_numbers, {1: [0]})
+    # omega, alpha, beta: 0.3, 0.25, 0.75
+    results = {
+        'gamma': torch.tensor(
+            [[0.252625988426195, 0.237479392348685],
+             [0.237479392348685, 0.252625988426195]],
+            device=device),
+        }
+
+    return geo, orbs, results
+
+
+def H2O_lc(device):
+    """Non-shell-resolved LC gamma for H2O."""
+    geo = Geometry.from_ase_atoms(molecule('H2O'), device=device)
+    orbs = OrbitalInfo(geo.atomic_numbers, {1: [0], 8: [0, 1]})
+    # omega, alpha, beta: 0.3, 0.0, 1.0
+    results = {
+        'gamma': torch.tensor(
+            [[0.208459150615118, 0.191001560197804, 0.191001560197804],
+             [0.191001560197804, 0.196962175860027, 0.174287095555324],
+             [0.191001560197804, 0.174287095555324, 0.196962175860027]],
+            device=device),
+        }
+
+    return geo, orbs, results
+
+
+def H2O_cam(device):
+    """Non-shell-resolved CAM gamma for H2O."""
+    geo = Geometry.from_ase_atoms(molecule('H2O'), device=device)
+    orbs = OrbitalInfo(geo.atomic_numbers, {1: [0], 8: [0, 1]})
+    # omega, alpha, beta: 0.3, 0.25, 0.75
+    results = {
+        'gamma': torch.tensor(
+            [[0.280195405516813, 0.236290313684891, 0.236290313684891],
+             [0.236290313684891, 0.252625988426195, 0.203533384813486],
+             [0.236290313684891, 0.203533384813486, 0.252625988426195]],
+            device=device),
+        }
+
+    return geo, orbs, results
+
+
+def CH4_lc(device):
+    """Non-shell-resolved LC gamma for CH4."""
+    geo = Geometry.from_ase_atoms(molecule('CH4'), device=device)
+    orbs = OrbitalInfo(geo.atomic_numbers, {1: [0], 6: [0, 1]})
+    # omega, alpha, beta: 0.3, 0.0, 1.0
+    results = {
+        'gamma': torch.tensor(
+            [[0.186674120517330, 0.180177472775023, 0.180177472775023,
+              0.180177472775023, 0.180177472775023],
+             [0.180177472775023, 0.196962175860027, 0.167937239015885,
+              0.167937239015885, 0.167937239015885],
+             [0.180177472775023, 0.167937239015885, 0.196962175860027,
+              0.167937239015885, 0.167937239015885],
+             [0.180177472775023, 0.167937239015885, 0.167937239015885,
+              0.196962175860027, 0.167937239015885],
+             [0.180177472775023, 0.167937239015885, 0.167937239015885,
+              0.167937239015885, 0.196962175860027]],
+            device=device),
+        }
+
+    return geo, orbs, results
+
+
+def CH4_cam(device):
+    """Non-shell-resolved CAM gamma for CH4."""
+    geo = Geometry.from_ase_atoms(molecule('CH4'), device=device)
+    orbs = OrbitalInfo(geo.atomic_numbers, {1: [0], 6: [0, 1]})
+    # omega, alpha, beta: 0.3, 0.25, 0.75
+    results = {
+        'gamma': torch.tensor(
+            [[0.231172214736123, 0.215983348276822, 0.215983348276822,
+              0.215983348276822, 0.215983348276822],
+             [0.215983348276822, 0.252625988426195, 0.192292023149988,
+              0.192292023149988, 0.192292023149988],
+             [0.215983348276822, 0.192292023149988, 0.252625988426195,
+              0.192292023149988, 0.192292023149988],
+             [0.215983348276822, 0.192292023149988, 0.192292023149988,
+              0.252625988426195, 0.192292023149988],
+             [0.215983348276822, 0.192292023149988, 0.192292023149988,
+              0.192292023149988, 0.252625988426195]],
             device=device),
         }
 
@@ -254,6 +364,32 @@ def test_exponential_gamma_single(device, hubbard_feeds):
         gamma_helper(gamma_cal, geometry, orbs, results)
 
 
+def test_exp_lc_gamma_single(device, hubbard_feeds):
+    """Test non-shell-resolved LC gamma calculation for a single system without
+       pbc."""
+    u_feed = hubbard_feeds
+    hyb_tag = HybTag(0.3, 0.0, 1.0)
+
+    systems = [H2_lc, H2O_lc, CH4_lc]
+    for system in systems:
+        geometry, orbs, results = system(device)
+        gamma_cal = gamma_exp_cam(geometry, orbs, u_feed.forward(orbs), hyb_tag)
+        gamma_helper(gamma_cal, geometry, orbs, results)
+
+
+def test_exp_cam_gamma_single(device, hubbard_feeds):
+    """Test non-shell-resolved CAM gamma calculation for a single system without
+       pbc."""
+    u_feed = hubbard_feeds
+    hyb_tag = HybTag(0.3, 0.25, 0.75)
+
+    systems = [H2_cam, H2O_cam, CH4_cam]
+    for system in systems:
+        geometry, orbs, results = system(device)
+        gamma_cal = gamma_exp_cam(geometry, orbs, u_feed.forward(orbs), hyb_tag)
+        gamma_helper(gamma_cal, geometry, orbs, results)
+
+
 def test_exponential_gamma_batch(device, hubbard_feeds):
     """Test non-shell-resolved gamma calculation via the exponential method for
        batch systems without pbc."""
@@ -263,6 +399,32 @@ def test_exponential_gamma_batch(device, hubbard_feeds):
     for batch in batches:
         geometry, orbs, results = merge_systems(device, *batch)
         gamma_cal = gamma_exponential(geometry, orbs, u_feed.forward(orbs))
+        gamma_helper(gamma_cal, geometry, orbs, results)
+
+
+def test_exp_lc_gamma_batch(device, hubbard_feeds):
+    """Test non-shell-resolved LC gamma calculation for batch systems without
+       pbc."""
+    u_feed = hubbard_feeds
+    hyb_tag = HybTag(0.3, 0.0, 1.0)
+
+    batches = [[H2_lc], [H2_lc, H2O_lc], [H2_lc, H2O_lc, CH4_lc]]
+    for batch in batches:
+        geometry, orbs, results = merge_systems(device, *batch)
+        gamma_cal = gamma_exp_cam(geometry, orbs, u_feed.forward(orbs), hyb_tag)
+        gamma_helper(gamma_cal, geometry, orbs, results)
+
+
+def test_exp_cam_gamma_batch(device, hubbard_feeds):
+    """Test non-shell-resolved CAM gamma calculation for batch systems without
+       pbc."""
+    u_feed = hubbard_feeds
+    hyb_tag = HybTag(0.3, 0.25, 0.75)
+
+    batches = [[H2_cam], [H2_cam, H2O_cam], [H2_cam, H2O_cam, CH4_cam]]
+    for batch in batches:
+        geometry, orbs, results = merge_systems(device, *batch)
+        gamma_cal = gamma_exp_cam(geometry, orbs, u_feed.forward(orbs), hyb_tag)
         gamma_helper(gamma_cal, geometry, orbs, results)
 
 

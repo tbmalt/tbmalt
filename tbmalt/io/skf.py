@@ -35,6 +35,21 @@ PATTERN_HYBTAG = (
 )
 
 
+@dataclass
+class HybTag:
+    """Dataclass container for the hybrid functional parameters.
+
+    Arguments:
+        alpha: Global fraction of HF-type exchange.
+        beta: Long-range fraction of HF-type exchange.
+        omega: Range-separation parameter of the CAM partitioning [1/Bohr].
+
+    """
+    omega: Tensor
+    alpha: Tensor
+    beta: Tensor
+
+
 class Skf:
     r"""Slater-Koster file parser.
 
@@ -162,20 +177,6 @@ class Skf:
         spline_coef: Tensor
         exp_coef: Tensor
         tail_coef: Tensor
-
-    @dataclass
-    class HybTag:
-        """Dataclass container for the hybrid functional parameters.
-
-        Arguments:
-            alpha: Global fraction of HF-type exchange.
-            beta: Long-range fraction of HF-type exchange.
-            omega: Range-separation parameter of the CAM partitioning [1/Bohr].
-
-        """
-        omega: Tensor
-        alpha: Tensor
-        beta: Tensor
 
     # HDF5-SK version number. Updated when introducing a change that would
     # break backwards compatibility with previously created HDF5-skf file.
@@ -386,14 +387,14 @@ class Skf:
             omega = torch.tensor(cam_params[0], **dd)
             alpha = torch.tensor(cam_params[1], **dd)
             beta = torch.tensor(cam_params[2], **dd)
-            kwargs_in['hyb_tag'] = cls.HybTag(omega, alpha, beta)
+            kwargs_in['hyb_tag'] = HybTag(omega, alpha, beta)
 
         if matching_pattern_legacy:
             cam_params = tuple(map(float, matching_pattern_legacy.groups()))
             omega = torch.tensor(cam_params[0], **dd)
             alpha = torch.tensor(0.0, **dd)
             beta = torch.tensor(1.0, **dd)
-            kwargs_in['hyb_tag'] = cls.HybTag(omega, alpha, beta)
+            kwargs_in['hyb_tag'] = HybTag(omega, alpha, beta)
 
         return cls(atom_pair, h_data, s_data, grid, **kwargs_in)
 
@@ -670,7 +671,7 @@ class Skf:
 
         if source.attrs['has_hyb_tag']:  # Hybrid functional parameters
             xc = source['hyb_tag']
-            kwargs['hyb_tag'] = cls.HybTag(
+            kwargs['hyb_tag'] = HybTag(
                 tt(xc, 'omega'), tt(xc, 'alpha'), tt(xc, 'beta'))
 
         if source.attrs['is_atomic']:  # Atomic data
