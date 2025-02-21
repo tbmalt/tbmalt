@@ -213,7 +213,7 @@ def general(mixer, device):
     name = mixer.__class__.__name__
     a = torch.ones(5, 5, 5, device=device)
     a_copy = a.clone()
-    mixer._is_batch = True
+    mixer.is_batch = True
 
     # Checks 1 & 2
     mixer.tolerance = 1E-20
@@ -286,7 +286,7 @@ def convergence(mixer, device):
     H, S, G, q0 = gen_systems(device, [10, 6, 4])  # Generate test data
 
     # CHECK 1:
-    mixer._is_batch = False
+    mixer.is_batch = False
     conv_0, res_0 = cycle(mixer, torch.ones(5, device=device), func, None, 400)
     assert conv_0, f'{name}: Failed to converge to correct result'
 
@@ -297,7 +297,7 @@ def convergence(mixer, device):
     #   2) A single matrix
     conv_2, res_1 = cycle(mixer, H[0], faux_SCF, (q0[0], H[0], S[0], G[0]))
     #   3) A batch a of vectors
-    mixer._is_batch = True
+    mixer.is_batch = True
     conv_3, _ = cycle(mixer, q0, faux_SCC, (q0, H, S, G))
     #   4) A of batch of a matrices
     conv_4, res_2 = cycle(mixer, H, faux_SCF, (q0, H, S, G))
@@ -315,7 +315,7 @@ def convergence(mixer, device):
     # CHECK 4:
     # Check zero-padded packing does not adversely affect the final result
     # Ensure the same answer is given with padding as without padding.
-    mixer._is_batch = False
+    mixer.is_batch = False
     s = (-1, slice(0, 4), slice(0, 4))
     _, res_3 = cycle(mixer, H[s], faux_SCF, (q0[-1, :4], H[s], S[s], G[s]))
     _, res_4 = cycle(mixer, H[-1], faux_SCF, (q0[-1], H[-1], S[-1], G[-1]))

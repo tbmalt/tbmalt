@@ -103,7 +103,7 @@ mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2,
               'generations': 3, 'tolerance': 1e-10}
 kwargs = {}
 kwargs['mix_params'] = mix_params
-dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, supress_SCF_error=True,
+dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, suppress_scc_error=True,
                         **kwargs)
 
 

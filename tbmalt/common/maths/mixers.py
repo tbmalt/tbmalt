@@ -15,7 +15,6 @@ user to explicitly state whether they are operating on a single system or on a
 batch of systems.
 """
 from typing import Union, Optional, List
-from numbers import Real
 from numpy import prod
 from abc import ABC, abstractmethod
 from functools import wraps
@@ -24,7 +23,7 @@ import torch
 from torch import Tensor
 
 
-class _Mixer(ABC):
+class Mixer(ABC):
     """This is the abstract base class upon which all mixers are to be based.
 
     This abstract base class provides the template on which all mixers are to
@@ -36,10 +35,10 @@ class _Mixer(ABC):
             for a system to be considered "converged". [DEFAULT=1E-6]
 
     """
-    def __init__(self, is_batch: bool, tolerance: Real = 1E-6):
+    def __init__(self, is_batch: bool, tolerance: float = 1E-6):
         self.tolerance = tolerance
 
-        self._is_batch = is_batch
+        self.is_batch = is_batch
 
         # Integer tracking the number of mixing iterations performed thus far.
         self._step_number: int = 0
@@ -127,7 +126,7 @@ class _Mixer(ABC):
         # Check that mixing has been conducted
         assert self._delta is not None, 'Nothing has been mixed'
 
-        if not self._is_batch:  # If not in batch mode
+        if not self.is_batch:  # If not in batch mode
             return self._delta.abs().max() < self.tolerance
         else:  # If operating in batch mode
             if self._delta.dim() == 1:
@@ -176,7 +175,7 @@ class _Mixer(ABC):
         pass
 
 
-class Simple(_Mixer):
+class Simple(Mixer):
     r"""Simple linear mixer mixing algorithm.
 
     Iteratively mixes pairs of systems via a simple linear combination:
@@ -225,8 +224,8 @@ class Simple(_Mixer):
             >>> # tensor([1., 3.])
     """
 
-    def __init__(self, is_batch: bool, mix_param: Real = 0.05,
-                 tolerance: Real = 1E-6):
+    def __init__(self, is_batch: bool, mix_param: float = 0.05,
+                 tolerance: float = 1E-6):
         # Pass required inputs to parent class.
         super().__init__(is_batch, tolerance)
 
@@ -277,8 +276,8 @@ class Simple(_Mixer):
         x_old = self._x_old if x_old is None else x_old
 
         # Safety check
-        if self._is_batch:
-            if self._is_batch and (x_new.shape[0] != x_old.shape[0]):
+        if self.is_batch:
+            if self.is_batch and (x_new.shape[0] != x_old.shape[0]):
                 raise RuntimeError(
                     'Batch dimension of x_new and x_old do not match; ensure '
                     'calls are made to mixer.cull as needed.')
@@ -321,7 +320,8 @@ class Simple(_Mixer):
              new_size: Optional[Union[torch.Size, List[int]]] = None):
         """Purge select systems form the mixer.
 
-        This is useful when a subset of systems have converged during mixing.
+        This is useful when a subset of systems that have converged during
+        mixing.
 
         Arguments:
             cull_list: Tensor with booleans indicating which systems should be
@@ -331,7 +331,7 @@ class Simple(_Mixer):
                 be removed form subsequent inputs.
 
         """
-        assert self._is_batch, 'Cull only valid for batch mixing'
+        assert self.is_batch, 'Cull only valid for batch mixing'
 
         # If a new size has been provided then cut the properties down to size
         # so to remove superfluous padding values.
@@ -347,7 +347,7 @@ class Simple(_Mixer):
         self._delta = self._delta[[cull, *slicers]]
 
 
-class Anderson(_Mixer):
+class Anderson(Mixer):
     """Accelerated Anderson mixing algorithm.
 
     Anderson acceleration is a method for accelerating convergence of fixed
@@ -402,9 +402,9 @@ class Anderson(_Mixer):
            80(1), 135–234.
 
     """
-    def __init__(self, is_batch: bool, mix_param: Real = 0.05,
+    def __init__(self, is_batch: bool, mix_param: float = 0.05,
                  generations: int = 4, diagonal_offset=0.01,
-                 init_mix_param: Real = 0.01, tolerance: Real = 1E-6,
+                 init_mix_param: float = 0.01, tolerance: float = 1E-6,
                  soft_start: bool = False):
 
         super().__init__(is_batch, tolerance)
@@ -437,7 +437,7 @@ class Anderson(_Mixer):
         # Tensors are converted to _shape_in when passed in and back to their
         # original shape _shape_out when returned to the user.
         self._shape_out = list(x_new.shape)
-        if self._is_batch:
+        if self.is_batch:
             self._shape_in = list(x_new.reshape(x_new.shape[0], -1).shape)
         else:
             self._shape_in = list(torch.flatten(x_new).shape)
@@ -580,7 +580,7 @@ class Anderson(_Mixer):
             The current size only works for 2D batch system.
 
         """
-        assert self._is_batch, 'Cull only valid for batch mixing'
+        assert self.is_batch, 'Cull only valid for batch mixing'
 
         shape = new_size if new_size is not None else self._shape_out[1:]
 
