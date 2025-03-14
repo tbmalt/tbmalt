@@ -1079,8 +1079,10 @@ class Dftb2(Calculator):
                         PyTorch graph to obtain the converged charges. Then
                         run a single SCC step within the graph using the
                         converged charges as the initial "guess".
-
-
+                    - "implicit": uses implicit function theorem to accurately
+                        and efficiently compute the derivative. This approach
+                        is not yet supported, but will be added in a future
+                        version.
 
         Returns:
             total_energy: total energy for the target systems this will include
@@ -1248,72 +1250,6 @@ class Dftb2(Calculator):
         q_out = _mulliken(rho, overlap, orbs)
 
         return q_out, hamiltonian, eig_values, eig_vectors, rho
-
-    # @staticmethod
-    # def scc_cycle_x(
-    #         q_zero: Tensor, orbs: OrbitalInfo, core_hamiltonian: Tensor,
-    #         overlap: Tensor, gamma: Tensor, filling_temp: float_like = 0.0,
-    #         filling_scheme: Scheme = fermi_smearing, max_scc_iter: int = 200,
-    #         mixer: Mixer = Anderson(False),
-    #         **kwargs):
-    #
-    #     # Reset the mixer and ensure it is not in batch-mode
-    #     mixer.reset()
-    #     mixer.is_batch = False
-    #
-    #     # Pull out ancillary settings from the keyword arguments
-    #     suppress_scc_error = kwargs.get('suppress_scc_error', False)
-    #     eigen_solver_settings = kwargs.get('eigen_solver_settings', {})
-    #
-    #     # Check if an initial guess has been provided for the charges. If not
-    #     # then default to q-zero.
-    #     q_current = kwargs.get("q_initial", q_zero)
-    #
-    #     n_electrons = q_zero.sum(-1)
-    #
-    #     # Define dummy variables to prevent the possibility of and undefined
-    #     # return. This should not really be needed as one would never realistically
-    #     # run an SCC cycle with zero iterations.
-    #     q_new = None
-    #     hamiltonian = None
-    #     eig_values = None
-    #     eig_vectors = None
-    #     rho = None
-    #
-    #     # Enter the self-consistent charge cycle. This will continue looping until
-    #     # either the maximum permitted number of iterations has been reached or
-    #     # convergence has been archived.
-    #     for step in range(1, max_scc_iter + 1):
-    #
-    #         # Perform a single step of the SCC cycle to generate the new charges.
-    #         # The SCC step function will also return other important properties
-    #         # that were calculated during the step.
-    #         q_new, hamiltonian, eig_values, eig_vectors, rho = Dftb2.scc_step(
-    #             q_current, q_zero, core_hamiltonian, overlap, gamma,
-    #             orbs, n_electrons, filling_temp, filling_scheme,
-    #             **eigen_solver_settings)
-    #
-    #         # Check if the deviation between the current and new charges are
-    #         # within tolerance. Check is done manually here rather than via
-    #         # `Mixer.converged`. This because i) said attribute will be removed
-    #         # and ii) the previous approach required mixing to perform the
-    #         # tolerance check. If convergence has been achieved, then discontinue
-    #         # the SCC cycle.
-    #         if torch.le((q_new - q_current).abs(), mixer.tolerance).all():
-    #             break
-    #
-    #         # Otherwise just mix the charges ready for the next step.
-    #         elif step < max_scc_iter:
-    #             q_current = mixer(q_new, q_current)
-    #
-    #         # However, if the iteration limit has been reached, an exception
-    #         # should be raised instead.
-    #         elif not suppress_scc_error:
-    #             raise ConvergenceError(
-    #                 "SCC cycle failed to converge; iteration limit reached")
-    #
-    #     return q_new, hamiltonian, eig_values, eig_vectors, rho
-
 
     @staticmethod
     def scc_cycle(
