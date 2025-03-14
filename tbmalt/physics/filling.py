@@ -12,7 +12,7 @@ from tbmalt.common import float_like
 from tbmalt.common.batch import psort, bT
 
 
-class _Scheme(Protocol):
+class Scheme(Protocol):
     def __call__(
             self, eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
             e_mask: Optional[Union[Tensor, OrbitalInfo]] = None) -> Tensor:
@@ -425,7 +425,7 @@ def _middle_gap_approximation(
 @torch.no_grad()
 def fermi_search(
         eigenvalues: Tensor, n_electrons: float_like,
-        kT: Optional[float_like] = None, scheme: _Scheme = fermi_smearing,
+        kT: Optional[float_like] = None, scheme: Scheme = fermi_smearing,
         tolerance: Optional[Real] = None, max_iter: int = 200,
         e_mask: Optional[Union[Tensor, OrbitalInfo]] = None,
         k_weights: Optional[Tensor] = None) -> Tensor:
