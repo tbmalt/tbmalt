@@ -291,7 +291,7 @@ def fermi_smearing(
     fermi_energy, kT = _smearing_preprocessing(eigenvalues, fermi_energy, kT)
 
     # Calculate the occupancies values via the Fermi-Dirac method
-    occupancies = 1.0 / (1.0 + torch.exp((eigenvalues - fermi_energy) / kT))
+    occupancies = 1.0 / (1.0 + torch.exp((eigenvalues - fermi_energy) / kT)) + 1E-8
 
     # Mask out ghost states as and when required
     occupancies = _smearing_postprocessing(occupancies, e_mask)
