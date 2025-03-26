@@ -1154,7 +1154,6 @@ class Dftb2(Calculator):
             q_converged, *_ = Dftb2.scc_step(
                 q_converged, self.q_zero_res, self.core_hamiltonian, self.overlap,
                 self.gamma, self.orbs, self.n_electrons, **kwargs_in)
-            print('q_converged', q_converged)
             #Set up imlicit func theorem
             q0 = q_converged.clone().detach().requires_grad_()
             f0, *_ = Dftb2.scc_step(
@@ -1163,8 +1162,6 @@ class Dftb2(Calculator):
             def backward_hook(grad):
                 g = Dftb2._impl_solver(lambda y : torch.autograd.grad(f0, q0, y, retain_graph=True)[0] + grad,
                                grad, params=(), mixer = self.mixer)
-                print('grad', grad)
-                print('g', g)
                 return g
             # hook into q_out grad
             q_converged.register_hook(backward_hook)
@@ -1185,22 +1182,23 @@ class Dftb2(Calculator):
         return self.mermin_energy
     
     @staticmethod
-    def _impl_solver(fnc, q_current, params = None, mixer = Anderson, max_scc_iter = 200, suppress_SCF_error = False, **kwargs):
-        mixer.reset()
-        q_converged = torch.zeros_like(q_current)
-        for step in range(1, max_scc_iter + 1):
-            q_current = mixer(
-                    fnc(q_current, *params),
-                    q_current,
-                    )
-            if mixer.converged:
-                q_converged[:] = q_current[:]
-                break
-        else:
-            if not suppress_SCF_error:
-                raise RuntimeError("SCC cycle did not converge.")
-
-        return q_converged
+    def _impl_solver(fnc, grad_current, params = None, mixer = Anderson, max_scc_iter = 200, suppress_SCF_error = False, **kwargs):
+        with torch.no_grad():
+            mixer.reset()
+            grad_converged = torch.zeros_like(grad_current)
+            for step in range(1, max_scc_iter + 1):
+                grad_current = mixer(
+                        fnc(grad_current, *params),
+                        grad_current,
+                        )
+                if torch.all(mixer.converged):
+                    grad_converged[:] = grad_current[:]
+                    break
+            else:
+                if not suppress_SCF_error:
+                    raise RuntimeError("SCC cycle did not converge.")
+    
+        return grad_converged
 
 
     def reset(self):
@@ -1406,7 +1404,6 @@ class Dftb2(Calculator):
         # either the maximum permitted number of iterations has been reached or
         # convergence has been archived.
         for step in range(1, max_scc_iter + 1):
-
             # Perform a single step of the SCC cycle to generate the new charges.
             # The SCC step function will also return other important properties
             # that were calculated during the step.

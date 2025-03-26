@@ -106,7 +106,7 @@ H2 = Geometry(torch.tensor([1, 1]),
 #geo = H2
 #geo = C2H2Au2S3
 #geo = H2O
-geo = H2O #+ H2 + CO2 + C2H2Au2S3
+geo = H2O + H2 + CO2 + C2H2Au2S3
 #geo = H2
 #geo = C2H2Au2S3
 
@@ -120,31 +120,45 @@ hubbard_feed = HubbardFeed.from_database(path, species)
 repulsive_feed = RepulsiveSplineFeed.from_database(path, species)
 
 # Set up the calculator
-dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
+dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed, filling_scheme=None)
 #dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, r_feed=repulsive_feed)
 
 # Run a SCF calculation
 start_time = time.time()
-energy = dftb_calculator(geo, orbital_info, grad_mode='direct')
-#energy = dftb_calculator(geo, orbital_info, grad_mode='last_step')
+start_time_direct = time.time()
+energy_direct = dftb_calculator(geo, orbital_info, grad_mode='direct')
+forces_direct = - torch.autograd.grad(energy_direct, geo.positions, grad_outputs=torch.ones_like(energy_direct))[0]
+end_time_direct = time.time()
+print('force direct time', end_time_direct - start_time_direct)
+start_time_imp = time.time()
+energy_imp = dftb_calculator(geo, orbital_info, grad_mode='implicit')
+forces_imp = - torch.autograd.grad(energy_imp, geo.positions, grad_outputs=torch.ones_like(energy_imp))[0]
+end_time_imp = time.time()
+print('force imp time', end_time_imp - start_time_imp)
+start_time_laststep = time.time()
+energy_laststep = dftb_calculator(geo, orbital_info, grad_mode='last_step')
+forces_laststep = - torch.autograd.grad(energy_laststep, geo.positions, grad_outputs=torch.ones_like(energy_laststep))[0]
+end_time_laststep = time.time()
+print('force last step time', end_time_laststep - start_time_laststep)
 #energy = dftb_calculator(geo, orbital_info, grad_mode='implicit')
 end_time = time.time()
-print('Energy:', energy)
+print('force imp diff:', forces_direct - forces_imp)
+print('force last step diff:', forces_direct - forces_laststep)
 print('Time:', end_time - start_time)
 
 # Get total energy
-total_energy = dftb_calculator.total_energy
-print('Total energy:', total_energy)
+#total_energy = dftb_calculator.total_energy
+#print('Total energy:', total_energy)
 
 #Get repulsive energy
-repulsive_energy = dftb_calculator.repulsive_energy
-print('Repulsive energy:', repulsive_energy)
+#repulsive_energy = dftb_calculator.repulsive_energy
+#print('Repulsive energy:', repulsive_energy)
 
 # Calculate the gradient
-start_time = time.time()
-forces = - torch.autograd.grad(total_energy, geo.positions, grad_outputs=torch.ones_like(total_energy))[0]
-
-end_time = time.time()
-
-print('Forces:', forces)
-print('Time:', end_time - start_time)
+#start_time = time.time()
+#forces = - torch.autograd.grad(total_energy, geo.positions, grad_outputs=torch.ones_like(total_energy))[0]
+#
+#end_time = time.time()
+#
+#print('Forces:', forces)
+#print('Time:', end_time - start_time)
