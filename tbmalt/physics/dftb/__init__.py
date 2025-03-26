@@ -1125,6 +1125,7 @@ class Dftb2(Calculator):
         # perform the SCC cycle using a highly accurate initial guess for the
         # charges.
         elif grad_mode == "last_step":
+            self.overlap, self.core_hamiltonian, self.invr, self.gamma
             with torch.no_grad():
                 q_out, *_ = Dftb2.scc_cycle(
                     self.q_zero_res, self.orbs, self.core_hamiltonian,
@@ -1138,8 +1139,41 @@ class Dftb2(Calculator):
         # The implicit method is yet to be implemented. This should give the
         # "correct" gradient and so will become the default one implemented.
         elif grad_mode == "implicit":
-            raise NotImplementedError(
-                "The \"implicit\" gradient mode has not been implemented yet")
+            q_current = self.q_zero_res
+            if cache is not None:
+                q_current = cache.get('q_initial', q_current)
+
+            q_converged = torch.zeros_like(q_current)
+            self.overlap, self.core_hamiltonian, self.invr, self.gamma
+
+            with torch.no_grad():
+                q_converged, *_ = Dftb2.scc_cycle(
+                    self.q_zero_res, self.orbs, self.core_hamiltonian,
+                    self.overlap, self.gamma, **kwargs_in)
+            #reconnect q_out to the graph
+            q_converged, *_ = Dftb2.scc_step(
+                q_converged, self.q_zero_res, self.core_hamiltonian, self.overlap,
+                self.gamma, self.orbs, self.n_electrons, **kwargs_in)
+            print('q_converged', q_converged)
+            #Set up imlicit func theorem
+            q0 = q_converged.clone().detach().requires_grad_()
+            f0, *_ = Dftb2.scc_step(
+                q0, self.q_zero_res, self.core_hamiltonian, self.overlap,
+                self.gamma, self.orbs, self.n_electrons, **kwargs_in)
+            def backward_hook(grad):
+                g = Dftb2._impl_solver(lambda y : torch.autograd.grad(f0, q0, y, retain_graph=True)[0] + grad,
+                               grad, params=(), mixer = self.mixer)
+                print('grad', grad)
+                print('g', g)
+                return g
+            # hook into q_out grad
+            q_converged.register_hook(backward_hook)
+
+            #Run scc again so other values are effected by new gradient
+            (q_out, self.hamiltonian, self.eig_values, self.eig_vectors,
+             self.rho) = Dftb2.scc_step(
+                q_converged, self.q_zero_res, self.core_hamiltonian, self.overlap,
+                self.gamma, self.orbs, self.n_electrons, **kwargs_in)
 
         else:
             raise ValueError(
@@ -1149,6 +1183,25 @@ class Dftb2(Calculator):
         # Calculate and return the total system energy, taking into account
         # the entropy term as and when necessary.
         return self.mermin_energy
+    
+    @staticmethod
+    def _impl_solver(fnc, q_current, params = None, mixer = Anderson, max_scc_iter = 200, suppress_SCF_error = False, **kwargs):
+        mixer.reset()
+        q_converged = torch.zeros_like(q_current)
+        for step in range(1, max_scc_iter + 1):
+            q_current = mixer(
+                    fnc(q_current, *params),
+                    q_current,
+                    )
+            if mixer.converged:
+                q_converged[:] = q_current[:]
+                break
+        else:
+            if not suppress_SCF_error:
+                raise RuntimeError("SCC cycle did not converge.")
+
+        return q_converged
+
 
     def reset(self):
         """Reset all attributes and cached properties."""
