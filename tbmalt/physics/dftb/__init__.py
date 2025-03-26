@@ -1059,7 +1059,7 @@ class Dftb2(Calculator):
             self, cache: Optional[Dict[str, Any]] = None,
             grad_mode: Literal["direct", "last_step", "implicit"] | str = "last_step",
             **kwargs
-            ) -> Tuple[Tensor, Tensor]:
+            ) -> Tensor:
         """Execute the SCC-DFTB calculation.
 
         Invoking this will trigger the execution of the self-consistent-charge
@@ -1125,10 +1125,16 @@ class Dftb2(Calculator):
         # perform the SCC cycle using a highly accurate initial guess for the
         # charges.
         elif grad_mode == "last_step":
+            # Calls to the necessary properties are made here so that they are
+            # computed within the graph.
+            q_zero_res = self.q_zero_res
+            core_hamiltonian = self.core_hamiltonian
+            overlap = self.overlap
+            gamma = self.gamma
             with torch.no_grad():
                 q_out, *_ = Dftb2.scc_cycle(
-                    self.q_zero_res, self.orbs, self.core_hamiltonian,
-                    self.overlap, self.gamma, **kwargs_in)
+                    q_zero_res, self.orbs, core_hamiltonian,
+                    overlap, gamma, **kwargs_in)
 
             (q_out, self.hamiltonian, self.eig_values, self.eig_vectors,
              self.rho) = Dftb2.scc_step(
@@ -1168,7 +1174,7 @@ class Dftb2(Calculator):
             q_in: Tensor, q_zero: Tensor, core_hamiltonian: Tensor,
             overlap: Tensor, gamma: Tensor, orbs: OrbitalInfo,
             n_electrons: float_like, filling_temp: float_like = 0.0,
-            filling_scheme: Scheme = fermi_smearing, **kwargs
+            filling_scheme: Optional[Scheme] = fermi_smearing, **kwargs
         ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
         """Perform a single self-consistent charge cycle step.
 
@@ -1210,6 +1216,7 @@ class Dftb2(Calculator):
             '...i,...ij->...j', q_in - q_zero, gamma)
 
         shifts = prepeat_interleave(shifts, orbs.orbs_per_res)
+        smallest_shift = torch.min(shifts)
         shifts = (shifts[..., None] + shifts[..., None, :])
 
         # Compute the second order Hamiltonian matrix
@@ -1239,12 +1246,24 @@ class Dftb2(Calculator):
             occupancy = aufbau_filling(eig_values, n_electrons,
                                        e_mask=e_mask) * scale_factor
 
-        # Scaled occupancy values
-        s_occs = torch.einsum(
-            '...i,...ji->...ji', torch.sqrt(occupancy), eig_vectors)
+        # The density matrix is constructed via a two-step approach, similar to
+        # that used in DFTB+. This is done to avoid gradient instabilities that
+        # arise as a result of taking the square root of zeros within the eigen
+        # vector scaling step. While an occupancy value of zero is valid, the
+        # derivative of square root is not. Thus, padding must be applied to these
+        # values during evaluation, and compensated for later on.
 
-        # Density matrix
-        rho = s_occs @ s_occs.transpose(-1, -2).conj()
+        # Somewhat arbitrary offset needed to ensure occupancies are non-zero
+        offset = smallest_shift - 0.1
+
+        # Scaled occupancy values (including offset)
+        s_occs = torch.einsum(
+            '...i,...ji->...ji', torch.sqrt(occupancy - offset), eig_vectors)
+
+        # First the density matrix without occupancy scaling is computed. This is
+        # then added to the scaled density matrix, which includes the offset.
+        rho = eig_vectors @ eig_vectors.transpose(-1, -2).conj()
+        rho = (s_occs @ s_occs.transpose(-1, -2).conj()) + offset * rho
 
         # Compute the new charges
         q_out = _mulliken(rho, overlap, orbs)

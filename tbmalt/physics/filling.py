@@ -268,9 +268,6 @@ def fermi_smearing(
         values present, irrespective of whether they are real or fake (caused
         by packing).
 
-    Warnings:
-        Gradients resulting from this function can be ill defined, i.e. nan.
-
     Examples:
         >>> from tbmalt.physics.filling import fermi_smearing
 
@@ -290,8 +287,16 @@ def fermi_smearing(
     # stability issue associated with this function.
     fermi_energy, kT = _smearing_preprocessing(eigenvalues, fermi_energy, kT)
 
-    # Calculate the occupancies values via the Fermi-Dirac method
-    occupancies = 1.0 / (1.0 + torch.exp((eigenvalues - fermi_energy) / kT))
+    # Calculate the occupancies values via the Fermi-Dirac method. Note that
+    # the occupancy calculation is segmented so that the exponential is not
+    # applied to values greater than 40, thereby preventing the production of
+    # infinities & ill-defined gradients. For values below this threshold, the
+    # standard Fermi–Dirac expression is applied, otherwise the occupancy is
+    # set to zero.
+    occupancies = (eigenvalues - fermi_energy) / kT
+    mask = occupancies < 40
+    occupancies[mask] = 1.0 / (1.0 + torch.exp(occupancies[mask]))
+    occupancies[~mask] = 0.0
 
     # Mask out ghost states as and when required
     occupancies = _smearing_postprocessing(occupancies, e_mask)
