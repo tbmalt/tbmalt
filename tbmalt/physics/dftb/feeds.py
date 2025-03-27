@@ -649,9 +649,9 @@ class SkFeed(IntegralFeed):
         # Inter-atomic distance and distance vector calculator.
         dist_vec = (geometry.positions[*bT2(atomic_idx_2)]
                     - geometry.positions[*bT2(atomic_idx_1)])
-        dist = torch.linalg.norm(dist_vec, dim=-1)
         if shift_vec is not None:
             dist_vec = dist_vec + shift_vec
+        dist = torch.linalg.norm(dist_vec, dim=-1)
         u_vec = (dist_vec.T / dist).T
 
         # Work out the width of each sub-block then use it to get the row and
