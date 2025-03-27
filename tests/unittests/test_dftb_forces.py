@@ -127,6 +127,7 @@ def test_forces_single_scc(skf_file: str, device):
         
         #calculate forces
         forces = dftb_calculator.forces
+        print('Forces:', forces)
         
         check_1 = forces.device == device 
         check_2 = torch.allclose(forces.detach().cpu(), force_ref, rtol=0, atol=1E-9)
@@ -185,6 +186,7 @@ def test_forces_batch_scc(skf_file: str, device):
 
     #calculate forces
     forces = dftb_calculator.forces
+    print('Forces:', forces)
 
     check_1 = forces.device == device
     check_2 = torch.allclose(forces.detach().cpu(), reference_scc_batch, atol=1e-9, rtol=0)
