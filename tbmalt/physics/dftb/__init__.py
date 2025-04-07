@@ -1187,6 +1187,7 @@ class Dftb2(Calculator):
             mixer.reset()
             grad_converged = torch.zeros_like(grad_current)
             for step in range(1, max_scc_iter + 1):
+                print(f"SCC step: {step}")
                 grad_current = mixer(
                         fnc(grad_current, *params),
                         grad_current,
