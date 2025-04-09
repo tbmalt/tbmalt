@@ -1,5 +1,4 @@
 import os
-from os.path import exists
 from typing import Any, List
 
 import torch
@@ -10,7 +9,6 @@ import numpy as np
 import h5py
 
 from tbmalt import Geometry, OrbitalInfo
-from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.maths.interpolation import CubicSpline
@@ -20,7 +18,6 @@ import tbmalt.common.maths as tb_math
 from tbmalt.common.batch import pack
 from tbmalt.data.units import energy_units, length_units
 
-from ase.build import molecule
 
 Tensor = torch.Tensor
 
@@ -61,7 +58,7 @@ fit_model = True
 test = True
 
 # Number of fitting cycles, number of batch size each cycle
-number_of_epochs = 500
+number_of_epochs = 100
 n_batch = 1
 
 # learning rate
@@ -85,11 +82,11 @@ points = torch.linspace(-3.3, 1.6, 491) if target_run != 'run_transfer' else\
 
 # Load the Hamiltonian feed model
 h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation='spline', requires_grad=True)
+                              interpolation=CubicSpline)
 
 # Load the overlap feed model
 s_feed = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation='spline', requires_grad=True)
+                              interpolation=CubicSpline,)
 
 # Load the occupation feed object
 o_feed = SkfOccupationFeed.from_database(parameter_db_path, species)
@@ -103,8 +100,8 @@ mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2,
               'generations': 3, 'tolerance': 1e-10}
 kwargs = {}
 kwargs['mix_params'] = mix_params
-dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, suppress_scc_error=True,
-                        **kwargs)
+dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, supress_SCF_error=True,
+                        filling_scheme=None, filling_temp=None, **kwargs)
 
 
 # ======================== #
@@ -256,7 +253,7 @@ def loss_fn(results, ref_dos, ibatch):
     fermi_dftb = getattr(results, 'homo_lumo').mean(dim=-1) / energy_units['ev']
     energies_dftb = fermi_dftb.unsqueeze(-1) + points.unsqueeze(0).repeat_interleave(
         n_batch, 0)
-    dos_dftb = dos((getattr(results, 'eigenvalue')) / energy_units['ev'],
+    dos_dftb = dos(results.eig_values / energy_units['ev'],
                    energies_dftb, 0.09)
     loss = loss + criterion(dos_dftb, ref)
 
@@ -274,13 +271,13 @@ def dftb_results(numbers, positions, cells, **kwargs):
     orbs = OrbitalInfo(geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
     if not dftb:
-        dftb_calculator(geometry, orbs)
+        dftb_calculator(geometry, orbs, grad_mode="direct")
     else:
         # Build new feeds
         h_feed_o = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                                        interpolation='spline')
+                                        interpolation=CubicSpline)
         s_feed_o = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                                        interpolation='spline')
+                                        interpolation=CubicSpline)
         mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2,
               'generations': 3, 'tolerance': 1e-10}
         kwargs = {}
@@ -295,6 +292,11 @@ def main(rank, world_size, train_dataset, data_train_dos):
     """ML training to optimize DFTB H and S matrix."""
     # Initial the model
     train_data = data_split(rank, world_size, train_dataset, batch_size=n_batch)
+    # Define parameters to optimize
+    for key in h_feed._off_sites.keys():
+        # Collect spline parameters and add to optimizer
+        h_feed._off_sites[key].coefficients.requires_grad_(True)
+        s_feed._off_sites[key].coefficients.requires_grad_(True)
     h_var = [val.coefficients for key, val in h_feed._off_sites.items()]
     s_var = [val.coefficients for key, val in s_feed._off_sites.items()]
     variable = h_var + s_var
@@ -351,7 +353,7 @@ def test(rank, world_size, test_dataset):
         fermi_pred = getattr(scc_pred, 'fermi_energy').detach() / energy_units['ev']
         hl_pred = getattr(scc_pred, 'homo_lumo').detach() / energy_units['ev']
         hl_pred_tot.append(hl_pred)
-        eigval_pred = getattr(scc_pred, 'eigenvalue').detach() / energy_units['ev']
+        eigval_pred = scc_pred.eig_values.detach() / energy_units['ev']
         dos_pred = dos((eigval_pred), energies_test, 0.09)
         f = open('./result/test/Pred_fermi' + str(ibatch + 1) + '.dat', 'w')
         np.savetxt(f, fermi_pred)
@@ -394,7 +396,7 @@ def test(rank, world_size, test_dataset):
         fermi_dftb = getattr(scc_dftb, 'fermi_energy').detach() / energy_units['ev']
         hl_dftb = getattr(scc_dftb, 'homo_lumo').detach() / energy_units['ev']
         hl_dftb_tot.append(hl_dftb)
-        eigval_dftb = getattr(scc_dftb, 'eigenvalue').detach() / energy_units['ev']
+        eigval_dftb = scc_dftb.eig_values.detach() / energy_units['ev']
         dos_dftb = dos((eigval_dftb), energies_test, 0.09)
         f = open('./result/test/dftb_fermi' + str(ibatch + 1) + '.dat', 'w')
         np.savetxt(f, fermi_dftb)
