@@ -1964,7 +1964,8 @@ class RepulsiveSplineFeed(Feed):
                 #TODO: Not yet batched
                 dErep[batch_indx, indx_pair[0]] += add_dErep*normed_distance_vectors[batch_indx, indx_pair[0], indx_pair[1]]
                 dErep[batch_indx, indx_pair[1]] += add_dErep*normed_distance_vectors[batch_indx,indx_pair[1], indx_pair[0]]
-        
+        if batch_size == 1:
+            dErep = dErep.squeeze(0)
         return dErep
 
     def _calculation_prep(self, geo: Geometry
