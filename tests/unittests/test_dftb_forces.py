@@ -101,9 +101,11 @@ def test_forces_single_nonscc(skf_file: str, device):
 
         check_1 = forces.device == device 
         check_2 = torch.allclose(forces.detach().cpu(), force_ref, rtol=0, atol=1E-9)
+        check_3 = forces.dim() == 2
 
         assert check_1, 'Results were places on the wrong device'
         assert check_2, f'Forces outside of tolerance (Geometry: {mol}, Forces: {forces})'
+        assert check_3, f'Forces for single system do not have single dimension'
 
 #scc
 def test_forces_single_scc(skf_file: str, device):
@@ -130,9 +132,11 @@ def test_forces_single_scc(skf_file: str, device):
         
         check_1 = forces.device == device 
         check_2 = torch.allclose(forces.detach().cpu(), force_ref, rtol=0, atol=1E-9)
+        check_3 = forces.dim() == 2
 
         assert check_1, 'Results were places on the wrong device'
         assert check_2, f'Forces outside of tolerance (Geometry: {mol})'
+        assert check_3, f'Forces for single system do not have single dimension'
 
 
 # Batch
@@ -159,9 +163,11 @@ def test_forces_batch_nonscc(skf_file: str, device):
 
     check_1 = forces.device == device
     check_2 = torch.allclose(forces.detach().cpu(), reference_nonscc_batch, atol=1e-9, rtol=0)
+    check_3 = forces.dim() == 3
 
     assert check_1, 'Results were places on the wrong device'
     assert check_2, f'Batch forces difference to reference outside of tolerance'
+    assert check_3, f'Forces for batch system do not have batch dimension'
 
 #scc
 def test_forces_batch_scc(skf_file: str, device):
@@ -188,7 +194,9 @@ def test_forces_batch_scc(skf_file: str, device):
 
     check_1 = forces.device == device
     check_2 = torch.allclose(forces.detach().cpu(), reference_scc_batch, atol=1e-9, rtol=0)
+    check_3 = forces.dim() == 3
 
     assert check_1, 'Results were places on the wrong device'
     assert check_2, f'Batch forces difference to reference outside of tolerance'
+    assert check_3, f'Forces for batch system do not have batch dimension'
 
