@@ -5,7 +5,7 @@ from ase.build import molecule
 
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.physics.dftb import Dftb1, Dftb2
-from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
+from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed, RepulsiveSplineFeed
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
 
@@ -34,8 +34,9 @@ def feeds_scc(device, skf_file):
     s_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file, species, device=device)
+    r_feed = RepulsiveSplineFeed.from_database(skf_file, species, device=device)
 
-    return h_feed, s_feed, o_feed, u_feed
+    return h_feed, s_feed, o_feed, u_feed, r_feed
 
 
 def H2(device):
@@ -74,14 +75,15 @@ def H2_scc(device):
     geometry = Geometry(
         torch.tensor([1, 1], device=device),
         torch.tensor([
-            [+0.000000000000000E+00, +0.000000000000000E+00, 0.696520874048385252],
-            [+0.000000000000000E+00, +0.000000000000000E+00, -0.696520874048385252]],
+            [+0.000000000000000E+00, +0.000000000000000E+00, 0.368583],
+            [+0.000000000000000E+00, +0.000000000000000E+00, -0.368583]],
             device=device),
         torch.tensor([
-            [1.5, 0.0, 0.0],
-            [0.0, 1.5, 0.0],
-            [0.0, 0.0, 1.5]],
-            device=device), cutoff=cutoff)
+            [3.0, 0.0, 0.0],
+            [0.0, 3.0, 0.0],
+            [0.0, 0.0, 3.0]],
+            device=device), units='a',
+        cutoff=cutoff / length_units['angstrom'])
 
     orbs = OrbitalInfo(geometry.atomic_numbers, {1: [0]})
 
@@ -89,9 +91,11 @@ def H2_scc(device):
         'q_final_atomic': torch.tensor([
             +1.000000000000000E+00, +1.000000000000000E+00],
             device=device),
-        'band_energy': torch.tensor(-1.2424910092, device=device),
-        'core_band_energy': torch.tensor(-1.2424910092, device=device),
+        'band_energy': torch.tensor(-0.7436425254, device=device),
+        'core_band_energy': torch.tensor(-0.7436425254, device=device),
         'scc_energy': torch.tensor(0.0000000000, device=device),
+        'repulsive_energy': torch.tensor(0.0062479252, device=device),
+        'total_energy': torch.tensor(-0.7373946003, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -163,6 +167,8 @@ def CH4_scc(device):
         'band_energy': torch.tensor(-3.0733021165, device=device),
         'core_band_energy': torch.tensor(-3.1532140266, device=device),
         'scc_energy': torch.tensor(0.0067918553, device=device),
+        'repulsive_energy': torch.tensor(0.0593437885, device=device),
+        'total_energy': torch.tensor(-3.0870783828, device=device)
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -228,6 +234,8 @@ def H2O_scc(device):
         'band_energy': torch.tensor(-3.6933637908, device=device),
         'core_band_energy': torch.tensor(-4.1565716533, device=device),
         'scc_energy': torch.tensor(0.0182313218, device=device),
+        'repulsive_energy': torch.tensor(0.0592948663, device=device),
+        'total_energy': torch.tensor(-4.0790454652, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -307,6 +315,8 @@ def C2H6_scc(device):
         'band_energy': torch.tensor(-5.6277033348, device=device),
         'core_band_energy': torch.tensor(-5.7318750500, device=device),
         'scc_energy': torch.tensor(0.0017586419, device=device),
+        'repulsive_energy': torch.tensor(0.0305717799, device=device),
+        'total_energy': torch.tensor(-5.6995446283, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -383,6 +393,8 @@ def dftb2_helper(calculator, geometry, orbs, results):
     check_allclose('band_energy')
     check_allclose('core_band_energy')
     check_allclose('scc_energy')
+    check_allclose('repulsive_energy')
+    check_allclose('total_energy')
 
 
 def test_dftb1_single(device, feeds_nscc):
@@ -414,7 +426,7 @@ def test_dftb1_batch(device, feeds_nscc):
 
 
 def test_dftb2_single(device, feeds_scc):
-    h_feed, s_feed, o_feed, u_feed = feeds_scc
+    h_feed, s_feed, o_feed, u_feed, r_feed = feeds_scc
 
     systems = [H2_scc, H2O_scc, CH4_scc, C2H6_scc]
     mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
@@ -423,13 +435,13 @@ def test_dftb2_single(device, feeds_scc):
         geometry, orbs, results, kwargs = system(device)
         kwargs['mix_params'] = mix_params
 
-        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
+        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, r_feed, **kwargs)
 
         dftb2_helper(calculator, geometry, orbs, results)
 
 
 def test_dftb2_batch(device, feeds_scc):
-    h_feed, s_feed, o_feed, u_feed = feeds_scc
+    h_feed, s_feed, o_feed, u_feed, r_feed = feeds_scc
 
     batches = [[H2_scc], [H2_scc, H2O_scc], [H2_scc, H2O_scc, CH4_scc],
                [H2_scc, H2O_scc, CH4_scc, C2H6_scc]]
@@ -437,7 +449,7 @@ def test_dftb2_batch(device, feeds_scc):
     for batch in batches:
         geometry, orbs, results, kwargs = merge_systems(device, *batch)
 
-        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
+        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, r_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
 
         dftb2_helper(calculator, geometry, orbs, results)

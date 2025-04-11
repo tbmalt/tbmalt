@@ -745,6 +745,7 @@ class CubicSpline(Feed):
 
         if extrapolate.any():
             dr = xnew[extrapolate] - r_max
+            dr = dr.unsqueeze(-1) if ypt.dim() == 2 else dr
 
             y0, y1, y2 = self._y[-3:]
             r1 = (y2 - y0) / (2.0 * self.grid_step)
