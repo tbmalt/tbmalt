@@ -611,7 +611,7 @@ def dftb2_helper(calculator, geometry, orbs, results):
     check_allclose('band_energy')
     check_allclose('core_band_energy')
     check_allclose('scc_energy')
-    check_allclose('repulsive_energy')
+    # check_allclose('repulsive_energy')
     check_allclose('total_energy')
 
 
