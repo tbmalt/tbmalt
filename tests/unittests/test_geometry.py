@@ -376,8 +376,16 @@ def test_unique_atom_pairs(device):
     """Tests the 'unique_atom_pairs' helper function."""
     geom = Geometry(atomic_numbers_data(device, True),
                     positions_data(device, True))
-    ref = torch.tensor(
-        [[1, 1], [6, 1], [8, 1], [1, 6], [6, 6],
-         [8, 6], [1, 8], [6, 8], [8, 8]], device=device)
-    check = (unique_atom_pairs(geom) == ref).all()
-    assert check, "unique_atom_pairs returned an unexpected result"
+
+    ref_1 = torch.tensor(
+        [[1, 1], [1, 6], [1, 8], [6, 6], [6, 8], [8, 8]], device=device)
+    check_1 = (unique_atom_pairs(geom, ) == ref_1).all()
+
+    assert check_1, "unique_atom_pairs returned an unexpected result"
+
+    ref_2 = torch.tensor(
+        [[1, 1], [1, 6], [1, 8], [6, 1], [6, 6],
+         [6, 8], [8, 1], [8, 6], [8, 8]], device=device)
+    check_2 = (unique_atom_pairs(geom, True) == ref_2).all()
+
+    assert check_2, "unique_atom_pairs (ordered) returned an unexpected result"

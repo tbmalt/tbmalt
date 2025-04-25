@@ -5,7 +5,8 @@ from ase.build import molecule
 
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.physics.dftb import Dftb1, Dftb2
-from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed, RepulsiveSplineFeed
+from tbmalt.physics.dftb.feeds import (SkFeed, SkfOccupationFeed, HubbardFeed,
+                                       RepulsiveEnergyFeed)
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
 
@@ -34,7 +35,7 @@ def feeds_scc(device, skf_file):
     s_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file, species, device=device)
-    r_feed = RepulsiveSplineFeed.from_database(skf_file, species, device=device)
+    r_feed = RepulsiveEnergyFeed.from_database(skf_file, species, device=device)
 
     return h_feed, s_feed, o_feed, u_feed, r_feed
 
@@ -46,7 +47,7 @@ def feeds_scc_siband(device, skf_file_siband):
     s_feed = SkFeed.from_database(skf_file_siband, species, 'overlap', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file_siband, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file_siband, species, device=device)
-    r_feed = RepulsiveSplineFeed.from_database(skf_file_siband, species, device=device)
+    r_feed = RepulsiveEnergyFeed.from_database(skf_file_siband, species, device=device)
 
     return h_feed, s_feed, o_feed, u_feed, r_feed
 
@@ -57,7 +58,7 @@ def feeds_scc_pbc(device, skf_file_pbc):
     s_feed = SkFeed.from_database(skf_file_pbc, species, 'overlap', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file_pbc, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file_pbc, species, device=device)
-    r_feed = RepulsiveSplineFeed.from_database(skf_file_pbc, species, device=device)
+    r_feed = RepulsiveEnergyFeed.from_database(skf_file_pbc, species, device=device)
 
     return h_feed, s_feed, o_feed, u_feed, r_feed
 
@@ -611,8 +612,8 @@ def dftb2_helper(calculator, geometry, orbs, results):
     check_allclose('band_energy')
     check_allclose('core_band_energy')
     check_allclose('scc_energy')
-    # check_allclose('repulsive_energy')
-    # check_allclose('total_energy')
+    check_allclose('repulsive_energy')
+    check_allclose('total_energy')
 
 
 def test_dftb1_single(device, feeds_nscc):
