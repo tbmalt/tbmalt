@@ -4,6 +4,7 @@ import numpy as np
 import torch
 
 from typing import Optional, Dict, Any, Literal, Union, Tuple
+import warnings
 
 from tbmalt.ml.module import Calculator
 from tbmalt.ml.integralfeeds import IntegralFeed
@@ -187,7 +188,8 @@ class Dftb1(Calculator):
         self.r_feed = r_feed
 
         device_list = [d.device for d in [h_feed, s_feed, o_feed, r_feed]
-                       if d is not None]
+                       if hasattr(d, "device") and d is not None]
+
         if not len(set(device_list)) == 1:
             raise ValueError('All `Feeds` must be on the same device')
 
@@ -425,6 +427,41 @@ class Dftb1(Calculator):
             forces: tensor reporting the force on each atom along each
                 dimension.
         """
+        # Current issue that need to be resolved:
+        #   - 1) This makes an explicit call to a private method of the
+        #       Hamiltonian and Overlap `Feed` objects. Specifically the
+        #       `SkFeed._off_site_blocks` as such this will break when
+        #       using a different feed object or working with periodic
+        #       systems. It also requires manually tweaking private methods of
+        #       the `SkFeed` class to adapt them for use in another private
+        #       method of a different unrelated class causing unintentional
+        #       coupling.
+        #   - 2) Given the cost of evaluating the forces, and to a lesser
+        #       extent the repulsive energy, it might be worth caching these
+        #       values after computing them.
+        #   - 3) Hard coding of gradients associated with the repulsive spline
+        #       feeds needs to be removed and replaced with a generic auto-grad
+        #       solution.
+        #   - 4) This is only compatible with the now deprecated
+        #       `RepulsiveSplineFeed` class.
+
+        from tbmalt.physics.dftb.feeds import SkFeed
+
+        warnings.warn(
+            "This is an experimental feature which is not intended for "
+            "public use!")
+
+        if not isinstance(self.h_feed, SkFeed) or not isinstance(
+                self.s_feed, SkFeed):
+            raise NotImplementedError(
+                "Manual evaluation of atomic forces is only supported when "
+                "using `SkFeed` instances for the Hamiltonian & overlap "
+                "matrix feeds; `h_feed` & `s_feed`.")
+
+        if self.geometry.is_periodic:
+            raise NotImplementedError(
+                "Manual evaluation of atomic forces is not compatible with "
+                "periodic systems.")
 
         # Compute atomic force component associated with the gradient of
         # the hamiltonian and overlap matrices.
@@ -759,7 +796,8 @@ class Dftb2(Calculator):
 
         device_list = [
             d.device for d in [h_feed, s_feed, o_feed, u_feed, r_feed]
-            if d is not None]
+            if hasattr(d, "device") and d is not None]
+
         if not len(set(device_list)) == 1:
             raise ValueError('All `Feeds` must be on the same device')
 
@@ -1072,9 +1110,56 @@ class Dftb2(Calculator):
             forces: tensor reporting the force on each atom along each
                 dimension.
         """
+        # Current issue that need to be resolved:
+        #   - 1) This uses a manual and hard coded method to compute the
+        #       gradients of the gamma matrix. This will fail if a gamma
+        #       scheme other than "exponential" is used. Considerations should
+        #       be made as to what the best way to deal with this is. If
+        #       PyTorch is able to safely compute the gradients then the
+        #       `gamma_exponential_gradient` method could be moved into
+        #       a unit-test and a more generic approach implemented here.
+        #   - 2) This makes an explicit call to a private method of the
+        #       Hamiltonian and Overlap `Feed` objects. Specifically the
+        #       `SkFeed._off_site_blocks` as such this will break when
+        #       using a different feed object or working with periodic
+        #       systems. It also requires manually tweaking private methods of
+        #       the `SkFeed` class to adapt them for use in another private
+        #       method of a different unrelated class causing unintentional
+        #       coupling.
+        #   - 3) Given the cost of evaluating the forces, and to a lesser
+        #       extent the repulsive energy, it might be worth caching these
+        #       values after computing them.
+        #   - 4) Hard coding of gradients associated with the repulsive spline
+        #       feeds needs to be removed and replaced with a generic auto-grad
+        #       solution.
+        #   - 5) This is only compatible with the now deprecated
+        #       `RepulsiveSplineFeed` class.
+
+        from tbmalt.physics.dftb.feeds import SkFeed
+
+        warnings.warn(
+            "This is an experimental feature which is not intended for "
+            "public use!")
+
+        if not isinstance(self.h_feed, SkFeed) or not isinstance(
+                self.s_feed, SkFeed):
+            raise NotImplementedError(
+                "Manual evaluation of atomic forces is only supported when "
+                "using `SkFeed` instances for the Hamiltonian & overlap "
+                "matrix feeds; `h_feed` & `s_feed`.")
+
+        if self.geometry.is_periodic:
+            raise NotImplementedError(
+                "Manual evaluation of atomic forces is not compatible with "
+                "periodic systems.")
+
+        if self.gamma_scheme != "exponential":
+            raise NotImplementedError(
+                "Manual evaluation of atomic forces is only compatible with "
+                "the exponential gamma scheme.")
 
         # Non-scc Forces and h1 correction
-        force = -self._finite_diff_overlap_h0_blocks(delta=delta)
+        force = -self._finite_diff_overlap_h_blocks(delta=delta)
 
         # Include contributions associated with the repulsive feed if
         # present.
@@ -1090,7 +1175,6 @@ class Dftb2(Calculator):
                     "feeds.")
 
         # Scc corrections (additional to h1)
-        
         # Gamma gradient correction
         gamma_grad = gamma_exponential_gradient(
             self.geometry, self.orbs, self.u_feed.forward(self.orbs))
@@ -1103,7 +1187,7 @@ class Dftb2(Calculator):
 
         return force
 
-    def _finite_diff_overlap_h0_blocks(self, delta: float = 1.0e-6) -> Tensor:
+    def _finite_diff_overlap_h_blocks(self, delta: float = 1.0e-6) -> Tensor:
         """Atomic forces based on the gradient of the S & H matrices.
 
         This method computes the atomic forces via a block-wise evaluation of

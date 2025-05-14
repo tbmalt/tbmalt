@@ -7,7 +7,10 @@ from typing import List, Type
 import numpy as np
 from ase.build import molecule
 
-from tbmalt.physics.dftb.feeds import ScipySkFeed, SkFeed, SkfOccupationFeed, HubbardFeed, VcrSkFeed
+from tbmalt.physics.dftb.feeds import (
+    ScipySkFeed, SkFeed, SkfOccupationFeed, HubbardFeed, VcrSkFeed,
+    PairwiseRepulsiveEnergyFeed)
+
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.common.batch import pack
 from tbmalt.common.maths.interpolation import CubicSpline, PolyInterpU
@@ -83,6 +86,17 @@ def overlaps(device):
             device=device))
     return matrices
 
+
+def repulsive_energies(device):
+    """Repulsive energies for H2, CH4, and C2H2Au2S3.
+
+    Repulsive energy values are in units of Hartree and are computed by the
+    `PairwiseRepulsiveEnergyFeed` class using `DftbpRepulsiveSpline` feeds for each
+    interaction pair. Spline data was sourced from the Auorg parameter set.
+    """
+    # Repulsive energy for H2, CH4, and C2H2Au2S3 in Ha
+    return [*torch.tensor([0.0058374104, 0.0130941359, 47.8705446288],
+                          device=device)]
 
 #########################################
 # tbmalt.physics.dftb.feeds.ScipySkFeed #
@@ -547,9 +561,9 @@ def test_skfoccupationfeed_batch(device, skf_file):
     assert check_2, 'Predicted occupation value errors exceed allowed tolerance'
 
 
-###############################################
+#########################################
 # tbmalt.physics.dftb.feeds.HubbardFeed #
-###############################################
+#########################################
 # General
 def test_hubbardfeed_general(device, skf_file):
 
@@ -657,3 +671,36 @@ def test_hubbardfeed_batch(device, skf_file):
     check_2 = torch.allclose(predicted, reference)
     assert check_2, 'Predicted hubbard value errors exceed allowed tolerance'
 
+
+#################################################
+# tbmalt.physics.dftb.feeds.PairwiseRepulsiveEnergyFeed #
+#################################################
+def test_repulsive_feed_single(device, skf_file: str):
+    repulsive_feed = PairwiseRepulsiveEnergyFeed.from_database(
+        skf_file, species=[1, 6, 16, 79], device=device)
+
+    for mol, e_ref in zip(molecules(device), repulsive_energies(device)):
+        repulsive_energy = repulsive_feed(mol)
+
+        check_1 = repulsive_energy.device == device
+        check_2 = torch.allclose(repulsive_energy, e_ref, rtol=0, atol=1E-10)
+
+        assert check_1, 'Results were places on the wrong device'
+        assert check_2, f'Repulsive energy outside of tolerance (Geometry: {mol})'
+
+
+def test_repulsive_feed_batch(device, skf_file: str):
+    repulsive_feed = PairwiseRepulsiveEnergyFeed.from_database(
+        skf_file, species=[1, 6, 16, 79], device=device)
+
+    mols = reduce(lambda i, j: i+j, molecules(device))
+
+    repulsive_energy = repulsive_feed(mols)
+
+    e_ref = torch.stack(repulsive_energies(device))
+
+    check_1 = repulsive_energy.device == device
+    check_2 = torch.allclose(repulsive_energy, e_ref, rtol=0, atol=1E-10)
+
+    assert check_1, 'Results were places on the wrong device'
+    assert check_2, 'Repulsive energies outside of tolerance (batch)'
