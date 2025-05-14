@@ -6,7 +6,7 @@ from ase.build import molecule
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.physics.dftb import Dftb1, Dftb2
 from tbmalt.physics.dftb.feeds import (SkFeed, SkfOccupationFeed, HubbardFeed,
-                                       RepulsiveEnergyFeed)
+                                       PairwiseRepulsiveEnergyFeed)
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
 
@@ -35,7 +35,7 @@ def feeds_scc(device, skf_file):
     s_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file, species, device=device)
-    r_feed = RepulsiveEnergyFeed.from_database(skf_file, species, device=device)
+    r_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species, device=device)
 
     return h_feed, s_feed, o_feed, u_feed, r_feed
 
@@ -47,7 +47,7 @@ def feeds_scc_siband(device, skf_file_siband):
     s_feed = SkFeed.from_database(skf_file_siband, species, 'overlap', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file_siband, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file_siband, species, device=device)
-    r_feed = RepulsiveEnergyFeed.from_database(skf_file_siband, species, device=device)
+    r_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file_siband, species, device=device)
 
     return h_feed, s_feed, o_feed, u_feed, r_feed
 
@@ -58,7 +58,7 @@ def feeds_scc_pbc(device, skf_file_pbc):
     s_feed = SkFeed.from_database(skf_file_pbc, species, 'overlap', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file_pbc, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file_pbc, species, device=device)
-    r_feed = RepulsiveEnergyFeed.from_database(skf_file_pbc, species, device=device)
+    r_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file_pbc, species, device=device)
 
     return h_feed, s_feed, o_feed, u_feed, r_feed
 

@@ -1003,10 +1003,10 @@ def _atomic_pair_indices_periodic(
 
     # Non-periodic interaction pairs are duplicated so that there is one for
     # every possible periodic image. Although the number of images differs from
-    # system to system, the largest of the batch is taken. This will create may
-    # ghost interactions involving non-existent images for most systems within
-    # a batch. However, these invalid interactions get filtered out by the
-    # neighbour list used just before the yield.
+    # system to system, the largest of the batch is taken. This will create
+    # many ghost interactions involving non-existent images for most systems
+    # within a batch. However, these invalid interactions get filtered out by
+    # the neighbour list used just before the yield.
     n_images = geometry.periodicity.n_cells.max()
 
     # Image index array used when duplicating interactions and adding in image
@@ -1037,7 +1037,7 @@ def _atomic_pair_indices_periodic(
         if should_treat_as_batch:
             idx_p = idx_p[[1, 0, 2, 3]]
 
-        # Remove on-site interactions is requested
+        # Remove on-site interactions if requested
         if ignore_self and pair[0] == pair[1]:
             # Expand origin cells indices for batches of systems
             origin = origin_cell_idx[idx_p[0]] if is_batch else origin_cell_idx

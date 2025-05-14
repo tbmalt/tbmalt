@@ -8,8 +8,8 @@ import numpy as np
 from ase.build import molecule
 
 from tbmalt.physics.dftb.feeds import (
-    ScipySkFeed, SkFeed, SkfOccupationFeed,HubbardFeed, VcrSkFeed,
-    RepulsiveEnergyFeed)
+    ScipySkFeed, SkFeed, SkfOccupationFeed, HubbardFeed, VcrSkFeed,
+    PairwiseRepulsiveEnergyFeed)
 
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.common.batch import pack
@@ -91,7 +91,7 @@ def repulsive_energies(device):
     """Repulsive energies for H2, CH4, and C2H2Au2S3.
 
     Repulsive energy values are in units of Hartree and are computed by the
-    `RepulsiveEnergyFeed` class using `DftbpRepulsiveSpline` feeds for each
+    `PairwiseRepulsiveEnergyFeed` class using `DftbpRepulsiveSpline` feeds for each
     interaction pair. Spline data was sourced from the Auorg parameter set.
     """
     # Repulsive energy for H2, CH4, and C2H2Au2S3 in Ha
@@ -673,10 +673,10 @@ def test_hubbardfeed_batch(device, skf_file):
 
 
 #################################################
-# tbmalt.physics.dftb.feeds.RepulsiveEnergyFeed #
+# tbmalt.physics.dftb.feeds.PairwiseRepulsiveEnergyFeed #
 #################################################
 def test_repulsive_feed_single(device, skf_file: str):
-    repulsive_feed = RepulsiveEnergyFeed.from_database(
+    repulsive_feed = PairwiseRepulsiveEnergyFeed.from_database(
         skf_file, species=[1, 6, 16, 79], device=device)
 
     for mol, e_ref in zip(molecules(device), repulsive_energies(device)):
@@ -690,7 +690,7 @@ def test_repulsive_feed_single(device, skf_file: str):
 
 
 def test_repulsive_feed_batch(device, skf_file: str):
-    repulsive_feed = RepulsiveEnergyFeed.from_database(
+    repulsive_feed = PairwiseRepulsiveEnergyFeed.from_database(
         skf_file, species=[1, 6, 16, 79], device=device)
 
     mols = reduce(lambda i, j: i+j, molecules(device))

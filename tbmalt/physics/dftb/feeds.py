@@ -1900,7 +1900,7 @@ class RepulsiveSplineFeed(Feed):
 
         warnings.warn(
             "The `RepulsiveSplineFeed` class is now deprecated and will be"
-            "removed. Please use the `RepulsiveEnergyFeed` and "
+            "removed. Please use the `PairwiseRepulsiveEnergyFeed` and "
             "`DftbpRepulsiveSpline` classes instead.",
             category=DeprecationWarning)
 
@@ -2416,7 +2416,7 @@ class DftbpRepulsiveSpline(Feed):
             Parameter(r_spline.tail_coef, requires_grad=requires_grad))
 
 
-class RepulsiveEnergyFeed(Feed):
+class PairwiseRepulsiveEnergyFeed(Feed):
     """Sort range repulsive interaction feed for DFTB calculations.
 
     This feed uses distance dependent interpolator feeds to evaluate the
@@ -2500,10 +2500,11 @@ class RepulsiveEnergyFeed(Feed):
             dtype: Optional[torch.dtype] = None):
         """Instantiate instance from an HDF5 database of Slater-Koster files.
 
-        Instantiate a `RepulsiveEnergyFeed` instance for the specified elements
-        using repulsive data contained within a Slater-Koster HDF5 file. More
-        specifically, the repulsive spline coefficients will be parsed and used
-        to construct a series of `DftbpRepulsiveSpline` instances.
+        Instantiate a `PairwiseRepulsiveEnergyFeed` instance for the specified
+        elements using repulsive data contained within a Slater-Koster HDF5
+        file. More specifically, the repulsive spline coefficients will be
+        parsed and used to construct a series of `DftbpRepulsiveSpline`
+        instances.
 
         Arguments:
             path: Path to the HDF5 file from which repulsive splines data
@@ -2517,8 +2518,8 @@ class RepulsiveEnergyFeed(Feed):
             dtype: dtype used by feed object.
 
         Returns:
-            repulsive_energy_feed: An `RepulsiveEnergyFeed` instance with the
-                required repulsive interactions represented using
+            repulsive_energy_feed: An `PairwiseRepulsiveEnergyFeed` instance
+                with the required repulsive interactions represented using
                 `DftbpRepulsiveSpline` instances.
         """
 
