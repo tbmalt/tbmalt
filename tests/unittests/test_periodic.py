@@ -12,7 +12,7 @@ from ase.lattice import cubic, tetragonal, orthorhombic, triclinic, monoclinic, 
 import h5py
 import numpy as np
 from tbmalt import Geometry
-from tbmalt.common.batch import pack
+from tbmalt.common.batch import pack, deflate
 from tests.test_utils import fix_seed
 from tbmalt.data.units import length_units
 
@@ -137,7 +137,9 @@ def periodic_geometry_basic_helper(device, positions, atomic_numbers, lattice):
         for slc in [slice(None, 2), slice(-2, None), slice(None, None, 2)]:
             # Create sliced and reference geometry objects
             geom_slc = geom_1[slc]
-            geom_ref = Geometry(atomic_numbers_ref[slc], positions_ref[slc],
+            atomic_numbers_slice = deflate(atomic_numbers_ref[slc])
+            positions_slice = positions_ref[slc][..., :atomic_numbers_slice.shape[-1], :]
+            geom_ref = Geometry(atomic_numbers_slice, positions_slice,
                                 lattice_ref[slc])
 
             # Loop over and ensure the attributes are the same

@@ -5,30 +5,13 @@ This module implement cell translation for 1D & 2D & 3D periodicity
 boundary conditions. Distance matrix and position vectors for pbc
 will be constructed.
 """
-from typing import Union, Tuple, Optional
+from typing import Union, Optional
 from abc import ABC, abstractmethod
 import torch
+from torch import Tensor
 import numpy as np
-from tbmalt.common.batch import pack, merge, bT, bT2
+from tbmalt.common.batch import pack, bT
 from tbmalt.common import cached_property
-from tbmalt.data.units import length_units
-
-Tensor = torch.Tensor
-
-# Todo (and points to address):
-#   - In order for the caches to be stable and reliable a recursive dependency
-#     is created between the `Geometry` & `Periodicity` classes. While this is
-#     necessary in the short-term, one might consider extending the `Geometry`
-#     `Geometry` class so that it, or a child class, incorporates the required
-#     functionality.
-#   - Does having different extensions for both the positive and negative
-#     provide any real advantage, or can we get away with a single value.
-#   - Why can't the cell search be modified to account for the issues that are
-#     addressed but the positive and negative extensions?
-#   - The cutoff value is modified within the init method as soon as it is
-#     provided to the class by the user. This can create unexpected behaviour.
-#     The user and external code should be responsible for specifying the exact
-#     cutoff value.
 
 
 class Periodicity(ABC):
@@ -45,19 +28,23 @@ class Periodicity(ABC):
             and lattice parameters are to be sourced.
         cutoff: Interaction cutoff distance for reading SK table, with Bohr
             as default unit.
-
-    Keyword Arguments:
-        distance_extension: Extension of cutoff in SK tables to smooth tails.
-        positive_extension: Extension for the positive lattice vectors.
-        negative_extension: Extension for the negative lattice vectors.
+        tail_distance: distance by which the ``cutoff`` should be extended
+            to account for the tail commonly added to interactions to smootly
+            bring them to zero. Pratically speaking, the "true" cutoff distance
+            is taken to be ``cutoff`` + ``tail_distance`` in most sittuations.
+            However, the two values are still kept seperate for the time
+            being.
+        positive_extension: when identifying the set of neighbouring cell
+            images within the cutoff range the ``positive_extension``
+            indicates how many "extra" images should be included along
+            the positive direction. This is normally at least "1" to account
+            for rounding caused by the floor operation.
+        negative_extension: same as ``positive_extension``, but for the
+            negative latice vector direction. Again, this should normally
+            be at least one.
 
     Attributes:
-        cutoff: Global cutoff for the diatomic interactions.
-        cellvec: Cell translation vectors in relative coordinates.
-        rcellvec: Cell translation vectors in absolute units.
-        n_cells: Number of lattice cells.
-        positions_vec: Position vector matrix between atoms in different cells.
-        periodic_distances: Distance matrix between atoms in different cells.
+        geometry: the associated `Geometry` instance.
 
     Notes:
         This class make extensive use of cached properties and thus may use
@@ -68,37 +55,37 @@ class Periodicity(ABC):
         systems and mixing of different types of pbc is forbidden.
 
     Examples:
+        >>> import torch
         >>> from tbmalt import Periodicity, Geometry
         >>> geometry = Geometry(torch.tensor([1, 1]), torch.rand(2,3))
-        >>> H2 = Periodicity(
-        >>>     geometry, torch.tensor(
-        >>>         [[0.00, 0.00, 0.00], [0.00, 0.00, 0.79]]),
-        >>>     torch.tensor(2), torch.eye(3) * 3, 2.0)
-        >>> print(H2.positions_vec.shape)
+        >>> pbc = Periodicity(geometry, 2.0)
+        >>> print(pbc.positions_vec.shape)
         torch.Size([125, 2, 2, 3])
 
     """
     def __init__(
             self, geometry: "Geometry", cutoff: Union[Tensor, float],
-            **kwargs):
-
+            tail_distance: float = 1.0, positive_extension: int = 1,
+            negative_extension: int = 1):
 
         self.geometry = geometry
 
-        geometry.lattice, self._cutoff = self._check(geometry.lattice, cutoff, **kwargs)
+        cutoff = self._check(geometry.lattice, cutoff)
+
+        self._base_cutoff = cutoff
 
         # Intrinsic state attributes
         self._device = self.lattice.device
         self._dtype = self.lattice.dtype
 
         # Extensions for lattice vectors
-        self._positive_extension = kwargs.get('positive_extension', 1)
-        self._negative_extension = kwargs.get('negative_extension', 1)
+        self._positive_extension = positive_extension
+        self._negative_extension = negative_extension
 
-        dist_ext = kwargs.get('distance_extension', 1.0)
+        self._tail_distance = tail_distance
 
         # Global cutoff for the diatomic interactions
-        self._cutoff: Tensor = self._cutoff + dist_ext
+        self._cutoff: Tensor = cutoff + self._tail_distance
 
         # Note that this is set within the `cellvec` property method.
         self._n_cells = None
@@ -108,6 +95,22 @@ class Periodicity(ABC):
         """Global cutoff for the diatomic interactions."""
         return self._cutoff
 
+    @property
+    def base_cutoff(self) -> Tensor:
+        "Cutoff value without the smooth tail distance extension."
+        return self._base_cutoff
+
+    @property
+    def positive_extension(self):
+        return self._positive_extension
+
+    @property
+    def negative_extension(self):
+        return self._negative_extension
+
+    @property
+    def tail_distance(self):
+        return self._tail_distance
     @property
     def positions(self):
         return self.geometry.positions
@@ -303,14 +306,15 @@ class Periodicity(ABC):
         return self.inverse_lattice_vector(
             self.lattice, n_batch=self._n_batch, mask_zero=self._mask_zero)
 
-    def _check(self, latvec, cutoff, **kwargs) -> Tuple[Tensor, Tensor]:
+    def _check(self, latvec: Tensor, cutoff: Union[Tensor, float]) -> Tensor:
         """Check dimension, type of lattice vector and cutoff."""
-        # Default lattice vector is from geometry, thus default unit is bohr
-        unit = kwargs.get('unit', 'bohr')
 
-        # Lattice vectors can still be updated
-        if isinstance(latvec, list):
-            latvec = pack(latvec)
+        # Lattice vector packing is not necessary here for the same reasons
+        # outlined above at the end of this function.
+
+        # # Lattice vectors can still be updated
+        # if isinstance(latvec, list):
+        #     latvec = pack(latvec)
 
         # Check the shape of lattice vectors
         if latvec.ndim < 2 or latvec.ndim > 3:
@@ -319,11 +323,6 @@ class Periodicity(ABC):
         # Check the format of cutoff
         if type(cutoff) is float:
             cutoff = torch.tensor([cutoff])
-            if cutoff.ndim == 0:
-                cutoff = cutoff.unsqueeze(0)
-            elif cutoff.ndim >= 2:
-                raise ValueError(
-                    'cutoff should be 0, 1 dimension tensor or float')
         elif type(cutoff) is Tensor:
             if cutoff.ndim == 0:
                 cutoff = cutoff.unsqueeze(0)
@@ -333,11 +332,20 @@ class Periodicity(ABC):
         elif type(cutoff) is not float:
             raise TypeError('cutoff should be tensor or float')
 
-        if unit != 'bohr':
-            latvec = latvec * length_units[unit]
-            cutoff = cutoff * length_units[unit]
+        # Unit conversion within `Periodicity` entities disabled for now.
+        # Currently, instances are only created from within the `Geometry`
+        # class which already performs the unit conversion. Furthermore,
+        # it would be best not to modify the `Geometry` instance when
+        # creating a new `Periodicity` object. This will get cleaned up
+        # later when the two classes are decoupled.
 
-        return latvec, cutoff
+        # # Default lattice vector is from geometry, thus default unit is bohr
+        # unit = kwargs.get('unit', 'bohr')
+        # if unit != 'bohr':
+        #     latvec = latvec * length_units[unit]
+        #     cutoff = cutoff * length_units[unit]
+
+        return cutoff
 
     @staticmethod
     def get_cell_translation_vectors(
@@ -441,6 +449,12 @@ class Periodicity(ABC):
         """Get the angles' alpha, beta and gamma of lattice vectors."""
         pass
 
+    @property
+    @abstractmethod
+    def pbc(self) -> Tensor:
+        """Directions along which the system is deemed to be periodic."""
+        pass
+
 
 class Triclinic(Periodicity):
     """Represents PBC systems that can be described by three basis vectors.
@@ -451,35 +465,45 @@ class Triclinic(Periodicity):
     systems that can be described using three basis vectors.
 
     Arguments:
-        positions: Coordinates of the atoms in the central cell.
-        lattice: Lattice vector, with Bohr as default unit.
+        geometry: Geometry object from which informaiton like atomic positions
+            and lattice parameters are to be sourced.
         cutoff: Interaction cutoff distance for reading SK table, with Bohr
             as default unit.
-
-    Keyword Arguments:
-        distance_extension: Extension of cutoff in SK tables to smooth tails.
-        positive_extension: Extension for the positive lattice vectors.
-        negative_extension: Extension for the negative lattice vectors.
+        tail_distance: distance by which the ``cutoff`` should be extended
+            to account for the tail commonly added to interactions to smootly
+            bring them to zero. Pratically speaking, the "true" cutoff distance
+            is taken to be ``cutoff`` + ``tail_distance`` in most sittuations.
+            However, the two values are still kept seperate for the time
+            being.
+        positive_extension: when identifying the set of neighbouring cell
+            images within the cutoff range the ``positive_extension``
+            indicates how many "extra" images should be included along
+            the positive direction. This is normally at least "1" to account
+            for rounding caused by the floor operation.
+        negative_extension: same as ``positive_extension``, but for the
+            negative latice vector direction. Again, this should normally
+            be at least one.
 
     Attributes:
-        positions: Coordinates of the atoms in the central cell.
-        lattice: Lattice vector.
-        cutoff: Global cutoff for the diatomic interactions.
-        cellvec: Cell translation vectors in relative coordinates.
-        rcellvec: Cell translation vectors in absolute units.
-        n_cells: Number of lattice cells.
-        positions_vec: Position vector matrix between atoms in different cells.
-        periodic_distances: Distance matrix between atoms in different cells.
+        geometry: the associated `Geometry` instance.
 
     """
 
-    def __init__(self, geometry,
-                 cutoff: Union[Tensor, float], **kwargs):
-        super().__init__(geometry, cutoff, **kwargs)
+    def __init__(
+            self, geometry: "Geometry", cutoff: Union[Tensor, float],
+            tail_distance: float = 1.0, positive_extension: int = 1,
+            negative_extension: int = 1):
+        super().__init__(
+            geometry, cutoff, tail_distance=tail_distance,
+            positive_extension=positive_extension,
+            negative_extension=negative_extension)
 
     @property
-    def pbc(self):
-        """Check the format of lattice vectors and other cell information."""
+    def pbc(self) -> Tensor:
+        """Directions along which the system is deemed to be periodic."""
+
+        # This will also check the format of lattice vectors and other cell
+        # information
 
         n_batch: Optional[int] = (None if self.lattice.ndim == 2
                                   else len(self.lattice))
