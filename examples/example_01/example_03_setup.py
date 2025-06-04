@@ -1,43 +1,32 @@
-from os.path import join
-import urllib, tempfile, tarfile
+from os.path import exists, join
+import urllib, tempfile, zipfile
+import shutil
 
-import torch
-
-from tbmalt.io.skf import VCRSkf
-torch.set_default_dtype(torch.float64)
+from tbmalt.tools.downloaders import download_dftb_parameter_set
 
 
-def skf_file(output_path: str):
-    """Download VCR dataset."""
+# Location at which the DFTB parameter set database is located
+parameter_db_path = 'example_dftb_parameters.h5'
 
-    link = 'https://seafile.zfn.uni-bremen.de/f/82656301e2bb4d4a8d77/?dl=1'
+# Ensure that the DFTB parameter set database actually exists first.
+if not exists(parameter_db_path):
+    download_dftb_parameter_set(
+        "https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz",
+        parameter_db_path)
 
-    # Elements of interest
-    elements = ['H', 'C', 'N', 'O']
-    compr = ['01.00', '01.50', '02.00', '02.50', '03.00', '03.50', '04.00',
-             '04.50', '05.00', '06.00', '08.00', '10.00']
+# Link to the training data
+link = 'https://zenodo.org/records/15592694/files/tbmalt_data.zip?download=1'
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+# Download the data
+with tempfile.TemporaryDirectory() as tmpdir:
+    output_file = join(tmpdir, 'data.zip')
+    req = urllib.request.Request(link)
+    with urllib.request.urlopen(req) as response, open(output_file, 'wb') as out_file:
+        out_file.write(response.read())
 
-        # Download and extract the auorg parameter set to the temporary directory
-        urllib.request.urlretrieve(link, path := join(tmpdir, 'compr_wav.tar.gz'))
+    # Extract the data
+    with zipfile.ZipFile(output_file, 'r') as zip_ref:
+        zip_ref.extractall(tmpdir)
 
-        with tarfile.open(path, 'r:gz') as tar:
-            tar.extractall(tmpdir)
-
-        # Select the relevant skf files and place them into an HDF5 database
-        skf_files = [join(tmpdir, 'compr_wav', f'{i}-{j}.skf.{ic}.{jc}')
-                     for i in elements for j in elements
-                     for ic in compr for jc in compr]
-
-        # for skf_file in skf_files:
-        VCRSkf.from_dir(join(tmpdir, 'compr_wav'), output_path)
-
-
-# STEP 1: Inputs
-parameter_db_path = "example_dftb_vcr.h5"
-
-# STEP 2: Execution
-skf_file(parameter_db_path)
-
-
+    shutil.copyfile(join(tmpdir, 'data/dataset.h5'), './dataset.h5')
+    shutil.copyfile(join(tmpdir, 'data/example_dftb_vcr.h5'), './example_dftb_vcr.h5')

@@ -1168,6 +1168,8 @@ class VcrSkFeed(IntegralFeed):
         compression_radii: A torch `Parameter` instance specifying the
             compression radius of each atom in the target system. Note that
             this must be manually set for each target system before each call.
+        is_local_onsite: `is_local_onsite` allows for constructing chemical
+            environment dependent on-site energies.
 
     Warnings:
         It is critical to note that this class is a work in progress with many
@@ -1224,6 +1226,7 @@ class VcrSkFeed(IntegralFeed):
         self._off_sites = off_sites
 
         self.compression_radii = Optional[Parameter]
+        self.is_local_onsite = False
 
     @property
     def on_sites(self) -> ParameterDict[str, Parameter]:
@@ -1297,6 +1300,7 @@ class VcrSkFeed(IntegralFeed):
         compression_radii = torch.stack([
             self.compression_radii[*bT2(atomic_idx_1)],
             self.compression_radii[*bT2(atomic_idx_2)]]).T
+        # print(compression_radii)
 
         # Work out the width of each sub-block then use it to get the row and
         # column index slicers for placing sub-blocks into their atom-blocks.
@@ -1399,7 +1403,11 @@ class VcrSkFeed(IntegralFeed):
 
         # Construct the on-site blocks (if any are present)
         if any(on_site):
-            blks[on_site] = torch.diag(self.on_sites[str(z_1.item())][mask_shell])
+            if not self.is_local_onsite:
+                blks[on_site] = torch.diag(self.on_sites[str(z_1.item())][mask_shell])
+            else:
+                blks[on_site] = torch.diag_embed(
+                    self.on_sites[str(z_1.item())], dim1=-2, dim2=-1)
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
@@ -1428,6 +1436,7 @@ class VcrSkFeed(IntegralFeed):
     def from_database(
             cls, path: str, species: List[int],
             target: Literal['hamiltonian', 'overlap'],
+            requires_grad_onsite: bool = False,
             dtype: Optional[torch.dtype] = None,
             device: Optional[torch.device] = None) -> 'VcrSkFeed':
         r"""Instantiate instance from an HDF5 database of Slater-Koster files.
@@ -1440,6 +1449,10 @@ class VcrSkFeed(IntegralFeed):
             species: Integrals will only be loaded for the requested species.
             target: Specifies which integrals should be loaded, options are
                 "hamiltonian" and "overlap".
+            requires_grad_onsite: When set to `True` gradient tracking will be
+                enabled for the on-site parameters. This flag is ignored for
+                the overlap matrix case as its on-site terms are always unity.
+                [DEFAULT=`False`]
             device: Device on which the feed object and its contents resides.
             dtype: dtype used by feed object.
 
@@ -1485,13 +1498,15 @@ class VcrSkFeed(IntegralFeed):
                 # Repeated so there's 1 value per orbital not just per shell.
                 on_sites_vals = Parameter(
                     skf.on_sites.repeat_interleave(
-                        torch.arange(len(skf.on_sites), device=device) * 2 + 1))
+                        torch.arange(len(skf.on_sites), device=device) * 2 + 1),
+                    requires_grad=requires_grad_onsite)
 
                 if target == 'overlap':  # use an identity matrix for S
                     # Auto-grad tracking is always disabled as the values can
                     # never be anything other than one.
                     on_sites_vals = Parameter(
-                        torch.ones_like(on_sites_vals, dtype=dtype, device=device))
+                        torch.ones_like(on_sites_vals, dtype=dtype, device=device),
+                        requires_grad=False)
 
                 on_sites[str(pair[0])] = on_sites_vals
 
@@ -1929,9 +1944,9 @@ class RepulsiveSplineFeed(Feed):
             Erep: The repulsive energy of the Geometry object(s).
         """
         batch_size, indxs, indx_pairs, normed_distance_vectors = self._calculation_prep(geo)
-        
+
         Erep = torch.zeros((batch_size), device=self.device, dtype=self.dtype)
-        
+
         for indx_pair in indx_pairs:
             atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
             atomnum2 = geo.atomic_numbers[..., indx_pair[1]].reshape((batch_size, ))
@@ -1958,9 +1973,9 @@ class RepulsiveSplineFeed(Feed):
             dErep: The gradient of the repulsive energy.
         """
         batch_size, indxs, indx_pairs, normed_distance_vectors = self._calculation_prep(geo)
-        
+
         dErep = torch.zeros((batch_size, geo.atomic_numbers.size(dim=-1), 3), device=self.device, dtype=self.dtype)
-        
+
         for indx_pair in indx_pairs:
             atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
             atomnum2 = geo.atomic_numbers[..., indx_pair[1]].reshape((batch_size, ))
@@ -2038,10 +2053,10 @@ class RepulsiveSplineFeed(Feed):
             else:
                 return self._exponential_head(distance, spline.exp_coef, grad=grad)
         return torch.tensor(0.0, dtype=self.dtype, device=self.device)
-   
+
     @classmethod
     def _exponential_head(cls, distance: Tensor, coeffs: Tensor, grad: bool = False) -> Tensor:
-        r"""Exponential head calculation of the repulsive spline. 
+        r"""Exponential head calculation of the repulsive spline.
 
         Arguments:
             distance: The distance between the two atoms.
@@ -2059,7 +2074,7 @@ class RepulsiveSplineFeed(Feed):
         else:
             return -a1*torch.exp(-a1*distance + a2)
 
-    @classmethod 
+    @classmethod
     def _spline(cls, distance: Tensor, start: Tensor, coeffs: Tensor, grad: bool = False) -> Tensor:
         r"""3rd order polynomial Spline calculation of the repulsive spline.
 
@@ -2080,7 +2095,7 @@ class RepulsiveSplineFeed(Feed):
             denergy = coeffs[1] + 2*coeffs[2]*rDiff + 3*coeffs[3]*rDiff**2
             return denergy
 
-    @classmethod 
+    @classmethod
     def _tail(cls, distance: Tensor, start: Tensor, coeffs: Tensor, grad: bool = False) -> Tensor:
         r"""5th order polynomial trailing tail calculation of the repulsive spline.
 
@@ -2088,7 +2103,7 @@ class RepulsiveSplineFeed(Feed):
             distance: The distance between the two atoms.
             start: The start of the trailing tail segment.
             coeffs: The coefficients of the polynomial.
-        
+
         Returns:
             energy: The energy value of the tail.
                 The energy is calculated as :math:`coeffs[0] + coeffs[1]*(distance - start) + coeffs[2]*(distance - start)^2 + coeffs[3]*(distance - start)^3 + coeffs[4]*(distance - start)^4 + coeffs[5]*(distance - start)^5`.
@@ -2586,4 +2601,3 @@ class PairwiseRepulsiveEnergyFeed(Feed):
                 f"like '(1, 6)'.")
 
             raise ValueError('\n'.join(errors))
-

@@ -116,7 +116,7 @@ class DataSetIM(DataSet):
         else:
             # To make life easier it is converted to a numpy array for the
             # duration of the slicing operation.
-            labels = list(np.asarray(self.labels)[idx])
+            labels = list(np.asarray(self.labels, dtype=object)[idx])
 
         return self.__class__(
             self.geometry[idx],
