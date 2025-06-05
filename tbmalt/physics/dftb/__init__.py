@@ -1084,7 +1084,7 @@ class Dftb2(Calculator):
     def invr(self):
         """1/R matrix"""
         if self._invr is None:
-            if self.geometry.periodicity is not None:
+            if self.geometry.is_periodic:
                 self._invr = build_coulomb_matrix(self.geometry,
                                                   method=self.coulomb_scheme)
             else:
@@ -1573,7 +1573,7 @@ class Dftb2(Calculator):
             q_in: Tensor, q_zero: Tensor, core_hamiltonian: Tensor,
             overlap: Tensor, gamma: Tensor, orbs: OrbitalInfo,
             n_electrons: float_like, filling_temp: float_like = 0.0,
-            filling_scheme: Optional[Scheme] = fermi_smearing, **kwargs
+            filling_scheme: Scheme = fermi_smearing, **kwargs
         ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
         """Perform a single self-consistent charge cycle step.
 
@@ -1644,25 +1644,12 @@ class Dftb2(Calculator):
             occupancy = aufbau_filling(eig_values, n_electrons,
                                        e_mask=e_mask) * scale_factor
 
-        # The density matrix is constructed via a two-step approach, similar to
-        # that used in DFTB+. This is done to avoid gradient instabilities that
-        # arise as a result of taking the square root of zeros within the eigen
-        # vector scaling step. While an occupancy value of zero is valid, the
-        # derivative of square root is not. Thus, padding must be applied to these
-        # values during evaluation, and compensated for later on.
-
-        # Somewhat arbitrary offset needed to ensure occupancies are non-zero
-        smallest_occupancy = torch.min(occupancy)
-        offset = smallest_occupancy - 0.1
-
-        # Scaled occupancy values (including offset)
+        # Scaled occupancy values
         s_occs = torch.einsum(
-            '...i,...ji->...ji', torch.sqrt(occupancy - offset), eig_vectors)
+            '...i,...ji->...ji', torch.sqrt(occupancy), eig_vectors)
 
-        # First the density matrix without occupancy scaling is computed. This is
-        # then added to the scaled density matrix, which includes the offset.
-        rho = eig_vectors @ eig_vectors.transpose(-1, -2).conj()
-        rho = (s_occs @ s_occs.transpose(-1, -2).conj()) + offset * rho
+        # Density matrix
+        rho = s_occs @ s_occs.transpose(-1, -2).conj()
 
         # Compute the new charges
         q_out = _mulliken(rho, overlap, orbs)
