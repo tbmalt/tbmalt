@@ -1,5 +1,4 @@
 import os
-from os.path import exists
 from typing import Any, List
 
 import torch
@@ -13,7 +12,6 @@ import numpy as np
 import h5py
 
 from tbmalt import Geometry, OrbitalInfo
-from tbmalt.ml.module import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.maths.interpolation import CubicSpline
@@ -41,10 +39,12 @@ torch.set_printoptions(6, profile='full')
 
 # 1.1: System settings
 # --------------------
+# To reproduce the results shown in tbmalt paper, training_size should be 30,
+# testing_size should be 20, and number_of_epochs should be 500.
 
 # Provide a list of systems upon which TBMaLT is to be run
-training_size = 30
-testing_size = 20
+training_size = 3
+testing_size = 2
 targets = ['dos']
 
 # Provide information about the orbitals on each atom; this is keyed by atomic
@@ -69,8 +69,8 @@ fit_model = True
 test = True
 
 # Number of fitting cycles, number of batch size each cycle
-number_of_epochs = 500
-n_batch = 5
+number_of_epochs = 5
+n_batch = 1
 
 # learning rate
 lr = 0.000005
@@ -91,11 +91,11 @@ points = torch.linspace(-3.3, 1.6, 491)
 
 # Load the Hamiltonian feed model
 h_feed = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation='spline', requires_grad=True)
+                              interpolation=CubicSpline)
 
 # Load the overlap feed model
 s_feed = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation='spline', requires_grad=True)
+                              interpolation=CubicSpline)
 
 # Load the occupation feed object
 o_feed = SkfOccupationFeed.from_database(parameter_db_path, species)
@@ -270,8 +270,9 @@ def dftb_results(numbers, positions, cells, h_feed_n, s_feed_n, **kwargs):
 
     # Build objects for DFTB calculaitons
     dftb_calculator = Dftb2(h_feed_n, s_feed_n, o_feed, u_feed,
-                            suppress_scc_error=True, **kwargs)
-    dftb_calculator(geometry, orbs)
+                            suppress_scc_error=True, filling_scheme=None,
+                            filling_temp=None, **kwargs)
+    dftb_calculator(geometry, orbs, grad_mode="direct")
 
     return dftb_calculator
 
@@ -288,6 +289,11 @@ class DFTB_DDP(nn.Module):
 
     def __init__(self):
         super(DFTB_DDP, self).__init__()
+        # Define parameters to optimize
+        for key in h_feed._off_sites.keys():
+            # Collect spline parameters and add to optimizer
+            h_feed._off_sites[key].coefficients.requires_grad_(True)
+            s_feed._off_sites[key].coefficients.requires_grad_(True)
         h_var = [val.coefficients for key, val in h_feed._off_sites.items()]
         s_var = [val.coefficients for key, val in s_feed._off_sites.items()]
         variable = h_var + s_var
@@ -297,27 +303,28 @@ class DFTB_DDP(nn.Module):
 
     def forward(self, data):
         h_feed_p = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation='spline', requires_grad=True)
+                              interpolation=CubicSpline)
         s_feed_p = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                              interpolation='spline', requires_grad=True)
+                              interpolation=CubicSpline)
         var = list(self.parameters())
         h_var_u = var[:len(var)//2]
         s_var_u = var[len(var)//2:]
-        ii = 0
-        for key, val in h_feed_p._off_sites.items():
-            val.coefficients = h_var_u[ii]
-            ii = ii + 1
-        ii = 0
-        for key, val in s_feed_p._off_sites.items():
-            val.coefficients = s_var_u[ii]
-            ii = ii + 1
+        for key in h_feed_p._off_sites.keys():
+            # Collect spline parameters and add to optimizer
+            h_feed_p._off_sites[key].coefficients.requires_grad_(True)
+            s_feed_p._off_sites[key].coefficients.requires_grad_(True)
+
+        for val, var in zip(h_feed_p._off_sites.values(), h_var_u):
+            val._coefficients = var
+        for val, var in zip(s_feed_p._off_sites.values(), s_var_u):
+            val._coefficients = var
 
         scc = dftb_results(data['number'], data['position'],
                            data['lattice'], h_feed_p, s_feed_p)
         fermi_dftb = getattr(scc, 'homo_lumo').mean(dim=-1) / energy_units['ev']
         energies_dftb = fermi_dftb.unsqueeze(-1) + points.unsqueeze(
             0).repeat_interleave(n_batch, 0)
-        dos_dftb = dos((getattr(scc, 'eigenvalue')) / energy_units['ev'],
+        dos_dftb = dos((getattr(scc, 'eig_values')) / energy_units['ev'],
                        energies_dftb, 0.09)
         return dos_dftb
 
@@ -362,20 +369,22 @@ def main(rank, world_size, dataset_train, dataset_test, data_train_dos):
         print(update_para, file=open('./result/coefficients.txt', "w"))
         if test:
             h_feed_p = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                              interpolation='spline', requires_grad=True)
+                                  interpolation=CubicSpline)
             s_feed_p = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                                  interpolation='spline', requires_grad=True)
+                                  interpolation=CubicSpline)
             var = list(model.parameters())
             h_var_u = var[:len(var)//2]
             s_var_u = var[len(var)//2:]
-            ii = 0
-            for key, val in h_feed_p._off_sites.items():
-                val.coefficients = h_var_u[ii]
-                ii = ii + 1
-            ii = 0
-            for key, val in s_feed_p._off_sites.items():
-                val.coefficients = s_var_u[ii]
-                ii = ii + 1
+            for key in h_feed_p._off_sites.keys():
+                # Collect spline parameters and add to optimizer
+                h_feed_p._off_sites[key].coefficients.requires_grad_(True)
+                s_feed_p._off_sites[key].coefficients.requires_grad_(True)
+
+            for val, var in zip(h_feed_p._off_sites.values(), h_var_u):
+                val._coefficients = var
+            for val, var in zip(s_feed_p._off_sites.values(), s_var_u):
+                val._coefficients = var
+
             test(0, 1, dataset_test, h_feed_p, s_feed_p)
 
 
@@ -399,7 +408,7 @@ def test(rank, world_size, test_dataset, h_feed_p, s_feed_p):
                                 data['lattice'], h_feed_p, s_feed_p)
         hl_pred = getattr(scc_pred, 'homo_lumo').detach() / energy_units['ev']
         hl_pred_tot.append(hl_pred)
-        eigval_pred = getattr(scc_pred, 'eigenvalue').detach() / energy_units['ev']
+        eigval_pred = getattr(scc_pred, 'eig_values').detach() / energy_units['ev']
         dos_pred = dos((eigval_pred), energies_test, 0.09)
         f = open('./result/test/Pred_homo_lumo' + str(ibatch + 1) + '.dat', 'w')
         np.savetxt(f, hl_pred)
@@ -434,15 +443,15 @@ def test(rank, world_size, test_dataset, h_feed_p, s_feed_p):
     # DFTB
     # Build new feeds
     h_feed_o = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',
-                                    interpolation='spline')
+                                    interpolation=CubicSpline)
     s_feed_o = SkFeed.from_database(parameter_db_path, species, 'overlap',
-                                    interpolation='spline')
+                                    interpolation=CubicSpline)
     for ibatch, data in enumerate(test_data):
         scc_dftb = dftb_results(data['number'], data['position'],
                                 data['lattice'], h_feed_o, s_feed_o)
         hl_dftb = getattr(scc_dftb, 'homo_lumo').detach() / energy_units['ev']
         hl_dftb_tot.append(hl_dftb)
-        eigval_dftb = getattr(scc_dftb, 'eigenvalue').detach() / energy_units['ev']
+        eigval_dftb = getattr(scc_dftb, 'eig_values').detach() / energy_units['ev']
         dos_dftb = dos((eigval_dftb), energies_test, 0.09)
         f = open('./result/test/dftb_homo_lumo' + str(ibatch + 1) + '.dat', 'w')
         np.savetxt(f, hl_dftb)
@@ -477,7 +486,7 @@ def test(rank, world_size, test_dataset, h_feed_p, s_feed_p):
 
 if __name__ == '__main__':
     # The number of processes to spawn.
-    world_size = 6
+    world_size = 3
 
     # Read dataset
     dataset_train, dataset_test, data_train_dos = prepare_data(target_run)
