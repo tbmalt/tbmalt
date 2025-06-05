@@ -348,7 +348,7 @@ class ScipySkFeed(IntegralFeed):
                            device=self.device)
 
         # Identify which are on-site blocks and which are off-site
-        on_site = self._partition_blocks(atomic_idx_1, atomic_idx_2)
+        on_site = self.partition_blocks(atomic_idx_1, atomic_idx_2)
         mask_shell = torch.zeros_like(self.on_sites[int(z_1)]).bool()
         mask_shell[:(torch.arange(len(orbs.shell_dict[int(z_1)]))
                      * 2 + 1).sum()] = True
@@ -867,7 +867,7 @@ class SkFeed(IntegralFeed):
                            device=self.device)
 
         # Identify which are on-site blocks and which are off-site
-        on_site = self._partition_blocks(atomic_idx_1, atomic_idx_2)
+        on_site = self.partition_blocks(atomic_idx_1, atomic_idx_2)
         mask_shell = torch.zeros_like(self.on_sites[str(z_1.item())]).bool()
         mask_shell[:(torch.arange(len(orbs.shell_dict[z_1.item()]))
                      * 2 + 1).sum()] = True
@@ -878,14 +878,14 @@ class SkFeed(IntegralFeed):
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
-            if geometry.periodicity is not None:
+            if geometry.is_periodic:
                 _on_site = self._pe_blocks(
                     atomic_idx_1[on_site], atomic_idx_2[on_site],
                     geometry, orbs, geometry.periodicity, onsite=True)
                 blks[on_site] = blks[on_site] + _on_site
 
         if any(~on_site):  # Then the off-site blocks
-            if geometry.periodicity is None:
+            if not geometry.is_periodic:
                 blks[~on_site] = self._off_site_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
                     geometry, orbs)
@@ -1395,7 +1395,7 @@ class VcrSkFeed(IntegralFeed):
                            device=self.device)
 
         # Identify which are on-site blocks and which are off-site
-        on_site = self._partition_blocks(atomic_idx_1, atomic_idx_2)
+        on_site = self.partition_blocks(atomic_idx_1, atomic_idx_2)
         mask_shell = torch.zeros_like(self.on_sites[str(z_1.item())]).bool()
         mask_shell[:(torch.arange(len(orbs.shell_dict[z_1.item()]))
                      * 2 + 1).sum()] = True
