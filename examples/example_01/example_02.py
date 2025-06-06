@@ -114,13 +114,11 @@ species = species[species != 0].tolist()
 
 # Load the Hamiltonian feed model
 h_feed = SkFeed.from_database(
-    parameter_db_path, species, 'hamiltonian', interpolation=CubicSpline,
-    requires_grad_offsite=True)
+    parameter_db_path, species, 'hamiltonian', interpolation=CubicSpline)
 
 # Load the overlap feed model
 s_feed = SkFeed.from_database(
-    parameter_db_path, species, 'overlap', interpolation=CubicSpline,
-    requires_grad_offsite=True)
+    parameter_db_path, species, 'overlap', interpolation=CubicSpline)
 
 # Load the occupation feed object
 o_feed = SkfOccupationFeed.from_database(parameter_db_path, species)
@@ -132,14 +130,22 @@ u_feed = HubbardFeed.from_database(parameter_db_path, species)
 # ---------------------------------------------
 # As this is a minimal working example, no optional settings are provided to the
 # calculator object.
-dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed)
+dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed,
+                        filling_scheme=None, filling_temp=None)
 
 # Construct machine learning object
 lr = 0.003
 criterion = getattr(torch.nn, 'MSELoss')(reduction='mean')
-h_var = [val.coefficients for key, val in h_feed._off_sites.items()]
-s_var = [val.coefficients for key, val in s_feed._off_sites.items()]
-optimizer = getattr(torch.optim, 'Adam')(h_var + s_var, lr=lr)
+h_var, s_var = [], []
+for key in h_feed._off_sites.keys():
+
+    # Collect spline parameters and add to optimizer
+    h_feed._off_sites[key].coefficients.requires_grad_(True)
+    s_feed._off_sites[key].coefficients.requires_grad_(True)
+    h_var.append({'params': h_feed._off_sites[key].coefficients, 'lr': lr})
+    s_var.append({'params': s_feed._off_sites[key].coefficients, 'lr': lr})
+
+optimizer = torch.optim.Adam(h_var + s_var, lr=lr)
 
 
 # ================= #
@@ -186,7 +192,7 @@ if fit_model:
         orbs = OrbitalInfo(data.geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
         # Perform the forwards operation
-        dftb_calculator(data.geometry, orbs)
+        dftb_calculator(data.geometry, orbs, grad_mode="direct")
 
         # Calculate the loss
         loss = calculate_losses(dftb_calculator, data)
