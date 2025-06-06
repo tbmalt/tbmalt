@@ -111,7 +111,7 @@ for key in h_feed._off_sites.keys():
     h_var.append({'params': h_feed._off_sites[key].coefficients, 'lr': lr})
     s_var.append({'params': s_feed._off_sites[key].coefficients, 'lr': lr})
 
-optimizer = getattr(torch.optim, 'Adam')(h_var + s_var, lr=lr)
+optimizer = torch.optim.Adam(h_var + s_var, lr=lr)
 
 
 def load_target_data(molecules: Geometry, path: str

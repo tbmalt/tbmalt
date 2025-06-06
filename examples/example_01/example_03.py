@@ -187,7 +187,7 @@ def build_optim(dftb_calculator, dataloder, global_r):
                     n_atoms).requires_grad_(True)})
                 ml_onsite.append({'params': onsite_dict[(key, l)], 'lr': onsite_lr})
 
-        optimizer = getattr(torch.optim, 'Adam')(
+        optimizer = torch.optim.Adam(
             [{'params': comp_r, 'lr': lr}] + ml_onsite, lr=lr)
 
         return comp_r, onsite_dict, optimizer
@@ -203,7 +203,7 @@ def build_optim(dftb_calculator, dataloder, global_r):
                 onsite_dict.update({(key, l): val[int(l ** 2)].detach().clone()})
                 ml_onsite.append({'params': onsite_dict[(key, l)].requires_grad_(), 'lr': onsite_lr})
 
-        optimizer = getattr(torch.optim, 'Adam')(
+        optimizer = torch.optim.Adam(
             [{'params': comp_r0, 'lr': lr}] + ml_onsite, lr=lr)
         return comp_r0, onsite_dict, optimizer
 

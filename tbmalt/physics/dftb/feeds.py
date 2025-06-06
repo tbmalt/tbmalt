@@ -1300,7 +1300,6 @@ class VcrSkFeed(IntegralFeed):
         compression_radii = torch.stack([
             self.compression_radii[*bT2(atomic_idx_1)],
             self.compression_radii[*bT2(atomic_idx_2)]]).T
-        # print(compression_radii)
 
         # Work out the width of each sub-block then use it to get the row and
         # column index slicers for placing sub-blocks into their atom-blocks.

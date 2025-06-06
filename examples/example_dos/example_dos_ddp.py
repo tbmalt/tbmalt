@@ -337,7 +337,7 @@ def main(rank, world_size, dataset_train, dataset_test, data_train_dos):
     device = torch.device("cpu")
     model = DFTB_DDP()
     ddp_model = DDP(model.to(device))
-    optimizer = getattr(torch.optim, 'Adam')(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_list = []
     loss_list.append(0)
 
