@@ -627,15 +627,27 @@ def fermi_search(
         # are present at the e_lo then decrease it & recalculate. If too few e⁻
         # present at the e_up, then it's too low so increase it & recalculate
         # the number of elections there.
+        counter = 0
         while (mask := ne_lo > n_electrons).any():
+            counter += 1
+            if counter > max_iter:
+                raise RuntimeError(
+                    "Failed to locate an initial lower bound for fermi-search "
+                    f"bisection after {counter} iterations.")
             e_lo[mask] += 2.0 * (e_lo[mask] - e_up[mask])
             ne_lo[mask] = elec_count(e_lo, mask)
 
+        counter = 0
         while (mask := ne_up < n_electrons).any():
+            counter += 1
+            if counter > max_iter:
+                raise RuntimeError(
+                    "Failed to locate an initial upper bound for fermi-search "
+                    f"bisection after {counter} iterations.")
             e_up[mask] += 2.0 * (e_up[mask] - e_lo[mask])
             ne_up[mask] = elec_count(e_up, mask)
 
-        # Set the fermi energy to the mid point between the two bounds.
+        # Set the fermi energy to the mid-point between the two bounds.
         e_fermi[~c_mask] = (0.5 * (e_up + e_lo))[~c_mask]
         ne_fermi = elec_count(e_fermi)
 

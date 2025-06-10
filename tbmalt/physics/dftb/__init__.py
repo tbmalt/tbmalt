@@ -1216,7 +1216,6 @@ class Dftb2(Calculator):
             '...i,...ij->...j', q_in - q_zero, gamma)
 
         shifts = prepeat_interleave(shifts, orbs.orbs_per_res)
-        smallest_shift = torch.min(shifts)
         shifts = (shifts[..., None] + shifts[..., None, :])
 
         # Compute the second order Hamiltonian matrix
@@ -1254,7 +1253,8 @@ class Dftb2(Calculator):
         # values during evaluation, and compensated for later on.
 
         # Somewhat arbitrary offset needed to ensure occupancies are non-zero
-        offset = smallest_shift - 0.1
+        smallest_occupancy = torch.min(occupancy)
+        offset = smallest_occupancy - 0.1
 
         # Scaled occupancy values (including offset)
         s_occs = torch.einsum(
