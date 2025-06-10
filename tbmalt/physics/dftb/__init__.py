@@ -1414,6 +1414,7 @@ class Dftb2(Calculator):
         # The implicit method is yet to be implemented. This should give the
         # "correct" gradient and so will become the default one implemented.
         elif grad_mode == "implicit":
+            implicit_mixer = value = kwargs.get('implicit_mixer', self.mixer)
             q_current = self.q_zero_res
             if cache is not None:
                 q_current = cache.get('q_initial', q_current)
@@ -1436,7 +1437,7 @@ class Dftb2(Calculator):
                 self.gamma, self.orbs, self.n_electrons, **kwargs_in)
             def backward_hook(grad):
                 g = Dftb2._impl_solver(lambda y : torch.autograd.grad(f0, q0, y, retain_graph=True)[0] + grad,
-                               grad, params=(), mixer = self.mixer)
+                               grad, params=(), mixer = implicit_mixer)
                 return g
             # hook into q_out grad
             q_converged.register_hook(backward_hook)
@@ -1457,12 +1458,11 @@ class Dftb2(Calculator):
         return self.mermin_energy
     
     @staticmethod
-    def _impl_solver(fnc, grad_current, params = None, mixer = Anderson, max_scc_iter = 200, suppress_SCF_error = False, **kwargs):
+    def _impl_solver(fnc, grad_current, params = None, mixer = Anderson, max_iter = 200, suppress_SCF_error = False, **kwargs):
         with torch.no_grad():
             mixer.reset()
             grad_converged = torch.zeros_like(grad_current)
-            for step in range(1, max_scc_iter + 1):
-                print(f"SCC step: {step}")
+            for step in range(1, max_iter + 1):
                 grad_current = mixer(
                         fnc(grad_current, *params),
                         grad_current,
@@ -1472,7 +1472,7 @@ class Dftb2(Calculator):
                     break
             else:
                 if not suppress_SCF_error:
-                    raise RuntimeError("SCC cycle did not converge.")
+                    raise RuntimeError("Implicit solver cycle did not converge.")
     
         return grad_converged
 
