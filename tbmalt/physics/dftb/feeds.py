@@ -11,13 +11,14 @@ import re
 import numpy as np
 from numpy import ndarray as Array
 from itertools import combinations_with_replacement
-from typing import List, Literal, Optional, Dict, Tuple, Union, Iterator, Callable, Iterable, Type
+from typing import List, Literal, Optional, Dict, Tuple, Union, Type
 from scipy.interpolate import CubicSpline as ScipyCubicSpline
 import torch
 from torch import Tensor
 from torch.nn import Parameter, ParameterDict, ModuleDict, Module
 
 from tbmalt import Geometry, OrbitalInfo, Periodicity
+from tbmalt.structures.geometry import atomic_pair_distances
 from tbmalt.ml.integralfeeds import IntegralFeed
 from tbmalt.io.skf import Skf, VCRSkf
 from tbmalt.physics.dftb.slaterkoster import sub_block_rot
@@ -622,7 +623,9 @@ class SkFeed(IntegralFeed):
         self._off_sites = value
 
     def _off_site_blocks(self, atomic_idx_1: Tensor, atomic_idx_2: Tensor,
-                         geometry: Geometry, orbs: OrbitalInfo, **kwargs) -> Tensor:
+                         geometry: Geometry, orbs: OrbitalInfo,
+                         shift_vec: Optional[Tensor] = None, **kwargs
+                         ) -> Tensor:
         """Compute atomic interaction blocks (off-site only).
 
         Constructs the off-site atomic blocks using Slater-Koster integral
@@ -635,6 +638,7 @@ class SkFeed(IntegralFeed):
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
               orbs: Orbital information associated with said systems.
+              shift_vec: Vector to shift the distance vector by. [DEFAULT=`None`]
           Returns:
               blocks: Requested atomic interaction sub-blocks.
         """
@@ -648,6 +652,8 @@ class SkFeed(IntegralFeed):
         # Inter-atomic distance and distance vector calculator.
         dist_vec = (geometry.positions[*bT2(atomic_idx_2)]
                     - geometry.positions[*bT2(atomic_idx_1)])
+        if shift_vec is not None:
+            dist_vec = dist_vec + shift_vec
         dist = torch.linalg.norm(dist_vec, dim=-1)
         u_vec = (dist_vec.T / dist).T
 
@@ -1162,6 +1168,8 @@ class VcrSkFeed(IntegralFeed):
         compression_radii: A torch `Parameter` instance specifying the
             compression radius of each atom in the target system. Note that
             this must be manually set for each target system before each call.
+        is_local_onsite: `is_local_onsite` allows for constructing chemical
+            environment dependent on-site energies.
 
     Warnings:
         It is critical to note that this class is a work in progress with many
@@ -1218,6 +1226,7 @@ class VcrSkFeed(IntegralFeed):
         self._off_sites = off_sites
 
         self.compression_radii = Optional[Parameter]
+        self.is_local_onsite = False
 
     @property
     def on_sites(self) -> ParameterDict[str, Parameter]:
@@ -1393,7 +1402,11 @@ class VcrSkFeed(IntegralFeed):
 
         # Construct the on-site blocks (if any are present)
         if any(on_site):
-            blks[on_site] = torch.diag(self.on_sites[str(z_1.item())][mask_shell])
+            if not self.is_local_onsite:
+                blks[on_site] = torch.diag(self.on_sites[str(z_1.item())][mask_shell])
+            else:
+                blks[on_site] = torch.diag_embed(
+                    self.on_sites[str(z_1.item())], dim1=-2, dim2=-1)
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
@@ -1422,6 +1435,7 @@ class VcrSkFeed(IntegralFeed):
     def from_database(
             cls, path: str, species: List[int],
             target: Literal['hamiltonian', 'overlap'],
+            requires_grad_onsite: bool = False,
             dtype: Optional[torch.dtype] = None,
             device: Optional[torch.device] = None) -> 'VcrSkFeed':
         r"""Instantiate instance from an HDF5 database of Slater-Koster files.
@@ -1434,6 +1448,10 @@ class VcrSkFeed(IntegralFeed):
             species: Integrals will only be loaded for the requested species.
             target: Specifies which integrals should be loaded, options are
                 "hamiltonian" and "overlap".
+            requires_grad_onsite: When set to `True` gradient tracking will be
+                enabled for the on-site parameters. This flag is ignored for
+                the overlap matrix case as its on-site terms are always unity.
+                [DEFAULT=`False`]
             device: Device on which the feed object and its contents resides.
             dtype: dtype used by feed object.
 
@@ -1479,13 +1497,15 @@ class VcrSkFeed(IntegralFeed):
                 # Repeated so there's 1 value per orbital not just per shell.
                 on_sites_vals = Parameter(
                     skf.on_sites.repeat_interleave(
-                        torch.arange(len(skf.on_sites), device=device) * 2 + 1))
+                        torch.arange(len(skf.on_sites), device=device) * 2 + 1),
+                    requires_grad=requires_grad_onsite)
 
                 if target == 'overlap':  # use an identity matrix for S
                     # Auto-grad tracking is always disabled as the values can
                     # never be anything other than one.
                     on_sites_vals = Parameter(
-                        torch.ones_like(on_sites_vals, dtype=dtype, device=device))
+                        torch.ones_like(on_sites_vals, dtype=dtype, device=device),
+                        requires_grad=False)
 
                 on_sites[str(pair[0])] = on_sites_vals
 
@@ -1889,9 +1909,18 @@ class RepulsiveSplineFeed(Feed):
             as keys and the corresponding spline data as values.
     """
 
-    def __init__(self, spline_data: Dict[Tuple, Tensor]):
+    def __init__(self, spline_data: Dict[Tuple, Skf.RSpline]):
         super().__init__()
-        self.spline_data = {frozenset(interaction_pairs):data for interaction_pairs,data in spline_data.items()}
+
+        warnings.warn(
+            "The `RepulsiveSplineFeed` class is now deprecated and will be"
+            "removed. Please use the `PairwiseRepulsiveEnergyFeed` and "
+            "`DftbpRepulsiveSpline` classes instead.",
+            category=DeprecationWarning)
+
+        self.spline_data = {
+            frozenset(interaction_pairs): data
+            for interaction_pairs, data in spline_data.items()}
 
     @property
     def dtype(self) -> torch.dtype:
@@ -1903,19 +1932,20 @@ class RepulsiveSplineFeed(Feed):
         """The device on which the `RepulsiveSplineFeed` object resides."""
         return list(self.spline_data.values())[0].grid.device
 
-    def __call__(self, geo: Union[Geometry, Tensor]) -> Tensor:
+    def __call__(self, geo: Geometry) -> Tensor:
         r"""Calculate the repulsive energy of a Geometry.
 
         Arguments:
-            geo: Geometry object(s) for which the repulsive energy should be calculated. Either a single Geometry object or a batch of Geometry objects.
+            geo: `Geometry` object representing the system, or batch thereof,
+                for which the repulsive energy should be calculated.
 
         Returns:
             Erep: The repulsive energy of the Geometry object(s).
         """
         batch_size, indxs, indx_pairs, normed_distance_vectors = self._calculation_prep(geo)
-        
+
         Erep = torch.zeros((batch_size), device=self.device, dtype=self.dtype)
-        
+
         for indx_pair in indx_pairs:
             atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
             atomnum2 = geo.atomic_numbers[..., indx_pair[1]].reshape((batch_size, ))
@@ -1930,19 +1960,21 @@ class RepulsiveSplineFeed(Feed):
 
         return Erep
 
-    def gradient(self, geo: Union[Geometry, Tensor]) -> Tensor:
+    def gradient(self, geo: Geometry) -> Tensor:
         """Calculate the gradient of the repulsive energy.
 
         Arguments:
-            geo: Geometry object(s) for which the gradient of the repulsive energy should be calculated. Either a single Geometry object or a batch of Geometry objects.
+            geo: `Geometry` object representing the system, or batch thereof,
+                for which the gradient of the repulsive energy should be
+                calculated.
 
         returns:
             dErep: The gradient of the repulsive energy.
         """
         batch_size, indxs, indx_pairs, normed_distance_vectors = self._calculation_prep(geo)
-        
+
         dErep = torch.zeros((batch_size, geo.atomic_numbers.size(dim=-1), 3), device=self.device, dtype=self.dtype)
-        
+
         for indx_pair in indx_pairs:
             atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
             atomnum2 = geo.atomic_numbers[..., indx_pair[1]].reshape((batch_size, ))
@@ -1956,14 +1988,17 @@ class RepulsiveSplineFeed(Feed):
                 #TODO: Not yet batched
                 dErep[batch_indx, indx_pair[0]] += add_dErep*normed_distance_vectors[batch_indx, indx_pair[0], indx_pair[1]]
                 dErep[batch_indx, indx_pair[1]] += add_dErep*normed_distance_vectors[batch_indx,indx_pair[1], indx_pair[0]]
-        
+        if batch_size == 1:
+            dErep = dErep.squeeze(0)
         return dErep
 
-    def _calculation_prep(self, geo: Union[Geometry, Tensor]):
-        """Performs preliminary calculations for the repulsive energy calculation and gradient calculation.
+    def _calculation_prep(self, geo: Geometry
+                          ) -> Tuple[int, Tensor, Tensor, Tensor]:
+        """Preliminaries for repulsive energy & gradient calculation.
 
         Arguments:
-            geo: Geometry object(s) for which the repulsive energy should be calculated. Either a single Geometry object or a batch of Geometry objects.
+            geo: `Geometry` object representing the system, or batch thereof,
+                for which the calculation preparation steps are to be performed.
 
         returns:
             batch_size: The number of geometries in the batch.
@@ -1971,7 +2006,7 @@ class RepulsiveSplineFeed(Feed):
             indx_pairs: The indices of the interacting atom pairs as tuples.
             normed_distance_vectors: The normalized distance vectors between the atoms
         """
-        if geo.atomic_numbers.dim() == 1: #this means it is not a batch
+        if geo.atomic_numbers.dim() == 1: # this means it is not a batch
             batch_size = 1
         else:
             batch_size = geo.atomic_numbers.size(dim=0)
@@ -1981,13 +2016,18 @@ class RepulsiveSplineFeed(Feed):
 
         normed_distance_vectors = geo.distance_vectors / geo.distances.unsqueeze(-1)
         normed_distance_vectors[normed_distance_vectors.isnan()] = 0
-        normed_distance_vectors = torch.reshape(normed_distance_vectors, (batch_size, normed_distance_vectors.shape[-3], normed_distance_vectors.shape[-2], normed_distance_vectors.shape[-1]))
+        normed_distance_vectors = torch.reshape(
+            normed_distance_vectors, (
+                batch_size, normed_distance_vectors.shape[-3],
+                normed_distance_vectors.shape[-2],
+                normed_distance_vectors.shape[-1]))
 
         return batch_size, indxs, indx_pairs, normed_distance_vectors
- 
 
-
-    def _repulsive_calc(self, distance: Tensor, atomnum1: Union[Tensor, int], atomnum2: Union[Tensor, int], grad: bool = False) -> Tensor:
+    def _repulsive_calc(
+            self, distance: Tensor, atomnum1: Union[Tensor, int],
+            atomnum2: Union[Tensor, int], grad: bool = False
+        ) -> Tensor:
         """Calculate the repulsive energy contribution between two atoms.
 
         Arguments:
@@ -2011,11 +2051,11 @@ class RepulsiveSplineFeed(Feed):
                         return self._spline(distance, spline.grid[ind-1], spline.spline_coef[ind-1], grad=grad)
             else:
                 return self._exponential_head(distance, spline.exp_coef, grad=grad)
-        return 0
-   
+        return torch.tensor(0.0, dtype=self.dtype, device=self.device)
+
     @classmethod
     def _exponential_head(cls, distance: Tensor, coeffs: Tensor, grad: bool = False) -> Tensor:
-        r"""Exponential head calculation of the repulsive spline. 
+        r"""Exponential head calculation of the repulsive spline.
 
         Arguments:
             distance: The distance between the two atoms.
@@ -2033,7 +2073,7 @@ class RepulsiveSplineFeed(Feed):
         else:
             return -a1*torch.exp(-a1*distance + a2)
 
-    @classmethod 
+    @classmethod
     def _spline(cls, distance: Tensor, start: Tensor, coeffs: Tensor, grad: bool = False) -> Tensor:
         r"""3rd order polynomial Spline calculation of the repulsive spline.
 
@@ -2054,7 +2094,7 @@ class RepulsiveSplineFeed(Feed):
             denergy = coeffs[1] + 2*coeffs[2]*rDiff + 3*coeffs[3]*rDiff**2
             return denergy
 
-    @classmethod 
+    @classmethod
     def _tail(cls, distance: Tensor, start: Tensor, coeffs: Tensor, grad: bool = False) -> Tensor:
         r"""5th order polynomial trailing tail calculation of the repulsive spline.
 
@@ -2062,7 +2102,7 @@ class RepulsiveSplineFeed(Feed):
             distance: The distance between the two atoms.
             start: The start of the trailing tail segment.
             coeffs: The coefficients of the polynomial.
-        
+
         Returns:
             energy: The energy value of the tail.
                 The energy is calculated as :math:`coeffs[0] + coeffs[1]*(distance - start) + coeffs[2]*(distance - start)^2 + coeffs[3]*(distance - start)^3 + coeffs[4]*(distance - start)^4 + coeffs[5]*(distance - start)^5`.
@@ -2075,10 +2115,12 @@ class RepulsiveSplineFeed(Feed):
             denergy = coeffs[1] + 2*coeffs[2]*rDiff + 3*coeffs[3]*rDiff**2 + 4*coeffs[4]*rDiff**3 + 5*coeffs[5]*rDiff**4
             return denergy
 
-
-
     @classmethod
-    def from_database(cls, path: str, species: List[int], dtype: Optional[torch.dtype] = None, device: Optional[torch.device] = None) -> 'RepulsiveSplineFeed':
+    def from_database(
+            cls, path: str, species: List[int],
+            dtype: Optional[torch.dtype] = None,
+            device: Optional[torch.device] = None
+            ) -> 'RepulsiveSplineFeed':
         r"""Instantiate instance from a HDF5 database of Slater-Koster files.
 
         Instantiate a `RepulsiveSplineFeed` instance from a HDF5 database for the specified elements.
@@ -2104,7 +2146,457 @@ class RepulsiveSplineFeed(Feed):
             >>>     Skf.read(file).write('my_skf.hdf5')
         """
         interaction_pairs = combinations_with_replacement(species, r=2)
-        return cls({interaction_pair: Skf.read(path, interaction_pair, device=device, dtype=dtype).r_spline for interaction_pair in interaction_pairs})
+        return cls({
+            interaction_pair: Skf.read(
+                path, interaction_pair, device=device, dtype=dtype
+            ).r_spline for interaction_pair in interaction_pairs})
 
 
+class DftbpRepulsiveSpline(Feed):
+    """Repulsive spline representation for the repulsive DFTB interaction.
 
+    The repulsive spline implementation matches that used by the DFTB+ package.
+
+    The repulsive potential is partitioned into three regimes and is evaluated
+    only within the specified cutoff radius, being zero beyond this distance.
+
+    1. **Short-range exponential head** when distances ≤ first grid point:
+       .. math::
+           e^{-a_{1} r + a_{2}} + a_{3}
+
+    2. **Intermediate cubic spline body** defined on each interval [r_i, r_{i+1}]:
+       .. math::
+           c_{0} + c_{1}(r - r_{0}) + c_{2}(r - r_{0})^{2} + c_{3}(r - r_{0})^{3}
+
+    3. **Long-range polynomial tail** between the last spline point and cutoff:
+       .. math::
+           c_{0} + c_{1}(r - r_{n}) + c_{2}(r - r_{n})^{2}
+           + c_{3}(r - r_{n})^{3} + c_{4}(r - r_{n})^{4} + c_{5}(r - r_{n})^{5}
+
+    Arguments:
+        grid: Distances for the primary spline segments including the start &
+            end of the first & last segments respectively. As such there should
+            be n+1 grid points, where n is the number of standard spline
+            segments.
+        cutoff: Cutoff radius for the spline's tail beyond which interactions
+            are assumed to be zero.
+        spline_coefficients: An n×4 tensor storing the coefficients for each of
+            the primary spline segments.
+        exponential_coefficients: A tensor storing the three coefficients of
+            the short range exponential region.
+        tail_coefficients: A tensor storing the six coefficients of the long -
+            range tail region.
+    """
+
+    def __init__(
+            self, grid: Tensor, cutoff: Tensor, spline_coefficients: Parameter,
+            exponential_coefficients: Parameter, tail_coefficients: Parameter):
+
+        super().__init__()
+        self.grid = grid
+        self.cutoff = cutoff
+        self.spline_coefficients = spline_coefficients
+        self.exponential_coefficients = exponential_coefficients
+        self.tail_coefficients = tail_coefficients
+
+        # Ensure parameters are correctly typed
+        if isinstance(grid, Parameter) or grid.requires_grad:
+            raise warnings.warn(
+                "Setting the grid points as a freely tunable parameter is "
+                "strongly advised against as it may result in unexpected "
+                "behaviour. Please ensure that the `grid` argument is a "
+                "standard `torch.Tensor` type rather than `torch.nn.Parameter` "
+                "and that its \"requires_grad\" attribute is set to `False` "
+                "unless you are sure of what you are doing.")
+
+        if isinstance(cutoff, Parameter) or grid.requires_grad:
+            raise TypeError(
+                "The cutoff is not freely tunable parameter. Please ensure "
+                "that the `cutoff` argument is a standard `torch.Tensor` type "
+                "rather than `torch.nn.Parameter` & that its \"requires_grad\""
+                "attribute is set to `False`.")
+
+        if not isinstance(spline_coefficients, Parameter):
+            raise TypeError("The spline coefficients must be a "
+                            "`torch.nn.Parameter` instance.")
+
+        if not isinstance(exponential_coefficients, Parameter):
+            raise TypeError("The exponential coefficients must be a "
+                            "`torch.nn.Parameter` instance.")
+
+        if not isinstance(tail_coefficients, Parameter):
+            raise TypeError("The tail coefficients must be a "
+                            "`torch.nn.Parameter` instance.")
+
+        # Ensure that the tensors are of the correct shape
+        if spline_coefficients.ndim != 2 or spline_coefficients.shape[1] != 4:
+            raise ValueError("Argument `spline_coefficients` should be an n×4 "
+                             "tensor.")
+
+        if spline_coefficients.shape[0] != grid.shape[0] - 1:
+            raise ValueError(
+                f"{grid.shape[0]} grid values were provided suggesting the "
+                f"presence of {grid.shape[0] - 1} standard spline segments. "
+                f"However, coefficients for {spline_coefficients.shape[0]} "
+                f"segments were provided in `spline_coefficients`.")
+
+        if exponential_coefficients.shape != torch.Size([3]):
+            raise ValueError(
+                f"Expected `exponential_coefficients` argument to be of shape "
+                f"torch.Size([3]) but encountered "
+                f"{exponential_coefficients.shape}.")
+
+        if tail_coefficients.shape != torch.Size([6]):
+            raise ValueError(
+                f"Expected `tail_coefficients` argument to be of shape "
+                f"torch.Size([6]) but encountered {tail_coefficients.shape}.")
+
+    @property
+    def spline_cutoff(self):
+        """Cutoff distance of the last primary spline segment."""
+        return self.grid[-1]
+
+    @property
+    def exponential_cutoff(self):
+        """Cutoff distance of the short range exponential region."""
+        return self.grid[0]
+
+    def forward(self, distances: Tensor) -> Tensor:
+        """Evaluate the repulsive interaction at the specified distance(s).
+
+        Arguments:
+            distances: Distance(s) at which the repulsive term is to be
+                evaluated.
+
+        Returns:
+            repulsive: Repulsive interaction energy as evaluated at the
+                specified distances.
+        """
+        results = torch.zeros_like(distances)
+
+        # Mask for distances < cutoff
+        under_cutoff = distances < self.cutoff
+
+        # Within that subset, distinguish three further conditions:
+        # 1) distances > spline_cutoff
+        mask_1 = under_cutoff & (distances > self.spline_cutoff)
+        # 2) distances > exponential_cutoff and <= spline_cutoff
+        mask_2 = under_cutoff & (distances > self.exponential_cutoff
+                                 ) & (distances <= self.spline_cutoff)
+        # 3) distances <= exp_cutoff
+        mask_3 = under_cutoff & (distances <= self.exponential_cutoff)
+
+        # Evaluate the distances in each of the three main distance regimes
+        # accordingly.
+        results[mask_1] = self._tail(distances[mask_1])
+        results[mask_2] = self._spline(distances[mask_2])
+        results[mask_3] = self._exponential(distances[mask_3])
+
+        return results
+
+    def _exponential(self, distance: Tensor) -> Tensor:
+        """Evaluate the exponential head of the repulsive interaction.
+
+        The short-range exponential part of the repulsive interaction is
+        applied when the atoms are closer than the starting distance of the
+        first standard spline segment. The repulsive interaction within this
+        region is described by the following exponential term:
+
+        .. math::
+
+            e^{-a_{1} r + a_{2}} + a_{3}
+
+        Where "r" (`distances`) is the distance between the atoms and
+        :math:`a_{i}` are the exponential coefficients.
+
+        Arguments:
+            distance: Distance(s) at which the exponential term is to be
+                evaluated.
+
+        Returns:
+            repulsive: Exponential repulsive interaction as evaluated at the
+                specified distances.
+        """
+        c = self.exponential_coefficients
+        return torch.exp(-c[0] * distance + c[1]) + c[2]
+
+    def _spline(self, distance: Tensor) -> Tensor:
+        """Evaluate main spline body of the repulsive interaction.
+
+        Distances between the exponential head and fifth order polynomial
+        spline tail are evaluated using a third order polynomial spline of
+        the form:
+
+        .. math::
+
+            c_{0}+c_{1}(r-r_{0})+c_{2}(r-r_{0})^{2}+c_{3}(r-r_{0})^{3}
+
+        Where "r" (`distances`) is the distance between the atoms,
+        :math:`r_{0}` is the start of the spline segment, and :math:`c_{i}` are
+        the spline segment's coefficients.
+
+        Arguments:
+            distance: Distance(s) at which the primary spline term is to be
+                evaluated.
+
+        Returns:
+            repulsive: Primary spline body repulsive interaction as evaluated
+                at the specified distances.
+        """
+        indices = torch.searchsorted(self.grid, distance) - 1
+        c = self.spline_coefficients[indices]
+        r = distance - self.grid[indices]
+        return c[:, 0] + c[:, 1] * r + c[:, 2] * r ** 2 + c[:, 3] * r ** 3
+
+    def _tail(self, distance: Tensor) -> Tensor:
+        """Evaluate the polynomial tail part of the repulsive interaction.
+
+        Distance between the last standard spline segment's endpoint and the
+        cutoff are represented by a tail spline of the form:
+
+        .. math::
+
+            c_{0}+c_{1}(r-r_{0})+c_{2}(r-r_{0})^{2}+c_{3}(r-r_{0})^{3}
+                +c_{4}(r-r_{0})^{4}+c_{5}(r-r_{0})^{5}
+
+        Where "r" (`distances`) is the distance between the atoms,
+        :math:`r_{0}` is the start of the tail region, and :math:`c_{i}` are
+        the tail spline's coefficients.
+
+        Arguments:
+            distance: Distance(s) at which the long-range spline tail term is
+                to be evaluated.
+
+        Returns:
+            repulsive: Spline tail repulsive interaction as evaluated at the
+                specified distances.
+        """
+        c = self.tail_coefficients
+        r = distance - self.spline_cutoff
+        r_poly = r.unsqueeze(-1).repeat(1, 5).cumprod(-1)
+        return c[0] + (c[1:] * r_poly).sum(-1)
+
+    @classmethod
+    def from_skf(cls, skf: Skf, requires_grad: bool = False) -> DftbpRepulsiveSpline:
+        """Instantiate a `DftbpRepulsiveSpline` instance from a `Skf` object.
+
+        This method will read the repulsive spline data from an `Skf` instance
+        representing an sfk formatted file and construct a repulsive spline
+        of the form used by the DFTB+ package.
+
+        Arguments:
+            skf: An `Skf` instance representing an skf file from which the
+                data parameterising the repulsive spline can be read.
+            requires_grad: A boolean indicating if the gradient tracking should
+                be enabled for the spline's coefficients. [DEFAULT=False]
+
+        Returns:
+            repulsive_feed: A `DftbpRepulsiveSpline` instance representing the
+                repulsive interaction.
+
+        Notes:
+            This assumes the presence of repulsive spline feed in the skf file.
+            However, this condition is not guaranteed as some skf files will
+            provide a polynomial instead.
+        """
+        if skf.r_spline is None:
+            raise AttributeError(
+                f"Skf file {skf} does not define a repulsive spline.")
+
+        return cls.from_r_spline(skf.r_spline, requires_grad=requires_grad)
+
+    @classmethod
+    def from_r_spline(
+            cls, r_spline: Skf.RSpline, requires_grad: bool = False
+    ) -> DftbpRepulsiveSpline:
+        """Instantiate a `DftbpRepulsiveSpline` instance from a `Skf.RSpline` object.
+
+        This method will use an `Skf.RSpline` data class to construct a
+        repulsive spline of the form used by the DFTB+ package.
+
+        Arguments:
+            skf: An `Skf.RSpline` instance parameterising the repulsive spline.
+            requires_grad: A boolean indicating if the gradient tracking should
+                be enabled for the spline's coefficients. [DEFAULT=False]
+
+        Returns:
+            repulsive_feed: A `DftbpRepulsiveSpline` instance representing the
+                repulsive interaction.
+        """
+        return cls(
+            r_spline.grid, r_spline.cutoff,
+            Parameter(r_spline.spline_coef, requires_grad=requires_grad),
+            Parameter(r_spline.exp_coef, requires_grad=requires_grad),
+            Parameter(r_spline.tail_coef, requires_grad=requires_grad))
+
+
+class PairwiseRepulsiveEnergyFeed(Feed):
+    """Sort range repulsive interaction feed for DFTB calculations.
+
+    This feed uses distance dependent interpolator feeds to evaluate the
+    total repulsive pair-wise interaction energy for a given system.
+
+    Arguments:
+        repulsive_feeds: A torch `ModuleDict` of pair-wise distance dependent
+            repulsive feeds, such as `DftbpRepulsiveSpline`, keyed by strings
+            representing tuples of the form `"(z₁, z₂)"`, where `z₁` & `z₂` are
+            the atomic numbers of the associated element pair (with `z₁ ≤ z₂`).
+            Keys must exactly match the string obtained from converting a tuple
+            to a string, including the parentheses & spaces; for example,
+            `"(1, 6)"`.
+
+    Notes:
+        In principle any feed may be placed within the ``repulsive_feeds``
+        dictionary to represent repulsive interactions so long as its `forward`
+        method takes a distances values and returns repulsive energy values.
+    """
+
+    def __init__(self, repulsive_feeds: ModuleDict[str, Feed]):
+        super().__init__()
+
+        self.repulsive_feeds = repulsive_feeds
+
+        # Ensure that the repulsive feeds are stored within a ModuleDict
+        # instance, rather than something else like a standard Python
+        # dictionary.
+        if not isinstance(repulsive_feeds, ModuleDict):
+            raise TypeError(
+                f"An instance of `torch.nn.ModuleDict` was expected for the "
+                f"attribute `repulsive_feeds`, but a `{type(repulsive_feeds)}` "
+                f"was encountered.")
+
+        # Ensure the keys used in the repulsive feed module dictionary
+        # match the expected form.
+        for key in repulsive_feeds.keys():
+            self.__validate_key(key)
+
+    def forward(self, geometry: Geometry) -> Tensor:
+        """Repulsive energy.
+
+        Compute the pair-wise repulsive energy of the specified system using
+        the element pair specific pair-wise repulsive sub-feeds.
+
+        Arguments:
+            geometry: System, or batch thereof, for which the repulsive
+                interaction energy is to be computed.
+
+        Returns:
+            repulsive: Repulsive interaction energy as evaluated for the
+                specified system(s).
+        """
+
+        # Tensor to hold the resulting repulsive energy.
+        e_rep = torch.zeros(
+            geometry.atomic_numbers.shape[0:geometry.atomic_numbers.ndim - 1],
+            device=geometry.device)
+
+        # For each species pair, atom indices and distances are yielded with a
+        # forced batch dimension, facilitating batch-agnostic scatter addition.
+        for species_pair, atomic_indices, distances in atomic_pair_distances(
+                geometry, True, True):
+            # Identify the repulsive feed associated with the current pair
+            feed = self.repulsive_feeds[
+                str((species_pair[0].item(), species_pair[1].item()))]
+
+            # evaluate it at the relevant distances
+            e_pairs = feed.forward(distances)
+
+            # add the resulting energies to the current total(s)
+            e_rep.scatter_add_(0, atomic_indices[0], e_pairs)
+
+        return e_rep
+
+    @classmethod
+    def from_database(
+            cls, path: str, species: List[int],
+            requires_grad: bool = False,
+            device: Optional[torch.device] = None,
+            dtype: Optional[torch.dtype] = None):
+        """Instantiate instance from an HDF5 database of Slater-Koster files.
+
+        Instantiate a `PairwiseRepulsiveEnergyFeed` instance for the specified
+        elements using repulsive data contained within a Slater-Koster HDF5
+        file. More specifically, the repulsive spline coefficients will be
+        parsed and used to construct a series of `DftbpRepulsiveSpline`
+        instances.
+
+        Arguments:
+            path: Path to the HDF5 file from which repulsive splines data
+                should be sourced.
+            species: Species for which repulsive interactions should be
+                loaded.
+            requires_grad: When set to `True` gradient tracking will be enabled
+                for all coefficients within the repulsive spline feeds.
+                [DEFAULT=False]
+            device: Device on which the feed object and its contents resides.
+            dtype: dtype used by feed object.
+
+        Returns:
+            repulsive_energy_feed: An `PairwiseRepulsiveEnergyFeed` instance
+                with the required repulsive interactions represented using
+                `DftbpRepulsiveSpline` instances.
+        """
+
+        repulsive_feeds = ModuleDict()
+
+        for pair in combinations_with_replacement(sorted(species), r=2):
+            skf = Skf.read(path, pair, device=device, dtype=dtype)
+            repulsive_feeds[str(pair)] = DftbpRepulsiveSpline.from_skf(
+                skf, requires_grad=requires_grad)
+
+        return cls(repulsive_feeds)
+
+    @staticmethod
+    def __validate_key(key_string):
+        """Validate format of an element pair module-dictionary key.
+
+        Validates that the provided string matches the expected format of a tuple
+        converted to a string, i.e., "(z₁, z₂)".
+
+        The string must:
+        - Start with a left parenthesis '('
+        - End with a right parenthesis ')'
+        - Contain exactly two comma-separated integers
+        - Have exactly one space after each comma
+        - Ensure that z₁ ≤ z₂
+
+        Arguments:
+            key_string: The string to validate.
+
+        Raises:
+            ValueError: If any of the validation checks fail.
+        """
+        errors = []
+
+        # Check if the string starts with '(' and ends with ')'
+        if not (key_string.startswith('(') and key_string.endswith(')')):
+            errors.append("The string must start with '(' and end with ')'.")
+        else:
+            # Remove the parentheses
+            content = key_string[1:-1]
+
+            # Define the expected pattern
+            pattern = r'^(\d+), (\d+)$'
+            match = re.match(pattern, content)
+            if not match:
+                errors.append(
+                    "The string must contain exactly two comma-separated integers, "
+                    "with exactly one space after each comma.")
+            else:
+                z1, z2 = map(int, match.groups())
+
+                # Check if z₁ ≤ z₂
+                if z1 > z2:
+                    errors.append(
+                        "The first atomic number z₁ must be less than or equal to "
+                        "the second atomic number z₂.")
+
+        if errors:
+            errors.insert(
+                0,
+                f"The string \"{key_string}\" used as a key in the"
+                f"`repulsive_feeds` dictionary does not match the expected "
+                f"format. It should represent a tuple converted to a string, "
+                f"like '(1, 6)'.")
+
+            raise ValueError('\n'.join(errors))

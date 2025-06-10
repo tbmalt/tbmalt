@@ -69,6 +69,64 @@ def skf_file(tmpdir_factory):
 
 
 @pytest.fixture(scope='session')
+def skf_file_siband(tmpdir_factory):
+    """Path to siband-1-1 HDF5 database.
+
+    This fixture downloads the siband-1-1  Slater-Koster parameter set, converts
+    it to HDF5, and returns the path to the resulting database.
+
+    Returns:
+         path: location of siband-1-1 HDF5 database file.
+
+    Warnings:
+        This will fail i) without an internet connection, ii) if the siband-1-1
+        parameter sets moves, or iii) it is used outside a PyTest session.
+
+    Notes:
+        This fixture just wraps the DFTB parameter set downloader method
+        `tbmalt.tools.downloaders.download_dftb_parameter_set` so that a
+        parameter set can be downloaded when running the unit tests.
+        The parameter set will be deleted after the tests have run.
+    """
+    tempdir = tmpdir_factory.mktemp('tmp')
+    parameter_set_file_path = join(tempdir, "siband.h5")
+    download_dftb_parameter_set(
+        "https://github.com/dftbparams/siband/releases/download/v1.1.0/siband-1-1.tar.xz",
+        parameter_set_file_path)
+
+    return parameter_set_file_path
+
+
+@pytest.fixture(scope='session')
+def skf_file_pbc(tmpdir_factory):
+    """Path to pbc-0-3 HDF5 database.
+
+    This fixture downloads the pbc-0-3  Slater-Koster parameter set, converts
+    it to HDF5, and returns the path to the resulting database.
+
+    Returns:
+         path: location of pbc-0-3 HDF5 database file.
+
+    Warnings:
+        This will fail i) without an internet connection, ii) if the pbc-0-3
+        parameter sets moves, or iii) it is used outside a PyTest session.
+
+    Notes:
+        This fixture just wraps the DFTB parameter set downloader method
+        `tbmalt.tools.downloaders.download_dftb_parameter_set` so that a
+        parameter set can be downloaded when running the unit tests.
+        The parameter set will be deleted after the tests have run.
+    """
+    tempdir = tmpdir_factory.mktemp('tmp')
+    parameter_set_file_path = join(tempdir, "pbc.h5")
+    download_dftb_parameter_set(
+        "https://github.com/dftbparams/pbc/releases/download/v0.3.0/pbc-0-3.tar.xz",
+        parameter_set_file_path)
+
+    return parameter_set_file_path
+
+
+@pytest.fixture(scope='session')
 def skf_file_vcr(tmpdir_factory):
     """Path to Slater-Koster files.
 

@@ -734,9 +734,9 @@ class CubicSpline(Feed):
         # interpolation of xx which not in the tail
         if interpolate.any():
             # get the nearest grid point index of distance in grid points
-            ind = torch.round(
+            ind = torch.floor(
                 ((xnew - self.xp[0]) / self.grid_step)).detach().long()
-            ind = ind[interpolate] - 1
+            ind = ind[interpolate]
             dx = xnew[interpolate] - self.xp[ind]
             aa, bb, cc, dd = self.coefficients[..., ind]
             interp = aa + bb * dx + cc * dx**2 + dd * dx**3
@@ -745,6 +745,7 @@ class CubicSpline(Feed):
 
         if extrapolate.any():
             dr = xnew[extrapolate] - r_max
+            dr = dr.unsqueeze(-1) if ypt.dim() == 2 else dr
 
             y0, y1, y2 = self._y[-3:]
             r1 = (y2 - y0) / (2.0 * self.grid_step)
