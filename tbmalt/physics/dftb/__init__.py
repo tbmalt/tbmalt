@@ -1355,9 +1355,11 @@ class Dftb2(Calculator):
                         run a single SCC step within the graph using the
                         converged charges as the initial "guess".
                     - "implicit": uses implicit function theorem to accurately
-                        and efficiently compute the derivative. This approach
-                        is not yet supported, but will be added in a future
-                        version.
+                        and memory efficiently compute the derivative.
+                        Uses the DFTB2 mixer except when provided custom mixer
+                        via 'implicit_mixer' keyword argument.
+                        Note: The mixer accuracy effects the gradient accuracy.
+                        
 
         Returns:
             total_energy: total energy for the target systems this will include
@@ -1414,7 +1416,9 @@ class Dftb2(Calculator):
         # The implicit method is yet to be implemented. This should give the
         # "correct" gradient and so will become the default one implemented.
         elif grad_mode == "implicit":
-            implicit_mixer = value = kwargs.get('implicit_mixer', self.mixer)
+            # Use user defined mixer if provided, otherwise use same mixer as SCC
+            implicit_mixer = kwargs.get('implicit_mixer', self.mixer)
+
             q_current = self.q_zero_res
             if cache is not None:
                 q_current = cache.get('q_initial', q_current)
