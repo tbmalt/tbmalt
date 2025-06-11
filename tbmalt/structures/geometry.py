@@ -21,6 +21,7 @@ Tensor = torch.Tensor
 
 
 # Todo:
+#   - The `clone` and `detach` methods do not support periodic systems.
 #   - Currently the cutoff value is being stored in two places, the `Geometry`
 #     class and the `Periodicity` class. Furthermore, it is being modified
 #     within the latter. There should be a single centralised place in which

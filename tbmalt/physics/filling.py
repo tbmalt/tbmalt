@@ -268,9 +268,6 @@ def fermi_smearing(
         values present, irrespective of whether they are real or fake (caused
         by packing).
 
-    Warnings:
-        Gradients resulting from this function can be ill defined, i.e. nan.
-
     Examples:
         >>> from tbmalt.physics.filling import fermi_smearing
 
@@ -290,8 +287,16 @@ def fermi_smearing(
     # stability issue associated with this function.
     fermi_energy, kT = _smearing_preprocessing(eigenvalues, fermi_energy, kT)
 
-    # Calculate the occupancies values via the Fermi-Dirac method
-    occupancies = 1.0 / (1.0 + torch.exp((eigenvalues - fermi_energy) / kT))
+    # Calculate the occupancies values via the Fermi-Dirac method. Note that
+    # the occupancy calculation is segmented so that the exponential is not
+    # applied to values greater than 40, thereby preventing the production of
+    # infinities & ill-defined gradients. For values below this threshold, the
+    # standard Fermi–Dirac expression is applied, otherwise the occupancy is
+    # set to zero.
+    occupancies = (eigenvalues - fermi_energy) / kT
+    mask = occupancies < 40
+    occupancies[mask] = 1.0 / (1.0 + torch.exp(occupancies[mask]))
+    occupancies[~mask] = 0.0
 
     # Mask out ghost states as and when required
     occupancies = _smearing_postprocessing(occupancies, e_mask)
@@ -622,15 +627,27 @@ def fermi_search(
         # are present at the e_lo then decrease it & recalculate. If too few e⁻
         # present at the e_up, then it's too low so increase it & recalculate
         # the number of elections there.
+        counter = 0
         while (mask := ne_lo > n_electrons).any():
+            counter += 1
+            if counter > max_iter:
+                raise RuntimeError(
+                    "Failed to locate an initial lower bound for fermi-search "
+                    f"bisection after {counter} iterations.")
             e_lo[mask] += 2.0 * (e_lo[mask] - e_up[mask])
             ne_lo[mask] = elec_count(e_lo, mask)
 
+        counter = 0
         while (mask := ne_up < n_electrons).any():
+            counter += 1
+            if counter > max_iter:
+                raise RuntimeError(
+                    "Failed to locate an initial upper bound for fermi-search "
+                    f"bisection after {counter} iterations.")
             e_up[mask] += 2.0 * (e_up[mask] - e_lo[mask])
             ne_up[mask] = elec_count(e_up, mask)
 
-        # Set the fermi energy to the mid point between the two bounds.
+        # Set the fermi energy to the mid-point between the two bounds.
         e_fermi[~c_mask] = (0.5 * (e_up + e_lo))[~c_mask]
         ne_fermi = elec_count(e_fermi)
 
