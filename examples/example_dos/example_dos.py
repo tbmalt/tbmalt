@@ -300,7 +300,7 @@ def main(rank, world_size, train_dataset, data_train_dos):
     h_var = [val.coefficients for key, val in h_feed._off_sites.items()]
     s_var = [val.coefficients for key, val in s_feed._off_sites.items()]
     variable = h_var + s_var
-    optimizer = getattr(torch.optim, 'Adam')(variable, lr=lr)
+    optimizer = torch.optim.Adam(variable, lr=lr)
     loss_list = []
     loss_list.append(0)
 

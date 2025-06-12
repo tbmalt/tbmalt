@@ -95,8 +95,8 @@ u_feed = HubbardFeed.from_database(parameter_db_path, species)
 # ---------------------------------------------
 # As this is a minimal working example, no optional settings are provided to the
 # calculator object.
-dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed)
-dftb_calculator(geometry, orbs)
+dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed,
+                        filling_scheme=None, filling_temp=None)
 
 # Construct machine learning object
 lr = 0.002
@@ -111,7 +111,7 @@ for key in h_feed._off_sites.keys():
     h_var.append({'params': h_feed._off_sites[key].coefficients, 'lr': lr})
     s_var.append({'params': s_feed._off_sites[key].coefficients, 'lr': lr})
 
-optimizer = getattr(torch.optim, 'Adam')(h_var + s_var, lr=lr)
+optimizer = torch.optim.Adam(h_var + s_var, lr=lr)
 
 
 def load_target_data(molecules: Geometry, path: str
@@ -173,7 +173,7 @@ def update_model(calculator: Calculator):
 if fit_model:
     for epoch in range(1, number_of_epochs + 1):
         # Perform the forwards operation
-        dftb_calculator(geometry, orbs)
+        dftb_calculator(geometry, orbs, grad_mode="direct")
 
         # Calculate the loss
         loss = calculate_losses(dftb_calculator, targets)
