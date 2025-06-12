@@ -598,9 +598,12 @@ def dftb2_helper(calculator, geometry, orbs, results):
     # tests for those feeds. Furthermore, any errors in said matrix will cause
     # many of the computed properties to be incorrect.
 
+    # TODO: Tighten up the relative tolerance once the issue with
+    #   `SiC_cubic_pbc` has been resolved.
+
     def check_allclose(i):
         predicted = getattr(calculator, i)
-        is_close = torch.allclose(predicted, results[i], atol=1E-10)
+        is_close = torch.allclose(predicted, results[i], atol=1E-10, rtol=1E-6)
         assert is_close, f'Attribute {i} is in error for system {geometry}'
         if isinstance(predicted, torch.Tensor):
             device_check = predicted.device == calculator.device
@@ -646,7 +649,7 @@ def test_dftb2_single(device, feeds_scc):
     h_feed, s_feed, o_feed, u_feed, r_feed = feeds_scc
 
     systems = [H2_scc, H2O_scc, CH4_scc, C2H6_scc]
-    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
 
     for system in systems:
         geometry, orbs, results, kwargs = system(device)
@@ -663,8 +666,11 @@ def test_dftb2_batch(device, feeds_scc):
     batches = [[H2_scc], [H2_scc, H2O_scc], [H2_scc, H2O_scc, CH4_scc],
                [H2_scc, H2O_scc, CH4_scc, C2H6_scc]]
 
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
+
     for batch in batches:
         geometry, orbs, results, kwargs = merge_systems(device, *batch)
+        kwargs['mix_params'] = mix_params
 
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, r_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
@@ -676,7 +682,7 @@ def test_dftb2_siband_single(device, feeds_scc_siband):
     h_feed, s_feed, o_feed, u_feed, r_feed = feeds_scc_siband
 
     systems = [Si_cubic_siband, Si_hexagonal_siband]
-    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
 
     for system in systems:
         geometry, orbs, results, kwargs = system(device)
@@ -692,8 +698,11 @@ def test_dftb2_siband_batch(device, feeds_scc_siband):
 
     batches = [[Si_cubic_siband], [Si_cubic_siband, Si_hexagonal_siband]]
 
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
+
     for batch in batches:
         geometry, orbs, results, kwargs = merge_systems(device, *batch)
+        kwargs['mix_params'] = mix_params
 
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, r_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
@@ -705,7 +714,7 @@ def test_dftb2_pbc_single(device, feeds_scc_pbc):
     h_feed, s_feed, o_feed, u_feed, r_feed = feeds_scc_pbc
 
     systems = [Si_cubic_pbc, Si_hexagonal_pbc, SiC_cubic_pbc]
-    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
 
     for system in systems:
         geometry, orbs, results, kwargs = system(device)
@@ -722,8 +731,11 @@ def test_dftb2_pbc_batch(device, feeds_scc_pbc):
     batches = [[Si_cubic_pbc], [Si_cubic_pbc, Si_hexagonal_pbc],
                [Si_cubic_pbc, Si_hexagonal_pbc, SiC_cubic_pbc]]
 
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
+
     for batch in batches:
         geometry, orbs, results, kwargs = merge_systems(device, *batch)
+        kwargs['mix_params'] = mix_params
 
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, r_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
