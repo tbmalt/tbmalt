@@ -141,7 +141,7 @@ def H2_pbc(device):
                           device=device)
     positions = torch.tensor([[0., 0., 0.], [0., 2., 0.]], device=device)
     numbers = torch.tensor([1, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([10.98], device=device)
     geo = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     # geo = Geometry.from_ase_atoms(molecule('H2'), device=device)
     orbs = OrbitalInfo(geo.atomic_numbers, {1: [0]})
@@ -163,7 +163,7 @@ def H2O_pbc(device):
                               [1.954, 0.047, 0.056],
                               [2.244, 0.660, 0.778]], device=device)
     numbers = torch.tensor([1, 8, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([10.98], device=device)
     geo = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     # geo = Geometry.from_ase_atoms(molecule('H2O'), device=device)
     orbs = OrbitalInfo(geo.atomic_numbers, {1: [0], 8: [0, 1]})
@@ -186,7 +186,7 @@ def CH4_pbc(device):
         [3., 3., 3.], [3.6, 3.6, 3.6], [2.4, 3.6, 3.6],
         [3.6, 2.4, 3.6], [3.6, 3.6, 2.4]], device=device)
     numbers = torch.tensor([6, 1, 1, 1, 1], device=device)
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([10.98], device=device)
     geo = Geometry(numbers, positions, latvec, units='a', cutoff=cutoff)
     # geo = Geometry.from_ase_atoms(molecule('CH4'), device=device)
     orbs = OrbitalInfo(geo.atomic_numbers, {1: [0], 6: [0, 1]})

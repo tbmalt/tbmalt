@@ -54,7 +54,7 @@ def test_single_g1(device):
     assert torch.max(abs(acsf_t_g.sum(-1) - acsf_sum.g)) < 1E-6, text
     assert acsf_sum.g.device == device, textd
 
-    # 2. Periodicity system test
+    # 2. Periodic system test
     ch4.cell = [1, 3, 3]
     geo = Geometry.from_ase_atoms(ch4, device=device)
     species = geo.chemical_symbols

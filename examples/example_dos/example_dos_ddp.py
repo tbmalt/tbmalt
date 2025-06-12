@@ -260,7 +260,7 @@ def dftb_results(numbers, positions, cells, h_feed_n, s_feed_n, **kwargs):
     """Perform forward DFTB calculatoins."""
     # Build objects for DFTB calculations
     geometry = Geometry(numbers, positions, cells, units='a',
-                        cutoff=torch.tensor([18.0])/length_units['angstrom'])
+                        cutoff=torch.tensor([19.0])/length_units['angstrom'])
     orbs = OrbitalInfo(geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
     mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2,

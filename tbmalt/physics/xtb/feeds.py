@@ -3,7 +3,7 @@ Integral feeds for xTB.
 
 This module implements integral feeds derived from `tbmalt`s `IntegralFeed`
 class and the corresponding `matrix` method. The matrices are, however, not
-calculated as in `tbmalt` but are just taken from `dxtb`. Hence, periodicity
+calculated as in `tbmalt` but are just taken from `dxtb`. Hence, periodic
 boundary conditions are _not_ yet available for the xTB Hamiltonian.
 
 The `dxtb` library is included as an external dependency in form of a (currently

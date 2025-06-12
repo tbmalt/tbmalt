@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Code associated with performing cell translation.
 
-This module implement cell translation for 1D & 2D & 3D periodicity
+This module implement cell translation for 1D & 2D & 3D periodic
 boundary conditions. Distance matrix and position vectors for pbc
 will be constructed.
 """
@@ -19,105 +19,66 @@ class Periodicity(ABC):
 
     Derived classes can be used to calculate various properties of 1D, 2D, & 3D
     periodic systems, such as the translation vectors. This is not intended to
-    store much in the way of data itself but rather provides usefull methods.
-    The periodicity entity will instead source infromation from the `Geometry`
+    store much in the way of data itself but rather provides useful methods.
+    The periodicity entity will instead source information from the `Geometry`
     object it is provided.
 
     Arguments:
-        geometry: Geometry object from which informaiton like atomic positions
+        geometry: Geometry object from which information like atomic positions
             and lattice parameters are to be sourced.
-        cutoff: Interaction cutoff distance for reading SK table, with Bohr
-            as default unit.
-        tail_distance: distance by which the ``cutoff`` should be extended
-            to account for the tail commonly added to interactions to smootly
-            bring them to zero. Pratically speaking, the "true" cutoff distance
-            is taken to be ``cutoff`` + ``tail_distance`` in most sittuations.
-            However, the two values are still kept seperate for the time
-            being.
-        positive_extension: when identifying the set of neighbouring cell
-            images within the cutoff range the ``positive_extension``
-            indicates how many "extra" images should be included along
-            the positive direction. This is normally at least "1" to account
-            for rounding caused by the floor operation.
-        negative_extension: same as ``positive_extension``, but for the
-            negative latice vector direction. Again, this should normally
-            be at least one.
+        cutoff: Interaction cutoff distance for interactions in units of Bohr.
 
     Attributes:
         geometry: the associated `Geometry` instance.
+        cutoff: Interaction cutoff distance for interactions in units of Bohr.
 
     Notes:
+        It is important to note that `Periodicity` entities are recursively
+        linked to their corresponding `Geometry` instances. As such, the manual
+        creation of `Periodicity` type instances, such as `Triclinic`, is not
+        supported. Instead, one should provide the `lattice_vector` & `cutoff`
+        arguments to the `Geometry` class which will create a `Periodicity`
+        instance assigned to the `Geometry.periodicity` attribute. The
+        recursive nature of the `Periodicity` and `Geometry` classes is
+        something that will be addressed in future updates.
+        
         This class make extensive use of cached properties and thus may use
         more memory than one might expect.
 
         When representing batch systems, the 'cellvec' and 'periodic_distances'
-        will be padded with large numbers. Mixing of periodicity & non-periodicity
+        will be padded with large numbers. Mixing of periodic & non-periodic
         systems and mixing of different types of pbc is forbidden.
 
     Examples:
+
         >>> import torch
-        >>> from tbmalt import Periodicity, Geometry
-        >>> geometry = Geometry(torch.tensor([1, 1]), torch.rand(2,3))
-        >>> pbc = Periodicity(geometry, 2.0)
+        >>> from tbmalt import Geometry
+        >>> geometry = Geometry(torch.tensor([1, 1]), torch.rand(2, 3),
+        ...                     lattice_vector=torch.eye(3) * 3.0, cutoff=2.0)
+        >>> pbc = geometry.periodicity
         >>> print(pbc.positions_vec.shape)
-        torch.Size([125, 2, 2, 3])
+        torch.Size([27, 2, 2, 3])
 
     """
     def __init__(
-            self, geometry: "Geometry", cutoff: Union[Tensor, float],
-            tail_distance: float = 1.0, positive_extension: int = 1,
-            negative_extension: int = 1):
-
-        self.geometry = geometry
+            self, geometry: "Geometry", cutoff: Union[Tensor, float]):
 
         cutoff = self._check(geometry.lattice, cutoff)
 
-        self._base_cutoff = cutoff
+        self.geometry = geometry
 
         # Intrinsic state attributes
         self._device = self.lattice.device
         self._dtype = self.lattice.dtype
 
-        # Extensions for lattice vectors
-        self._positive_extension = positive_extension
-        self._negative_extension = negative_extension
-
-        self._tail_distance = tail_distance
-
-        # Global cutoff for the diatomic interactions
-        self._cutoff: Tensor = cutoff + self._tail_distance
+        self.cutoff = cutoff
 
         # Note that this is set within the `cellvec` property method.
         self._n_cells = None
 
     @property
-    def cutoff(self):
-        """Global cutoff for the diatomic interactions."""
-        return self._cutoff
-
-    @property
-    def base_cutoff(self) -> Tensor:
-        "Cutoff value without the smooth tail distance extension."
-        return self._base_cutoff
-
-    @property
-    def positive_extension(self):
-        return self._positive_extension
-
-    @property
-    def negative_extension(self):
-        return self._negative_extension
-
-    @property
-    def tail_distance(self):
-        return self._tail_distance
-    @property
     def positions(self):
         return self.geometry.positions
-
-    @positions.setter
-    def positions(self, value):
-        self.geometry = value
 
     @property
     def lattice(self):
@@ -133,7 +94,7 @@ class Periodicity(ABC):
 
     @cached_property('cellvec')
     def n_cells(self):
-        """Number of periodicity cell images within the cutoff distance."""
+        """Number of periodic cell images within the cutoff distance."""
 
         # The `cellvec` property has been marked as a dependency even though
         # the number of cells (`n_cells`) is not technically its dependency.
@@ -224,7 +185,7 @@ class Periodicity(ABC):
     @property
     def neighbour(self) -> Tensor:
         """A mask to choose atoms of images inside the cutoff distance."""
-        return self.get_neighbours(self.periodic_distances, self._cutoff)
+        return self.get_neighbours(self.periodic_distances, self.cutoff)
 
 
     @cached_property("positions_vec")
@@ -366,7 +327,6 @@ class Periodicity(ABC):
     @staticmethod
     def get_cell_translation_vector_indices(
             inverse_lattice_vector: Tensor, cutoff,
-            negative_extension: float = 1, positive_extension: float = 1,
             **kwargs):
         """Calculate cell translation vector indices."""
 
@@ -379,12 +339,12 @@ class Periodicity(ABC):
               'device': inverse_lattice_vector.device}
 
         # Ranges of cell translation on three dimensions
-        _tmp = bT(torch.floor(cutoff * bT(torch.norm(inverse_lattice_vector, dim=-1))))
+        n_images = bT(torch.ceil(cutoff * bT(torch.norm(
+            inverse_lattice_vector, dim=-1))))
 
-        ranges = torch.stack([-(negative_extension + _tmp),
-                                positive_extension + _tmp])
+        ranges = torch.stack([-n_images, n_images])
 
-        # For 1D/2D cell translation, non-periodicity direction will be zero
+        # For 1D/2D cell translation, non-periodic direction will be zero
         mask_zero = kwargs.get(
             'mask_zero', inverse_lattice_vector.eq(0).all(-1))
         ranges[torch.stack([mask_zero, mask_zero])] = 0
@@ -397,6 +357,8 @@ class Periodicity(ABC):
 
         # Cell translation vectors in relative coordinates
         if inverse_lattice_vector.ndim == 2:  # -> single
+            # Would be worth replacing this with `torch.cartesian_prod` at
+            # some point.
             cellvec = torch.stack([
                 torch.linspace(ranges[0, 0], ranges[1, 0],
                                leng[0], **dd).repeat_interleave(leng[2] * leng[1]),
@@ -427,16 +389,23 @@ class Periodicity(ABC):
         # It is worth noting that the `_n_cells` value will also be set here
         # for performance and stability reasons.
         cell_vectors, n_cells = self.get_cell_translation_vector_indices(
-            self._invlatvec, self._cutoff, self._positive_extension,
-            self._negative_extension, mask_zero=self._mask_zero)
+            self._invlatvec, self.cutoff, mask_zero=self._mask_zero)
 
         self._n_cells = n_cells
 
         return cell_vectors
 
     @staticmethod
-    def frac_to_cartesian(cell: Tensor, positions: Tensor) -> Tensor:
-        """Transfer fractional coordinates to cartesian coordinates."""
+    def frac_to_cartesian(lattice: Tensor, positions_frac: Tensor) -> Tensor:
+        """Convert fractional coordinates to cartesian coordinates.
+
+        Arguments:
+            lattice: Lattice vectors.
+            positions_frac: Positions of the atoms in fractional coordinates.
+
+        Returns:
+            positions_cart: Positions of the atoms in Cartesian coordinates.
+        """
         pass
 
     @staticmethod
@@ -465,38 +434,28 @@ class Triclinic(Periodicity):
     systems that can be described using three basis vectors.
 
     Arguments:
-        geometry: Geometry object from which informaiton like atomic positions
+        geometry: Geometry object from which information like atomic positions
             and lattice parameters are to be sourced.
-        cutoff: Interaction cutoff distance for reading SK table, with Bohr
-            as default unit.
-        tail_distance: distance by which the ``cutoff`` should be extended
-            to account for the tail commonly added to interactions to smootly
-            bring them to zero. Pratically speaking, the "true" cutoff distance
-            is taken to be ``cutoff`` + ``tail_distance`` in most sittuations.
-            However, the two values are still kept seperate for the time
-            being.
-        positive_extension: when identifying the set of neighbouring cell
-            images within the cutoff range the ``positive_extension``
-            indicates how many "extra" images should be included along
-            the positive direction. This is normally at least "1" to account
-            for rounding caused by the floor operation.
-        negative_extension: same as ``positive_extension``, but for the
-            negative latice vector direction. Again, this should normally
-            be at least one.
+        cutoff: Interaction cutoff distance for interactions in units of Bohr.
 
     Attributes:
         geometry: the associated `Geometry` instance.
+        cutoff: Interaction cutoff distance for interactions in units of Bohr.
+
+    Examples:
+
+        >>> import torch
+        >>> from tbmalt import Geometry
+        >>> geometry = Geometry(torch.tensor([1, 1]), torch.rand(2, 3),
+        ...                     lattice_vector=torch.eye(3) * 3.0, cutoff=2.0)
+        >>> pbc = geometry.periodicity
+        >>> print(pbc.positions_vec.shape)
+        torch.Size([27, 2, 2, 3])
 
     """
 
-    def __init__(
-            self, geometry: "Geometry", cutoff: Union[Tensor, float],
-            tail_distance: float = 1.0, positive_extension: int = 1,
-            negative_extension: int = 1):
-        super().__init__(
-            geometry, cutoff, tail_distance=tail_distance,
-            positive_extension=positive_extension,
-            negative_extension=negative_extension)
+    def __init__(self, geometry: "Geometry", cutoff: Union[Tensor, float]):
+        super().__init__(geometry, cutoff)
 
     @property
     def pbc(self) -> Tensor:
@@ -513,10 +472,10 @@ class Triclinic(Periodicity):
             raise ValueError('Input cell should be defined by three '
                              'lattice vectors.')
 
-        # Masks of periodicity systems
+        # Masks of periodic systems
         _is_periodic: Tensor = self.lattice.ne(0).any(-1).any(-1)
 
-        # Check the dimensions of periodicity boundary condition
+        # Check the dimensions of periodic boundary condition
         _sum_dim = self.lattice.ne(0).any(-1).sum(dim=-1)
         _dim_pe = self.lattice.ne(0).any(-1)
 
@@ -530,37 +489,34 @@ class Triclinic(Periodicity):
                 raise NotImplementedError(
                     'Mixing of different types of pbcs is not supported.')
             else:
-                # Check directions of periodicity boundary condition
+                # Check directions of periodic boundary condition
                 if not torch.all(torch.tensor([torch.all(idp == _dim_pe[0])
                                                for idp in _dim_pe])):
-                    # Different periodicity directions but same type of pbc
+                    # Different periodic directions but same type of pbc
                     pbc = _dim_pe
                 else:
-                    # Same periodicity directions
+                    # Same periodic directions
                     pbc = _dim_pe[0]
 
         return pbc
 
     @staticmethod
-    def frac_to_cartesian(lattice: Tensor, positions: Tensor) -> Tensor:
-        """Transfer fractional coordinates to cartesian coordinates.
+    def frac_to_cartesian(lattice: Tensor, positions_frac: Tensor) -> Tensor:
+        """Convert fractional coordinates to cartesian coordinates.
 
         Arguments:
             lattice: Lattice vectors.
-            positions: Atomic positions.
+            positions_frac: Positions of the atoms in fractional coordinates.
+
+        Returns:
+            positions_cart: Positions of the atoms in Cartesian coordinates.
         """
-        # Whether fraction coordinates in the range [0, 1)
-        if torch.any(positions >= 1) or torch.any(positions < 0):
-            # Operate on a copy so that the original is not modified.
-            positions = positions.clone()
+        # Wrap the fractional coordinates to the domain [0, 1) if necessary.
+        if not (positions_frac.ge(0).all() and positions_frac.lt(1).all()):
+            positions_frac = positions_frac.remainder(1.0)
 
-            positions = torch.abs(positions) - torch.floor(
-                torch.abs(positions))
-
-        # Transfer from fractional to cartesian coordinates
-        positions: Tensor = torch.matmul(positions, lattice)
-
-        return positions
+        # Covert from fractional to cartesian coordinates & return the result
+        return torch.matmul(positions_frac, lattice)
 
     def get_cell_lengths(self) -> Tensor:
         """Get the length of each lattice vector."""

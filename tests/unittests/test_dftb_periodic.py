@@ -15,8 +15,6 @@ torch.set_default_dtype(torch.float64)
 # Todo:
 #   - Gradiant tests should be added once backpropagatable feeds have been
 #     implemented.
-#   - add more tests for DFTB2 calculations, right now only atomic charges
-
 
 @pytest.fixture
 def feeds_nscc(device, skf_file):
@@ -65,7 +63,7 @@ def feeds_scc_pbc(device, skf_file_pbc):
 
 def H2(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([10.98], device=device)
 
     geometry = Geometry(
         torch.tensor([1, 1], device=device),
@@ -94,7 +92,7 @@ def H2(device):
 
 def H2_scc(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([10.98], device=device)
 
     geometry = Geometry(
         torch.tensor([1, 1], device=device),
@@ -129,7 +127,7 @@ def H2_scc(device):
 
 def CH4(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([10.98], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 1, 1, 1, 1], device=device),
@@ -163,7 +161,7 @@ def CH4(device):
 
 def CH4_scc(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([10.98], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 1, 1, 1, 1], device=device),
@@ -202,7 +200,7 @@ def CH4_scc(device):
 
 def H2O(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([10.98], device=device)
 
     geometry = Geometry(
         torch.tensor([1, 8, 1], device=device),
@@ -233,7 +231,7 @@ def H2O(device):
 
 def H2O_scc(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([10.98], device=device)
 
     geometry = Geometry(
         torch.tensor([1, 8, 1], device=device),
@@ -269,7 +267,7 @@ def H2O_scc(device):
 
 def C2H6(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([10.98], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 6, 1, 1, 1, 1, 1, 1], device=device),
@@ -307,7 +305,7 @@ def C2H6(device):
 
 def C2H6_scc(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([10.98], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 6, 1, 1, 1, 1, 1, 1], device=device),
@@ -349,7 +347,7 @@ def C2H6_scc(device):
 
 
 def Si_cubic_siband(device):
-    cutoff = torch.tensor([18.0], device=device)
+    cutoff = torch.tensor([19.0], device=device)
 
     geometry = Geometry(
         torch.tensor([14, 14, 14, 14, 14, 14, 14, 14], device=device),
@@ -390,7 +388,7 @@ def Si_cubic_siband(device):
 
 
 def Si_hexagonal_siband(device):
-    cutoff = torch.tensor([18.0], device=device)
+    cutoff = torch.tensor([19.0], device=device)
 
     geometry = Geometry(
         torch.tensor([14, 14, 14, 14], device=device),
@@ -426,7 +424,7 @@ def Si_hexagonal_siband(device):
 
 
 def Si_cubic_pbc(device):
-    cutoff = torch.tensor([18.0], device=device)
+    cutoff = torch.tensor([19.0], device=device)
 
     geometry = Geometry(
         torch.tensor([14, 14, 14, 14, 14, 14, 14, 14], device=device),
@@ -467,7 +465,7 @@ def Si_cubic_pbc(device):
 
 
 def Si_hexagonal_pbc(device):
-    cutoff = torch.tensor([18.0], device=device)
+    cutoff = torch.tensor([19.0], device=device)
 
     geometry = Geometry(
         torch.tensor([14, 14, 14, 14], device=device),
@@ -503,7 +501,7 @@ def Si_hexagonal_pbc(device):
 
 
 def SiC_cubic_pbc(device):
-    cutoff = torch.tensor([18.0], device=device)
+    cutoff = torch.tensor([19.0], device=device)
 
     geometry = Geometry(
         torch.tensor([14, 14, 14, 14, 6, 6, 6, 6], device=device),

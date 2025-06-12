@@ -81,7 +81,7 @@ def periodic_geometry_basic_helper(device, positions, atomic_numbers, lattice):
     check_1 = (torch.allclose(geom_1.atomic_numbers, atomic_numbers_ref)
                and torch.allclose(geom_1.positions, positions_ref)
                and torch.allclose(geom_1.lattice, lattice_ref))
-    assert check_1, 'Periodicity geometry was not instantiated correctly'
+    assert check_1, 'Periodic geometry was not instantiated correctly'
 
     # Check 2: Check unit conversion
     geom_2 = Geometry(atomic_numbers, positions_angstrom,
@@ -166,7 +166,7 @@ def periodic_geometry_basic_helper(device, positions, atomic_numbers, lattice):
 
 
 def test_periodic_geometry_single(device):
-    """General test of Geometry and Cell modules for single periodicity system."""
+    """General test of Geometry and Cell modules for single periodic system."""
     periodic_geometry_basic_helper(device, positions_data(device),
                                    atomic_numbers_data(device),
                                    lattice_data(device))
@@ -194,7 +194,7 @@ def test_periodic_geometry_single(device):
 
 
 def test_periodic_geometry_batch(device):
-    """General test of Geometry and Cell modules for batch periodicity systems."""
+    """General test of Geometry and Cell modules for batch periodic systems."""
     periodic_geometry_basic_helper(device, positions_data(device, True),
                                    atomic_numbers_data(device, True),
                                    lattice_data(device, True))
@@ -280,7 +280,7 @@ def test_periodic_geometry_addition(device):
 
 
 def test_periodic_geometry_property(device):
-    """Test property generation of periodicity geometry."""
+    """Test property generation of periodic geometry."""
     # Build 1D/2D/3D pbc geometry
     lattices_3d = torch.tensor([[4., 4., 0.], [0., 4., 4.], [4., 0., 4.]],
                             device=device)
@@ -518,7 +518,7 @@ def test_periodic_geometry_hdf5_batch(device, tmpdir):
 ####################
 # Cell translation #
 ####################
-def _get_cell_trans(latVec, cutoff, negExt=1, posExt=1, unit='bohr'):
+def _get_cell_trans(latVec, cutoff, unit='bohr'):
     """Reproduce code originally from DFTB+ to test TBMaLT.
     This code is for single geometry and not vectorized, to act
     as a reference for cell translation code in TBMaLT."""
@@ -528,12 +528,12 @@ def _get_cell_trans(latVec, cutoff, negExt=1, posExt=1, unit='bohr'):
         latVec = latVec * length_units[unit]
     recVec = torch.inverse(latVec)
 
-    # get ranges of periodicity boundary condition from negative to positive
+    # get ranges of periodic boundary condition from negative to positive
     ranges = torch.zeros((2, 3), dtype=torch.int, device=device)
     for ii in range(3):
-        iTmp = torch.floor(cutoff * torch.sqrt(sum(recVec[:, ii] ** 2)))
-        ranges[0, ii] = -negExt - iTmp
-        ranges[1, ii] = posExt + iTmp
+        iTmp = torch.ceil(cutoff * torch.sqrt(sum(recVec[:, ii] ** 2)))
+        ranges[0, ii] = -iTmp
+        ranges[1, ii] = +iTmp
 
     # Length of the first, second and third column in ranges
     leng1, leng2, leng3 = ranges[1, :] - ranges[0, :] + 1
