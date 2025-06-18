@@ -3,7 +3,7 @@
 import numpy as np
 import torch
 
-from typing import Optional, Dict, Any, Literal, Union, Tuple
+from typing import Optional, Dict, Any, Literal, Union, Tuple, Callable
 import warnings
 
 from tbmalt.ml.module import Calculator
@@ -1333,8 +1333,7 @@ class Dftb2(Calculator):
     def forward(
             self, cache: Optional[Dict[str, Any]] = None,
             grad_mode: Literal["direct", "last_step", "implicit"] | str = "last_step",
-            **kwargs
-            ) -> Tensor:
+            implicit_mixer: Optional[Mixer] = None, **kwargs) -> Tensor:
         """Execute the SCC-DFTB calculation.
 
         Invoking this will trigger the execution of the self-consistent-charge
@@ -1345,6 +1344,7 @@ class Dftb2(Calculator):
                 the calculation. Currently supported values are:
 
                     - "q_initial": initial starting guess for the SCC cycle.
+
             grad_mode: controls gradient mode is used when running the SCC
                 cycles. Available options are [DEFAULT:"last_step"]:
 
@@ -1355,11 +1355,20 @@ class Dftb2(Calculator):
                         run a single SCC step within the graph using the
                         converged charges as the initial "guess".
                     - "implicit": uses implicit function theorem to accurately
-                        and memory efficiently compute the derivative.
-                        Uses the DFTB2 mixer except when provided custom mixer
-                        via 'implicit_mixer' keyword argument.
-                        Note: The mixer accuracy effects the gradient accuracy.
-                        
+                        and memory efficiently compute the derivative. This
+                        requires the use of an iterative solver. By default,
+                        the solver will employ the same mixer provided for
+                        the SCC cycle, `DFTB2.mixer`. It is critical to note
+                        that the accuracy of the gradients produced by the
+                        implicit method is directly tied to the tolerance
+                        and stability of the mixer. As such a different
+                        dedicated mixer can be supplied via the
+                        ``implicit_mixer`` argument.
+
+            implicit_mixer: This can be used to provide a dedicated mixer
+                to be used by the implicit solver used when using the
+                "implicit" ``grad_mode``. See discussion of the "implicit"
+                option of the ``grad_mode`` argument description.
 
         Returns:
             total_energy: total energy for the target systems this will include
@@ -1384,6 +1393,9 @@ class Dftb2(Calculator):
         if cache is not None:
             kwargs_in.update(cache)
 
+        # Core Hamiltonian, overlap, and gamma matrices
+        hsg_args = (self.core_hamiltonian, self.overlap, self.gamma)
+
         # Step 2: SCC Cycle
         # The following block performs the actual SCC cycle. However, different
         # approaches are needed depending on what gradient mode is to be used.
@@ -1392,71 +1404,58 @@ class Dftb2(Calculator):
         if grad_mode == "direct":
             (q_out, self._hamiltonian, self.eig_values, self.eig_vectors,
              self.rho) = Dftb2.scc_cycle(
-                self.q_zero_res, self.orbs, self.core_hamiltonian,
-                self.overlap, self.gamma, **kwargs_in)
+                self.q_zero_res, self.orbs, *hsg_args, **kwargs_in)
 
-        # In the "last step" approach the SCC cycle is performed outside the
-        # purview of the graph and is used only to obtain the converged
-        # charges. Following this, an additional "SCC step" is performed within
-        # the PyTorch graph. The emulates what would happen if one were to
-        # perform the SCC cycle using a highly accurate initial guess for the
-        # charges.
-        elif grad_mode == "last_step":
+        elif grad_mode == "last_step" or grad_mode == "implicit":
 
-           # Calls to the necessary properties are made here so that they are
-            # computed within the graph.
-            self.overlap, self.core_hamiltonian, self.invr, self.gamma 
-            # q_zero_res is not cached and so is stored as a variable
-            q_zero_res = self.q_zero_res
-            
-            with torch.no_grad():
-                q_out, *_ = Dftb2.scc_cycle(
-                    q_zero_res, self.orbs, self.core_hamiltonian,
-                    self.overlap, self.gamma, **kwargs_in)
+            # In the "last step" approach the SCC cycle is performed outside the
+            # purview of the graph and is used only to obtain the converged
+            # charges. Following this, an additional "SCC step" is performed within
+            # the PyTorch graph. The emulates what would happen if one were to
+            # perform the SCC cycle using a highly accurate initial guess for the
+            # charges. The "implicit" approach adds a correction factor to the
+            # gradient.
 
-            (q_out, self.hamiltonian, self.eig_values, self.eig_vectors,
-             self.rho) = Dftb2.scc_step(
-                q_out, self.q_zero_res, self.core_hamiltonian, self.overlap,
-                self.gamma, self.orbs, self.n_electrons, **kwargs_in)
-
-        # The implicit method is yet to be implemented. This should give the
-        # "correct" gradient and so will become the default one implemented.
-        elif grad_mode == "implicit":
-            # Use user defined mixer if provided, otherwise use same mixer as SCC
-            implicit_mixer = kwargs.get('implicit_mixer', self.mixer)
-
-            q_current = self.q_zero_res
-            if cache is not None:
-                q_current = cache.get('q_initial', q_current)
-
-            q_converged = torch.zeros_like(q_current)
-            self.overlap, self.core_hamiltonian, self.invr, self.gamma
+            # The arguments to be supplied to the `scc_step` function are
+            # first aggregated here into `step_args`. This is not done only for
+            # the sake of brevity, but to ensure the first call made to these
+            # properties is not done so from within a `torch.no_grad` context.
+            # If this is not done then the cached properties will not be
+            # compatible with the auto-grad graph.
+            step_args = (self.q_zero_res, *hsg_args, self.orbs,
+                         self.n_electrons)
 
             with torch.no_grad():
                 q_converged, *_ = Dftb2.scc_cycle(
-                    self.q_zero_res, self.orbs, self.core_hamiltonian,
-                    self.overlap, self.gamma, **kwargs_in)
-            #reconnect q_out to the graph
-            q_converged, *_ = Dftb2.scc_step(
-                q_converged, self.q_zero_res, self.core_hamiltonian, self.overlap,
-                self.gamma, self.orbs, self.n_electrons, **kwargs_in)
-            #Set up imlicit func theorem
-            q0 = q_converged.clone().detach().requires_grad_()
-            f0, *_ = Dftb2.scc_step(
-                q0, self.q_zero_res, self.core_hamiltonian, self.overlap,
-                self.gamma, self.orbs, self.n_electrons, **kwargs_in)
-            def backward_hook(grad):
-                g = Dftb2._impl_solver(lambda y : torch.autograd.grad(f0, q0, y, retain_graph=True)[0] + grad,
-                               grad, params=(), mixer = implicit_mixer)
-                return g
-            # hook into q_out grad
-            q_converged.register_hook(backward_hook)
+                    self.q_zero_res, self.orbs, *hsg_args, **kwargs_in)
 
-            #Run scc again so other values are effected by new gradient
+            if grad_mode == "implicit":
+                # The implicit method requires the parameter-to-charge gradient
+                # path. Thus, an initial single SCC step must be performed to
+                # "re-attach" the charges. Note that this is in addition to the
+                # final re-attachment call made later on which connects the
+                # other side of the path, i.e. charge-to-properties.
+                q_converged, *_ = Dftb2.scc_step(q_converged, *step_args, **kwargs_in)
+
+                # Construct a second isolated graph which can be used to
+                # compute dF/dq.
+                q0 = q_converged.clone().detach().requires_grad_()
+                f0, *_ = Dftb2.scc_step(q0, *step_args, **kwargs_in)
+
+                # Create and register the gradient callback hook. This will
+                # compute and apply the gradient correction during the
+                # backwards pass. This will use the same mixer as the SCC
+                # cycle unless the user provides a dedicated mixer.
+                implicit_mixer = (self.mixer if implicit_mixer is None
+                                  else implicit_mixer)
+                q_converged.register_hook(self._implicit_solver_hook(
+                    f0, q0, implicit_mixer, self.max_scc_iter,
+                    self.suppress_scc_error))
+
+            # Perform a single SCC step to reconnect q_converged to the graph
+            # so that the auto-grad can pass through the SCC operation.
             (q_out, self.hamiltonian, self.eig_values, self.eig_vectors,
-             self.rho) = Dftb2.scc_step(
-                q_converged, self.q_zero_res, self.core_hamiltonian, self.overlap,
-                self.gamma, self.orbs, self.n_electrons, **kwargs_in)
+             self.rho) = Dftb2.scc_step(q_converged, *step_args, **kwargs_in)
 
         else:
             raise ValueError(
@@ -1466,26 +1465,95 @@ class Dftb2(Calculator):
         # Calculate and return the total system energy, taking into account
         # the entropy term as and when necessary.
         return self.mermin_energy
-    
-    @staticmethod
-    def _impl_solver(fnc, grad_current, params = None, mixer = Anderson, max_iter = 200, suppress_SCF_error = False, **kwargs):
-        with torch.no_grad():
-            mixer.reset()
-            grad_converged = torch.zeros_like(grad_current)
-            for step in range(1, max_iter + 1):
-                grad_current = mixer(
-                        fnc(grad_current, *params),
-                        grad_current,
-                        )
-                if torch.all(mixer.converged):
-                    grad_converged[:] = grad_current[:]
-                    break
-            else:
-                if not suppress_SCF_error:
-                    raise RuntimeError("Implicit solver cycle did not converge.")
-    
-        return grad_converged
 
+
+    @staticmethod
+    def _implicit_solver_hook(
+            outputs: Tensor, inputs: Tensor, mixer: Mixer, max_iter: int,
+            suppress_scc_error: bool) -> Callable[[Tensor], Tensor]:
+        r"""Autograd hook that applies implicit-function gradient correction.
+
+        The returned callable is meant to be registered on the converged
+        charge tensor via ``Tensor.register_hook``. During the backward
+        pass the hook
+
+            1. uses `torch.autograd.grad(outputs, inputs, v)` to obtain the
+               vector–Jacobian product :math:`J^{T}\cdot v`,
+            2. iteratively solves the linear system
+               :math:`(I − J^{T}) g = \text{incoming_grad}` with the supplied
+               ``mixer``,
+            3. returns the converged `g`, thereby replacing the naive
+               gradient with the fully corrected one.
+
+        Arguments:
+            outputs: Tensor representing a single SCC step evaluated at the
+                converged charges; provides the *outputs* side of the vector-
+                Jacobian product (VJP) `torch.autograd.grad` call.
+            inputs: Leaf tensor holding the converged charges; supplies the
+                *inputs* side of the VJP.
+            mixer: `Mixer` instance used as the fixed-point accelerator for
+                the implicit solver. It will be reset each time the hook is
+                invoked.
+            max_iter: Maximum number of iterations allowed for the implicit
+                solver before convergence is deemed to have failed.
+            suppress_scc_error: If `True`, the hook will silently return the
+                last iterate when the iteration budget is exhausted; otherwise
+                a `ConvergenceError` is raised.
+
+        Returns:
+            autograd_hook: A callable `hook(grad) -> Tensor` suitable for
+                registration with `Tensor.register_hook`.
+
+        Raises:
+            ConvergenceError: If the implicit solver fails to converge within
+                ``max_iter`` steps and ``suppress_scc_error`` is `False`.
+        """
+
+        is_batch = outputs.ndim <= 2
+
+        def autograd_hook(grad: Tensor) -> Tensor:
+            # Reset the mixer & ensure batch-mode is set appropriately
+            mixer.reset()
+            mixer.is_batch = is_batch
+
+            # The variable `grad_current` is used to stor the starting point
+            # for the iterative solver and the mixed result at the end of each
+            # step of an unconverged system.
+            grad_current = grad
+
+            # Loop the self-consistent gradient solver until convergence is
+            # achieved or the iteration limit is reached.
+            for step in range(1, max_iter + 1):
+
+                # Compute the new updated gradient
+                grad_new = torch.autograd.grad(outputs, inputs, grad_current,
+                                               retain_graph=True)[0] + grad
+
+                # Check which systems have converged
+                converged = grad_new.sub(grad_current).abs().le(
+                    mixer.tolerance).all(dim=grad_new.dim_order()[1:])
+
+                # If the gradients for all systems have been converged then
+                # return the new corrected gradients.
+                if converged.all():
+                    # Unlike the SCC cycle function, this does not sequentially
+                    # cull individual systems within as batch as they converge.
+                    # The cost of no doing this should be competitively low
+                    # with minimal adverse effects.
+                    return grad_new
+
+                # If convergence has not yet been achieved, then mix & continue
+                grad_current = mixer(grad_new, grad_current)
+
+            # If the iteration limit has been reached, an exception should be
+            # raised, unless otherwise instructed.
+            else:
+                if not suppress_scc_error:
+                    raise ConvergenceError(
+                        "Implicit solver did not converge; "
+                        "iteration limit reached.")
+
+        return autograd_hook
 
     def reset(self):
         """Reset all attributes and cached properties."""
