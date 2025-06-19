@@ -6,31 +6,28 @@ code. The `Geometry` class is intended to hold any & all data needed to fully
 describe a chemical system's structure.
 """
 from typing import Union, List, Optional, Type, Tuple
+import warnings
 from operator import itemgetter
 import torch
+from torch import Tensor
 import numpy as np
 from h5py import Group
 from ase import Atoms
 from ase.lattice.bravais import Lattice
-from tbmalt.structures.periodicity import Triclinic
+from tbmalt.structures.periodicity import Triclinic, Periodicity
 from tbmalt.common.batch import pack, merge, deflate
 from tbmalt.data.units import length_units
 from tbmalt.data import chemical_symbols
 
-Tensor = torch.Tensor
-
-
 # Todo:
-#   - The `clone` and `detach` methods do not support periodic systems.
-#   - Currently the cutoff value is being stored in two places, the `Geometry`
-#     class and the `Periodicity` class. Furthermore, it is being modified
-#     within the latter. There should be a single centralised place in which
-#     this value is stored.
 #   - Currently periodic systems are hard-coded to use the `Triclinic` periodic
 #     helper class. Note that triclinic is used in reference to the general
 #     geometric shape and not the specific crystal structure. This is done
 #     because only one type of periodic boundary condition is supported at this
-#     time. Later this should be generalised.
+#     time. Later this should be generalised. Hardcoding is present in both the
+#     `__init__` and `__preprocess` methods.
+#   - The `distance_vectors` & `distances` properties should be converted into
+#     cached functions & updated to respect periodic boundary conditions.
 
 
 class Geometry:
@@ -43,22 +40,41 @@ class Geometry:
 
     Arguments:
         atomic_numbers: Atomic numbers of the atoms.
-        positions : Coordinates of the atoms.
-        lattice_vector: Lattice vectors of the periodicity systems. [DEFAULT: None]
-        frac: Whether using fractional coordinates to describe periodicity
+        positions : Atomic coordinates are specified via an "Nx3" tensor for
+            single system instances, where "N" is the nubmer of atoms. For
+            batch instanes either i) a single zero-padded "BxMxN" tensor may
+            be specified, where "B" is the number of batches and "M" is the
+            number of atoms in the largest system, or ii) a list of "Nx3"
+            tensors may be provided.
+        lattice_vector: Lattice vectors of the periodic systems. This is
+            argument, commonly a 3x3 tensor, is only relevant for periodic
+            systems. This is used by underlying `Periodicity` instances to
+            construct periodic dependant properties. [DEFAULT: None]
+        frac: Whether using fractional coordinates to describe periodic
             systems. [DEFAULT: False]
-        cutoff: Global cutoff for the diatomic interactions in periodicity
-            systems. [DEFAULT: 9.98].
-        units: Unit in which ``positions``, ``cells``, and ``cutoff`` were
-            specified. For a list of available units see :mod:`.units`
+        cutoff: Global cutoff for the diatomic interactions in periodic
+            systems. Currently, this value is only used by periodic systems
+            when computing the number of cell images that must be considered.
+            However, this will be used in the future by interaction pair
+            generator methods to limit the number of evaulations necessary.
+            A default cutoff distance of 11 Bohr has been chosen for
+            performance reasons. It is important to note that this falls well
+            below cutoffs values typically used in operations like constructing
+            gamma matrices in DFTB. This can have a noticeable impact on
+            accuracy. For calculations requiring strict convergence, increase
+            ``cutoff`` to a value exceeding the gamma matrix cut-offs listed
+            in :mod:`tbmalt.data.elements`. [DEFAULT: 11.0]
+        units: Unit in which ``positions``, ``lattice_vector``, & ``cutoff``
+            were specified. For a list of available units see :mod:`.units`
             [DEFAULT='bohr'].
 
     Attributes:
         atomic_numbers: Atomic numbers of the atoms.
         positions: Coordinates of the atoms.
         n_atoms: Number of atoms in the system.
-        periodicity: Periodicity object that offer helper methods for periodic
-            systems.
+        periodicity: `Periodicity` object that offers helper methods for
+            periodic systems. Geometric properties like distances should
+            be accessed via this entity when working with periodic systems.
         lattice: the lattice vectors.
 
     Notes:
@@ -68,16 +84,17 @@ class Geometry:
         associated numpy arrays, nor will they inherit their dtype.
 
     Warnings:
-        At this time, 1D & 2D & 3D periodicity boundary conditions are supported,
-        but mixing of different types of periodicity boundary conditions is
+        At this time, 1D & 2D & 3D periodic boundary conditions are supported,
+        but mixing of different types of periodic boundary conditions is
         forbidden. The mixing of fractional and cartesian coordinates is
-        also forbidden. While Helical periodicity boundary condition is not
+        also forbidden. While Helical periodic boundary condition is not
         supported.
 
     Examples:
         Geometry instances may be created by directly passing in the atomic
         numbers & atom positions
 
+        >>> import torch
         >>> from tbmalt import Geometry
         >>> H2 = Geometry(torch.tensor([1, 1]),
         >>>               torch.tensor([[0.00, 0.00, 0.00],
@@ -87,6 +104,7 @@ class Geometry:
 
         Or from an ase.Atoms object
 
+        >>> from tbmalt import Geometry
         >>> from ase.build import molecule
         >>> CH4_atoms = molecule('CH4')
         >>> print(CH4_atoms)
@@ -100,12 +118,12 @@ class Geometry:
 
     """
 
-    __slots__ = ['atomic_numbers', '_positions', 'n_atoms', 'periodicity',
-                 'lattice', '_cutoff', '_n_batch',
+    __slots__ = ['atomic_numbers', 'positions', 'n_atoms', 'periodicity',
+                 'lattice', '_n_batch',
                  '__dtype', '__device']
 
     # Developers notes technically the `cutoff` argument has the default value
-    # of `None`. However, this is assigned to 9.98 bohr internally after the
+    # of `None`. However, this is assigned to 11.00 bohr internally after the
     # fact. This is done to prevent the default value from undergoing a unit
     # conversion if the user provides the atomic positions and lattice vectors
     # in units other than atomic units.
@@ -117,18 +135,18 @@ class Geometry:
                 Union[Tensor, List[Tensor], Type[Lattice]]] = None,
             frac: bool = False,
             cutoff: Optional[Union[Tensor, float]] = None,
-            units: str = 'bohr'):
+            units: str = 'bohr', **kwargs):
 
         # Perform general preprocessing and sanitisation of the inputs
         atomic_numbers, positions, lattice_vector, cutoff = self.__preprocess(
             atomic_numbers, positions, lattice_vector, cutoff, frac, units)
 
         self.atomic_numbers: Tensor = atomic_numbers
-        self._positions: Tensor = positions
+        self.positions = positions
 
         # These are static, private variables and must NEVER be modified!
-        self.__device = self._positions.device
-        self.__dtype = self._positions.dtype
+        self.__device = self.positions.device
+        self.__dtype = self.positions.dtype
 
         self.n_atoms: Tensor = self.atomic_numbers.count_nonzero(-1)
 
@@ -137,21 +155,19 @@ class Geometry:
                                         else len(atomic_numbers))
 
         if lattice_vector is not None:
-            # Todo: Abstract cutoff out of the Geometry class
-            # Cutoff distance for the diatomic interactions in periodicity systems
-            self._cutoff = torch.tensor(
-                [9.98], device=self.__device, dtype=self.__dtype
+            # Cutoff distance for the diatomic interactions in periodic systems
+            cutoff = torch.tensor(
+                [11.], device=self.__device, dtype=self.__dtype
             ) if cutoff is None else cutoff
 
             self.lattice = lattice_vector
-            self.periodicity = Triclinic(self, self._cutoff)
+
+            # Currently periodicity is hardcoded to be triclinic
+            self.periodicity: Periodicity = Triclinic(self, cutoff)
 
         else:
-            # Todo: Abstract cutoff out of the Geometry class
-            self._cutoff = None
             self.periodicity = None
             self.lattice = None
-        # Periodicity system specific components
 
     @staticmethod
     def __preprocess(
@@ -160,7 +176,8 @@ class Geometry:
             lattice_vector: Optional[Union[Tensor, List[Tensor], Type[Lattice]]],
             cutoff: Optional[Union[Tensor, float]],
             frac: bool, units: str):
-        """
+        """Perform general safety checks and conversion operations.
+
         This method just abstracts a lot of overly verbose and messy safety
         checks and conversions that are performed on the inputs. This is done
         to make the `__init__` method a little cleaner.
@@ -170,8 +187,25 @@ class Geometry:
         # 1) Ensure that `atomic_numbers` and `positions` are packed as needed,
         #    `pack` only effects lists of tensors, and deflate is used to
         #    remove any unnecessary padding.
-        atomic_numbers = deflate(pack(atomic_numbers))
-        positions = pack(positions)[..., :atomic_numbers.shape[-1], :]
+        if isinstance(atomic_numbers, list):
+            atomic_numbers = deflate(pack(atomic_numbers))
+
+        if isinstance(positions, list):
+            # Warn when batching gradient-tracked leaf-nodes.
+            if any([i.requires_grad and i.is_leaf for i in positions]):
+                warnings.warn(
+                    "Care must be taken, gradient-tracked leaf-node detected "
+                    "in auto-batch request. Atomic positions have been "
+                    "supplied as a list of tensors that are to be pack "
+                    "into a single batch tensor. One or more of the supplied "
+                    "tensors are gradient-tracked leaf-nodes, however these "
+                    "will not be stored within the  `Geometry` class, only the "
+                    "packed tensor that results from them. As such auto-grad "
+                    "related operations, such as `Geometry.positions.grad`, may "
+                    "not behave as expected.")
+            positions = pack(positions)[..., :atomic_numbers.shape[-1], :]
+
+        device = positions.device
 
         # 2) If the lattice vectors are supplied as ase.lattice.bravais.Lattice
         #    instances then the lattice vector arrays must be extracted from
@@ -183,17 +217,21 @@ class Geometry:
         if isinstance(lattice_vector, Lattice):
             lattice_vector = lattice_vector.cell.array
 
+        # Cast from a list ase `Lattice` instance to list of PyTorch arrays
         elif (isinstance(lattice_vector, list)
               and isinstance(lattice_vector[0], Lattice)):
-            lattice_vector = [i.cell.array for i in lattice_vector]
+            lattice_vector = [torch.tensor(
+                i.cell.array, device=device,
+                dtype=positions.dtype) for i in lattice_vector]
 
         if isinstance(lattice_vector, list):
-            lattice_vector = pack(lattice_vector).to(positions.device)
+            lattice_vector = pack(lattice_vector).to(device)
+
         elif isinstance(lattice_vector, np.ndarray):
-            lattice_vector = torch.tensor(lattice_vector).to(positions.device)
+            lattice_vector = torch.tensor(lattice_vector).to(device)
 
         # 3) Ensure tensors are on the same device (only two present currently)
-        if positions.device != atomic_numbers.device:
+        if device != atomic_numbers.device:
             raise RuntimeError('All tensors must be on the same device!')
 
         # 4) Lattice vectors many not be zero dimensional
@@ -203,7 +241,6 @@ class Geometry:
 
         # 5) Convert fractional positions to their Cartesian values
         if frac and lattice_vector is not None:
-            # Todo: Remove hard-coding to specific periodicity
             positions = Triclinic.frac_to_cartesian(lattice_vector, positions)
 
         # 6) a non-periodic system cannot be given in fractional coordinates
@@ -223,7 +260,7 @@ class Geometry:
 
         # 8) Check for shape discrepancies in `positions`, `atomic_numbers`, &
         #   `cells`. A position/atomic-number mismatch would have caused an
-        #   error in the first step so it technically does not need to be
+        #   error in the first step, so it technically does not need to be
         #   explicitly checked for.
         check_1 = positions.shape[:-1] == atomic_numbers.shape
         assert check_1, '`positions` & `atomic_numbers` shape mismatch found'
@@ -232,19 +269,6 @@ class Geometry:
             assert check_2, '`positions` & `lattice_vector` shape mismatch found'
 
         return atomic_numbers, positions, lattice_vector, cutoff
-
-    def _update(self):
-        pass
-
-    @property
-    def positions(self):
-        return self._positions
-
-    @positions.setter
-    def positions(self, value):
-        self._positions = value
-        if self.periodicity is not None:
-            self.periodicity._positions = value
 
     @property
     def device(self) -> torch.device:
@@ -264,13 +288,12 @@ class Geometry:
 
     @property
     def is_periodic(self) -> bool:
-        """If there is any periodicity boundary conditions."""
+        """If there is any periodic boundary conditions."""
         return False if self.periodicity is None else True
 
     @property
     def distances(self) -> Tensor:
         """Distance matrix between atoms in the system."""
-        # Todo: Modify to account for PBC
 
         # Ensure padding area is zeroed out
         # But don't modify in place
@@ -287,7 +310,6 @@ class Geometry:
     @property
     def distance_vectors(self) -> Tensor:
         """Distance vector matrix between atoms in the system."""
-        # Todo: Modify to account for PBC
         dist_vec = self.positions.unsqueeze(-2) - self.positions.unsqueeze(-3)
         dist_vec[self._mask_dist] = 0
         return dist_vec
@@ -299,7 +321,7 @@ class Geometry:
 
     @property
     def pbc(self) -> Union[bool, Tensor]:
-        """Directions along which the system is deemed to be periodicity."""
+        """Directions along which the system is deemed to be periodic."""
         return self.periodicity.pbc if self.periodicity is not None else False
 
     @property
@@ -352,7 +374,7 @@ class Geometry:
 
         Raises:
             NotImplementedError: If there is a mixing of `ase.Atoms` objects
-            that have both periodicity boundary conditions and non-periodicity
+            that have both periodic boundary conditions and non-periodic
             boundary conditions.
         """
         # If not specified by the user; ensure that the default dtype is used,
@@ -360,9 +382,9 @@ class Geometry:
         # *very* hard to diagnose errors.
         dtype = torch.get_default_dtype() if dtype is None else dtype
 
-        # Check periodicity systems
+        # Check periodic systems
         def check_not_periodic(atom_instance):
-            """Check whether a system is periodicity."""
+            """Check whether a system is periodic."""
             return True if atom_instance.pbc.any() else False
 
         if not isinstance(atoms, list):  # If a single system
@@ -521,9 +543,12 @@ class Geometry:
                 return self.__class__(self.atomic_numbers.to(device=device),
                                       self.positions.to(device=device))
             else:
-                return self.__class__(self.atomic_numbers.to(device=device),
-                                      self.positions.to(device=device),
-                                      self.lattice.to(device=device))
+                pbc = self.periodicity
+                return self.__class__(
+                    self.atomic_numbers.to(device=device),
+                    self.positions.to(device=device),
+                    lattice_vector=self.lattice.to(device=device),
+                    cutoff=pbc.cutoff.to(device=device))
 
     def __getitem__(self, selector) -> 'Geometry':
         """Permits batched Geometry instances to be sliced as needed."""
@@ -532,15 +557,19 @@ class Geometry:
             raise IndexError(
                 'Geometry slicing is only applicable to batches of systems.')
 
-        # Select the desired atomic numbers, positions and cells. Making sure
-        # to remove any unnecessary padding.
+        # Select the desired atomic numbers and positions.
         new_zs = deflate(self.atomic_numbers[selector, ...])
         new_pos = self.positions[selector, ...][..., :new_zs.shape[-1], :]
-        new_lattice = self.lattice[selector, ...] \
-            if self.lattice is not None else self.lattice
 
-        return self.__class__(
-            new_zs, new_pos, new_lattice, cutoff=self._cutoff)
+        if self.is_periodic:
+            pbc = self.periodicity
+            return self.__class__(
+                new_zs, new_pos, lattice_vector=self.lattice[selector, ...],
+                cutoff=pbc.cutoff.max())
+
+        else:
+            return self.__class__(new_zs, new_pos)
+
 
     def __add__(self, other: 'Geometry') -> 'Geometry':
         """Combine two `Geometry` objects together."""
@@ -561,9 +590,6 @@ class Geometry:
         cell_1 = self.lattice
         cell_2 = other.lattice
 
-        cutoff_1 = self._cutoff
-        cutoff_2 = other._cutoff
-
         pos_1 = pos_1 if s_batch else pos_1.unsqueeze(0)
         pos_2 = pos_2 if o_batch else pos_2.unsqueeze(0)
 
@@ -578,9 +604,17 @@ class Geometry:
         elif (cell_1 is not None and
               cell_2 is not None):  # -> Two PBC objects
 
+            pbc_1, pbc_2 = self.periodicity, other.periodicity
+
+            cutoff = torch.max(
+                pbc_1.cutoff.max(), pbc_2.cutoff.max())
+
             return self.__class__(
-                merge([an_1, an_2]), merge([pos_1, pos_2]),
-                merge([cell_1, cell_2]), cutoff=torch.max(cutoff_1, cutoff_2))
+                merge([an_1, an_2]),
+                merge([pos_1, pos_2]),
+                merge([cell_1, cell_2]),
+                cutoff=cutoff)
+
         else:  # -> One PBC object and one non-PBC object
             raise TypeError(
                 'Addition can not take place between a PBC object and '
@@ -649,7 +683,7 @@ class Geometry:
             # Wrap the formula(s) in the class name and return
             return f'{self.__class__.__name__}({formula})'
         else:  # Add PBC information
-            if self.pbc.ndim == 1:  # If same periodicity direction
+            if self.pbc.ndim == 1:  # If same periodic direction
                 formula_pbc = 'pbc=' + str(self.pbc.tolist())
             else:  # If multiple directions
                 if self.pbc.shape[0] <= 4:  # Show all
@@ -676,8 +710,12 @@ class Geometry:
             return self.__class__(self.atomic_numbers.clone(),
                                   self.positions.clone())
         else:
-            raise NotImplementedError(
-                "This operation does not support periodic systems")
+            pbc = self.periodicity
+            return self.__class__(
+                self.atomic_numbers.clone(),
+                self.positions.clone(),
+                lattice_vector=self.lattice.clone(),
+                cutoff=pbc.cutoff.clone())
 
     def detach(self) -> 'Geometry':
         """Returns a copy of the `Geometry` instance.
@@ -689,8 +727,12 @@ class Geometry:
             return self.__class__(self.atomic_numbers.detach(),
                                   self.positions.detach())
         else:
-            raise NotImplementedError(
-                "This operation does not support periodic systems")
+            pbc = self.periodicity
+            return self.__class__(
+                self.atomic_numbers.detach(),
+                self.positions.detach(),
+                lattice_vector=self.lattice.detach(),
+                cutoff=pbc.cutoff.detach())
 
 
 ####################

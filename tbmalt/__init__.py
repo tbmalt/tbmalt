@@ -9,4 +9,4 @@ from tbmalt.common.exceptions import *
 # Pull data structure classes up to the tbmalt top level domain namespace
 from tbmalt.structures.geometry import Geometry
 from tbmalt.structures.orbitalinfo import OrbitalInfo
-from tbmalt.structures.periodicity import Periodicity
+from tbmalt.structures.periodicity import Periodicity, Triclinic

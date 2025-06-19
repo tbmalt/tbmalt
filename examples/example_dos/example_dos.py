@@ -267,7 +267,7 @@ def dftb_results(numbers, positions, cells, **kwargs):
 
     # Build objects for DFTB calculations
     geometry = Geometry(numbers, positions, cells, units='a',
-                        cutoff=torch.tensor([18.0])/length_units['angstrom'])
+                        cutoff=torch.tensor([19.0])/length_units['angstrom'])
     orbs = OrbitalInfo(geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
     if not dftb:

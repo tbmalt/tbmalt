@@ -30,9 +30,9 @@ def systems(device) -> List[Geometry]:
     """
 
     # Cutoff in bohr
-    cutoff = torch.tensor([9.98], device=device) / length_units['angstrom']
+    cutoff = torch.tensor([10.98], device=device) / length_units['angstrom']
     # Au-Au cutoff
-    cutoff_2 = torch.tensor([18.38], device=device) / length_units['angstrom']
+    cutoff_2 = torch.tensor([19.38], device=device) / length_units['angstrom']
 
     H2 = Geometry(
         torch.tensor([1, 1], device=device),

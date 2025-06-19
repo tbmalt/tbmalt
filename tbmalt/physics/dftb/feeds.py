@@ -177,7 +177,7 @@ class ScipySkFeed(IntegralFeed):
         """Compute atomic interaction blocks (on-site and off-site) with pbc.
 
         Constructs the on-site and off-site atomic blocks using Slater-Koster
-        integral tables for periodicity systems.
+        integral tables for periodic systems.
 
         Arguments:
               atomic_idx_1: Indices of the 1'st atom associated with each
@@ -186,7 +186,7 @@ class ScipySkFeed(IntegralFeed):
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
               orbs: Orbital information associated with said systems.
-              periodic: Distance matrix and position vectors including periodicity
+              periodic: Distance matrix and position vectors including periodic
                   images.
 
           Returns:
@@ -697,7 +697,7 @@ class SkFeed(IntegralFeed):
         """Compute atomic interaction blocks (on-site and off-site) with pbc.
 
         Constructs the on-site and off-site atomic blocks using Slater-Koster
-        integral tables for periodicity systems.
+        integral tables for periodic systems.
 
         Arguments:
             atomic_idx_1: Indices of the 1'st atom associated with each

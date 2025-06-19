@@ -15,8 +15,6 @@ torch.set_default_dtype(torch.float64)
 # Todo:
 #   - Gradiant tests should be added once backpropagatable feeds have been
 #     implemented.
-#   - add more tests for DFTB2 calculations, right now only atomic charges
-
 
 @pytest.fixture
 def feeds_nscc(device, skf_file):
@@ -65,7 +63,7 @@ def feeds_scc_pbc(device, skf_file_pbc):
 
 def H2(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([20.], device=device)
 
     geometry = Geometry(
         torch.tensor([1, 1], device=device),
@@ -94,7 +92,7 @@ def H2(device):
 
 def H2_scc(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([20.], device=device)
 
     geometry = Geometry(
         torch.tensor([1, 1], device=device),
@@ -129,7 +127,7 @@ def H2_scc(device):
 
 def CH4(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([22.], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 1, 1, 1, 1], device=device),
@@ -163,7 +161,7 @@ def CH4(device):
 
 def CH4_scc(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([22.], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 1, 1, 1, 1], device=device),
@@ -202,7 +200,7 @@ def CH4_scc(device):
 
 def H2O(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([22.], device=device)
 
     geometry = Geometry(
         torch.tensor([1, 8, 1], device=device),
@@ -233,7 +231,7 @@ def H2O(device):
 
 def H2O_scc(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([22.], device=device)
 
     geometry = Geometry(
         torch.tensor([1, 8, 1], device=device),
@@ -269,7 +267,7 @@ def H2O_scc(device):
 
 def C2H6(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([25.], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 6, 1, 1, 1, 1, 1, 1], device=device),
@@ -307,7 +305,7 @@ def C2H6(device):
 
 def C2H6_scc(device):
 
-    cutoff = torch.tensor([9.98], device=device)
+    cutoff = torch.tensor([25.], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 6, 1, 1, 1, 1, 1, 1], device=device),
@@ -349,7 +347,7 @@ def C2H6_scc(device):
 
 
 def Si_cubic_siband(device):
-    cutoff = torch.tensor([18.0], device=device)
+    cutoff = torch.tensor([19.0], device=device)
 
     geometry = Geometry(
         torch.tensor([14, 14, 14, 14, 14, 14, 14, 14], device=device),
@@ -390,7 +388,7 @@ def Si_cubic_siband(device):
 
 
 def Si_hexagonal_siband(device):
-    cutoff = torch.tensor([18.0], device=device)
+    cutoff = torch.tensor([19.0], device=device)
 
     geometry = Geometry(
         torch.tensor([14, 14, 14, 14], device=device),
@@ -426,7 +424,7 @@ def Si_hexagonal_siband(device):
 
 
 def Si_cubic_pbc(device):
-    cutoff = torch.tensor([18.0], device=device)
+    cutoff = torch.tensor([33.0], device=device)
 
     geometry = Geometry(
         torch.tensor([14, 14, 14, 14, 14, 14, 14, 14], device=device),
@@ -467,7 +465,7 @@ def Si_cubic_pbc(device):
 
 
 def Si_hexagonal_pbc(device):
-    cutoff = torch.tensor([18.0], device=device)
+    cutoff = torch.tensor([33.0], device=device)
 
     geometry = Geometry(
         torch.tensor([14, 14, 14, 14], device=device),
@@ -503,7 +501,7 @@ def Si_hexagonal_pbc(device):
 
 
 def SiC_cubic_pbc(device):
-    cutoff = torch.tensor([18.0], device=device)
+    cutoff = torch.tensor([33.0], device=device)
 
     geometry = Geometry(
         torch.tensor([14, 14, 14, 14, 6, 6, 6, 6], device=device),
@@ -602,7 +600,7 @@ def dftb2_helper(calculator, geometry, orbs, results):
 
     def check_allclose(i):
         predicted = getattr(calculator, i)
-        is_close = torch.allclose(predicted, results[i], atol=1E-10)
+        is_close = torch.allclose(predicted, results[i], atol=1E-10, rtol=1E-8)
         assert is_close, f'Attribute {i} is in error for system {geometry}'
         if isinstance(predicted, torch.Tensor):
             device_check = predicted.device == calculator.device
@@ -648,7 +646,7 @@ def test_dftb2_single(device, feeds_scc):
     h_feed, s_feed, o_feed, u_feed, r_feed = feeds_scc
 
     systems = [H2_scc, H2O_scc, CH4_scc, C2H6_scc]
-    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
 
     for system in systems:
         geometry, orbs, results, kwargs = system(device)
@@ -665,8 +663,11 @@ def test_dftb2_batch(device, feeds_scc):
     batches = [[H2_scc], [H2_scc, H2O_scc], [H2_scc, H2O_scc, CH4_scc],
                [H2_scc, H2O_scc, CH4_scc, C2H6_scc]]
 
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
+
     for batch in batches:
         geometry, orbs, results, kwargs = merge_systems(device, *batch)
+        kwargs['mix_params'] = mix_params
 
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, r_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
@@ -678,7 +679,7 @@ def test_dftb2_siband_single(device, feeds_scc_siband):
     h_feed, s_feed, o_feed, u_feed, r_feed = feeds_scc_siband
 
     systems = [Si_cubic_siband, Si_hexagonal_siband]
-    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
 
     for system in systems:
         geometry, orbs, results, kwargs = system(device)
@@ -694,8 +695,11 @@ def test_dftb2_siband_batch(device, feeds_scc_siband):
 
     batches = [[Si_cubic_siband], [Si_cubic_siband, Si_hexagonal_siband]]
 
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
+
     for batch in batches:
         geometry, orbs, results, kwargs = merge_systems(device, *batch)
+        kwargs['mix_params'] = mix_params
 
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, r_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
@@ -707,7 +711,7 @@ def test_dftb2_pbc_single(device, feeds_scc_pbc):
     h_feed, s_feed, o_feed, u_feed, r_feed = feeds_scc_pbc
 
     systems = [Si_cubic_pbc, Si_hexagonal_pbc, SiC_cubic_pbc]
-    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-10}
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
 
     for system in systems:
         geometry, orbs, results, kwargs = system(device)
@@ -724,8 +728,11 @@ def test_dftb2_pbc_batch(device, feeds_scc_pbc):
     batches = [[Si_cubic_pbc], [Si_cubic_pbc, Si_hexagonal_pbc],
                [Si_cubic_pbc, Si_hexagonal_pbc, SiC_cubic_pbc]]
 
+    mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
+
     for batch in batches:
         geometry, orbs, results, kwargs = merge_systems(device, *batch)
+        kwargs['mix_params'] = mix_params
 
         calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, r_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'

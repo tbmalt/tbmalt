@@ -91,7 +91,7 @@ class Calculator(ABC):
 
     @property
     def is_periodic(self):
-        """If there is any periodicity boundary conditions."""
+        """If there are any periodic boundary conditions."""
         return self.geometry.is_periodic
 
     @property
