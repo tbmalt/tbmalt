@@ -63,7 +63,7 @@ def feeds_scc_pbc(device, skf_file_pbc):
 
 def H2(device):
 
-    cutoff = torch.tensor([10.98], device=device)
+    cutoff = torch.tensor([20.], device=device)
 
     geometry = Geometry(
         torch.tensor([1, 1], device=device),
@@ -92,7 +92,7 @@ def H2(device):
 
 def H2_scc(device):
 
-    cutoff = torch.tensor([10.98], device=device)
+    cutoff = torch.tensor([20.], device=device)
 
     geometry = Geometry(
         torch.tensor([1, 1], device=device),
@@ -127,7 +127,7 @@ def H2_scc(device):
 
 def CH4(device):
 
-    cutoff = torch.tensor([10.98], device=device)
+    cutoff = torch.tensor([22.], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 1, 1, 1, 1], device=device),
@@ -161,7 +161,7 @@ def CH4(device):
 
 def CH4_scc(device):
 
-    cutoff = torch.tensor([10.98], device=device)
+    cutoff = torch.tensor([22.], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 1, 1, 1, 1], device=device),
@@ -200,7 +200,7 @@ def CH4_scc(device):
 
 def H2O(device):
 
-    cutoff = torch.tensor([10.98], device=device)
+    cutoff = torch.tensor([22.], device=device)
 
     geometry = Geometry(
         torch.tensor([1, 8, 1], device=device),
@@ -231,7 +231,7 @@ def H2O(device):
 
 def H2O_scc(device):
 
-    cutoff = torch.tensor([10.98], device=device)
+    cutoff = torch.tensor([22.], device=device)
 
     geometry = Geometry(
         torch.tensor([1, 8, 1], device=device),
@@ -267,7 +267,7 @@ def H2O_scc(device):
 
 def C2H6(device):
 
-    cutoff = torch.tensor([10.98], device=device)
+    cutoff = torch.tensor([25.], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 6, 1, 1, 1, 1, 1, 1], device=device),
@@ -305,7 +305,7 @@ def C2H6(device):
 
 def C2H6_scc(device):
 
-    cutoff = torch.tensor([10.98], device=device)
+    cutoff = torch.tensor([25.], device=device)
 
     geometry = Geometry(
         torch.tensor([6, 6, 1, 1, 1, 1, 1, 1], device=device),
@@ -424,7 +424,7 @@ def Si_hexagonal_siband(device):
 
 
 def Si_cubic_pbc(device):
-    cutoff = torch.tensor([19.0], device=device)
+    cutoff = torch.tensor([33.0], device=device)
 
     geometry = Geometry(
         torch.tensor([14, 14, 14, 14, 14, 14, 14, 14], device=device),
@@ -465,7 +465,7 @@ def Si_cubic_pbc(device):
 
 
 def Si_hexagonal_pbc(device):
-    cutoff = torch.tensor([19.0], device=device)
+    cutoff = torch.tensor([33.0], device=device)
 
     geometry = Geometry(
         torch.tensor([14, 14, 14, 14], device=device),
@@ -501,7 +501,7 @@ def Si_hexagonal_pbc(device):
 
 
 def SiC_cubic_pbc(device):
-    cutoff = torch.tensor([19.0], device=device)
+    cutoff = torch.tensor([33.0], device=device)
 
     geometry = Geometry(
         torch.tensor([14, 14, 14, 14, 6, 6, 6, 6], device=device),
@@ -598,12 +598,9 @@ def dftb2_helper(calculator, geometry, orbs, results):
     # tests for those feeds. Furthermore, any errors in said matrix will cause
     # many of the computed properties to be incorrect.
 
-    # TODO: Tighten up the relative tolerance once the issue with
-    #   `SiC_cubic_pbc` has been resolved.
-
     def check_allclose(i):
         predicted = getattr(calculator, i)
-        is_close = torch.allclose(predicted, results[i], atol=1E-10, rtol=1E-6)
+        is_close = torch.allclose(predicted, results[i], atol=1E-10, rtol=1E-8)
         assert is_close, f'Attribute {i} is in error for system {geometry}'
         if isinstance(predicted, torch.Tensor):
             device_check = predicted.device == calculator.device

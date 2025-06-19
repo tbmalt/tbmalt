@@ -53,11 +53,17 @@ class Geometry:
         frac: Whether using fractional coordinates to describe periodic
             systems. [DEFAULT: False]
         cutoff: Global cutoff for the diatomic interactions in periodic
-            systems. Currently, this value is only used by periodic systems when
-            computing the number of cell images that must be considered.
+            systems. Currently, this value is only used by periodic systems
+            when computing the number of cell images that must be considered.
             However, this will be used in the future by interaction pair
             generator methods to limit the number of evaulations necessary.
-            [DEFAULT: 10.98]
+            A default cutoff distance of 11 Bohr has been chosen for
+            performance reasons. It is important to note that this falls well
+            below cutoffs values typically used in operations like constructing
+            gamma matrices in DFTB. This can have a noticeable impact on
+            accuracy. For calculations requiring strict convergence, increase
+            ``cutoff`` to a value exceeding the gamma matrix cut-offs listed
+            in :mod:`tbmalt.data.elements`. [DEFAULT: 11.0]
         units: Unit in which ``positions``, ``lattice_vector``, & ``cutoff``
             were specified. For a list of available units see :mod:`.units`
             [DEFAULT='bohr'].
@@ -117,7 +123,7 @@ class Geometry:
                  '__dtype', '__device']
 
     # Developers notes technically the `cutoff` argument has the default value
-    # of `None`. However, this is assigned to 10.98 bohr internally after the
+    # of `None`. However, this is assigned to 11.00 bohr internally after the
     # fact. This is done to prevent the default value from undergoing a unit
     # conversion if the user provides the atomic positions and lattice vectors
     # in units other than atomic units.
@@ -151,7 +157,7 @@ class Geometry:
         if lattice_vector is not None:
             # Cutoff distance for the diatomic interactions in periodic systems
             cutoff = torch.tensor(
-                [10.98], device=self.__device, dtype=self.__dtype
+                [11.], device=self.__device, dtype=self.__dtype
             ) if cutoff is None else cutoff
 
             self.lattice = lattice_vector
