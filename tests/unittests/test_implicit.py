@@ -7,6 +7,7 @@ from tbmalt.physics.dftb import Dftb2, Dftb1
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed, RepulsiveSplineFeed
 from functools import reduce
 
+
 def molecules(device) -> List[Geometry]:
     """Returns a selection of `Geometry` entities for testing.
 
@@ -48,34 +49,54 @@ def molecules(device) -> List[Geometry]:
                      units='angstrom'
                      )
 
-    return [H2, H2O,C2H2Au2S3]
-
-species = [1, 8, 6, 16, 79]
+    return [H2, H2O, C2H2Au2S3]
 
 
-def test_implicit_gradient(skf_file: str, device): 
-    b_def = {1: [0], 6: [0, 1],8: [0,1], 16: [0, 1, 2], 79: [0, 1, 2]}
+@pytest.fixture
+def dftb_calculator(device, skf_file: str):
+    species = [1, 8, 6, 16, 79]
 
-    # setup the feeds
+    # set up the feeds
     hamiltonian_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
     overlap_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     occupation_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     hubbard_feed = HubbardFeed.from_database(skf_file, species, device=device)
     repulsive_feed = RepulsiveSplineFeed.from_database(skf_file, species, device=device)
 
-    # setup the calculator
-    dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed, filling_scheme=None)
+    # set up the calculator
+    return Dftb2(hamiltonian_feed, overlap_feed, occupation_feed,
+                 hubbard_feed, r_feed=repulsive_feed, filling_scheme=None)
 
+
+def implicit_gradient_helper(mol: Geometry, orbs: OrbitalInfo, dftb_calculator, device):
+
+    energy_direct = dftb_calculator(mol, orbs, grad_mode='direct')
+    forces_direct = -torch.autograd.grad(
+        energy_direct, mol.positions,
+        grad_outputs=torch.ones_like(energy_direct))[0]
+
+    energy_imp = dftb_calculator(mol, orbs, grad_mode='implicit')
+    forces_imp = - torch.autograd.grad(
+        energy_imp, mol.positions,
+        grad_outputs=torch.ones_like(energy_imp))[0]
+
+    check_1 = torch.allclose(
+        forces_direct.detach().cpu(), forces_imp.detach().cpu(),
+        atol=1E-10, rtol=1E-5)
+
+    assert check_1, f"Implicit gradient forces do not match direct gradient forces for {mol}."
+
+
+def test_implicit_gradient_single(device, dftb_calculator):
+    b_def = {1: [0], 6: [0, 1],8: [0,1], 16: [0, 1, 2], 79: [0, 1, 2]}
     for mol in molecules(device):
-        orbital_info = OrbitalInfo(mol.atomic_numbers, b_def, shell_resolved=False)
-        energy_direct = dftb_calculator(mol, orbital_info, grad_mode='direct')
-        forces_direct = - torch.autograd.grad(energy_direct, mol.positions, grad_outputs=torch.ones_like(energy_direct))[0]
-
-        energy_imp = dftb_calculator(mol, orbital_info, grad_mode='implicit')
-        forces_imp = - torch.autograd.grad(energy_imp, mol.positions, grad_outputs=torch.ones_like(energy_imp))[0]
-
-        check_1 = torch.allclose(forces_direct.detach().cpu(), forces_imp.detach().cpu())
-        
-        assert check_1, f"Implicit gradient forces do not match direct gradient forces for {mol}."
+        orbs = OrbitalInfo(mol.atomic_numbers, b_def, shell_resolved=False)
+        implicit_gradient_helper(mol, orbs, dftb_calculator, device)
 
 
+def test_implicit_gradient_batch(dftb_calculator, device):
+    b_def = {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}
+    H2, H2O, C2H2Au2S3 = molecules(device)
+    mol = H2 + H2O + C2H2Au2S3
+    orbs = OrbitalInfo(mol.atomic_numbers, b_def, shell_resolved=False)
+    implicit_gradient_helper(mol, orbs, dftb_calculator, device)
