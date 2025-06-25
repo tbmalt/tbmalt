@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """Code associated with carrying out DFTB calculations."""
-import numpy as np
 import torch
 
 from typing import Optional, Dict, Any, Literal, Union, Tuple, Callable
@@ -25,6 +24,7 @@ from tbmalt.data.units import energy_units
 from tbmalt import ConvergenceError
 
 from torch import Tensor
+
 
 # Issues:
 #   - There is an issue with how thins are currently being dealt with; according
@@ -419,7 +419,7 @@ class Dftb1(Calculator):
     @property
     def forces(self, delta: float = 1.0e-6) -> Tensor:
         """Forces acting on the atoms as calculated via analytical expression.
-               
+
         Arguments:
             delta: Finite difference delta for the overlap and hamiltonian
                 gradients. [DEFAULT: 1.0e-6]
@@ -440,11 +440,6 @@ class Dftb1(Calculator):
         #   - 2) Given the cost of evaluating the forces, and to a lesser
         #       extent the repulsive energy, it might be worth caching these
         #       values after computing them.
-        #   - 3) Hard coding of gradients associated with the repulsive spline
-        #       feeds needs to be removed and replaced with a generic auto-grad
-        #       solution.
-        #   - 4) This is only compatible with the now deprecated
-        #       `RepulsiveSplineFeed` class.
 
         from tbmalt.physics.dftb.feeds import SkFeed
 
@@ -473,15 +468,25 @@ class Dftb1(Calculator):
         # Include contributions associated with the repulsive feed if
         # present.
         if self.r_feed is not None:
-            # This will error out if the repulsive feed is anything other
-            # than a `RepulsiveSplineFeed` instance.
-            if isinstance(self.r_feed, RepulsiveSplineFeed):
-                force = force - self.r_feed.gradient(self.geometry)
-            else:
-                raise NotImplementedError(
-                    "Analytical computation of atomic forces is only "
-                    "compatible with `RepulsiveSplineFeed` type repulsive "
-                    "feeds.")
+
+            # When computing the forces, the positions tensor must be
+            # differentiable. This may necessitate a detached version of the
+            # geometry instance to be created. This is a lightweight operation
+            # for cluster, but may require expensive reevaluation of cached
+            # properties when working with periodic systems.
+            geometry = self.geometry
+            if not self.geometry.positions.requires_grad:
+                geometry = self.geometry.detach()
+                geometry.positions.requires_grad = True
+
+            # Evaluate the repulsive energy and obtain dE/dx. Note that the
+            # repulsive energy term will be computed here.
+            repulsive_forces, *_ = torch.autograd.grad(
+                self.r_feed(geometry).sum(), geometry.positions,
+                create_graph=True)
+
+            # Add the repulsive interaction's force contributions
+            force = force - repulsive_forces
 
         return force
 
@@ -516,14 +521,6 @@ class Dftb1(Calculator):
 
         rho_weighted = s_occs_weighted @ s_occs.transpose(-1, -2).conj()
 
-        # Loop over unique interactions to calculate dh0 and dS block wise
-        # Identify all unique species combinations
-        unique_interactions = torch.combinations(
-                self.geometry.unique_atomic_numbers(), with_replacement=True)
-
-        # Construct an element-element pair matrix
-        an_mat_a = self.orbs.atomic_number_matrix('atomic')
-
         # Construct shift vector for later off_site finite diff calculation
         shift = torch.eye(3, device=self.device, dtype=self.dtype) * delta
         shift = torch.cat([shift, -shift])
@@ -536,7 +533,7 @@ class Dftb1(Calculator):
             # This approach is a little messy but reduces memory on the cpu.
             a_idx_l = a_idx[:, :-1].squeeze(1)
             b_idx_l = a_idx[:, 3 - a_idx.shape[-1]::2].squeeze(1)
-            
+
             # Get the matrix indices associated with the target blocks.
             blk_idx = self.s_feed.atomic_block_indices(a_idx_l, b_idx_l, self.orbs)
 
@@ -1100,14 +1097,7 @@ class Dftb2(Calculator):
                 dimension.
         """
         # Current issue that need to be resolved:
-        #   - 1) This uses a manual and hard coded method to compute the
-        #       gradients of the gamma matrix. This will fail if a gamma
-        #       scheme other than "exponential" is used. Considerations should
-        #       be made as to what the best way to deal with this is. If
-        #       PyTorch is able to safely compute the gradients then the
-        #       `gamma_exponential_gradient` method could be moved into
-        #       a unit-test and a more generic approach implemented here.
-        #   - 2) This makes an explicit call to a private method of the
+        #   - 1) This makes an explicit call to a private method of the
         #       Hamiltonian and Overlap `Feed` objects. Specifically the
         #       `SkFeed._off_site_blocks` as such this will break when
         #       using a different feed object or working with periodic
@@ -1115,14 +1105,9 @@ class Dftb2(Calculator):
         #       the `SkFeed` class to adapt them for use in another private
         #       method of a different unrelated class causing unintentional
         #       coupling.
-        #   - 3) Given the cost of evaluating the forces, and to a lesser
+        #   - 2) Given the cost of evaluating the forces, and to a lesser
         #       extent the repulsive energy, it might be worth caching these
         #       values after computing them.
-        #   - 4) Hard coding of gradients associated with the repulsive spline
-        #       feeds needs to be removed and replaced with a generic auto-grad
-        #       solution.
-        #   - 5) This is only compatible with the now deprecated
-        #       `RepulsiveSplineFeed` class.
 
         from tbmalt.physics.dftb.feeds import SkFeed
 
@@ -1142,44 +1127,59 @@ class Dftb2(Calculator):
                 "Manual evaluation of atomic forces is not compatible with "
                 "periodic systems.")
 
-        if self.gamma_scheme != "exponential":
-            raise NotImplementedError(
-                "Manual evaluation of atomic forces is only compatible with "
-                "the exponential gamma scheme.")
-
         # Non-scc Forces and h1 correction
         force = -self._finite_diff_overlap_h_blocks(delta=delta)
+
+        # When computing the forces, the positions tensor must be
+        # differentiable. This may necessitate a detached version of the
+        # geometry instance to be created. This is a lightweight operation
+        # for cluster, but may require expensive reevaluation of cached
+        # properties when working with periodic systems.
+        geometry = self.geometry
+        if not geometry.positions.requires_grad:
+            geometry = geometry.detach()
+            geometry.positions.requires_grad = True
 
         # Include contributions associated with the repulsive feed if
         # present.
         if self.r_feed is not None:
-            # This will error out if the repulsive feed is anything other
-            # than a `RepulsiveSplineFeed` instance.
-            if isinstance(self.r_feed, RepulsiveSplineFeed):
-                force = force - self.r_feed.gradient(self.geometry)
+            # Evaluate the repulsive energy and obtain dE/dx. Note that the
+            # repulsive energy term will be computed here.
+            repulsive_forces, *_ = torch.autograd.grad(
+                self.r_feed(geometry).sum(), geometry.positions,
+                create_graph=True)
+
+            # Add the repulsive interaction's force contributions
+            force = force - repulsive_forces
+
+        # Compute gamma matrix's force contributions. If the gamma matrix and
+        # associated properties were computed using a differentiable positions
+        # tensor then it is safe to use the energy property directly. Otherwise,
+        # the gamma matrix and final energy must be recomputed with a gradient
+        # tracked position tensor.
+        # were differentiable
+        if self.geometry.positions.requires_grad:
+            energy = self.scc_energy.sum()
+        else:
+            if geometry.is_periodic:
+                r = build_coulomb_matrix(geometry, method=self.coulomb_scheme)
             else:
-                raise NotImplementedError(
-                    "Analytical computation of atomic forces is only "
-                    "compatible with `RepulsiveSplineFeed` type repulsive "
-                    "feeds.")
+                r = self.geometry.distances
+                r[r != 0.0] = 1.0 / r[r != 0.0]
 
-        # Scc corrections (additional to h1)
-        # Gamma gradient correction
-        gamma_grad = gamma_exponential_gradient(
-            self.geometry, self.orbs, self.u_feed.forward(self.orbs))
+            gamma = build_gamma_matrix(
+                geometry, self.orbs, r, self.u_feed.forward(self.orbs),
+                self.gamma_scheme)
 
-        gamma_correction = torch.einsum(
-            '...a,...abc,...b->...ac', self.q_delta_atomic,
-            gamma_grad, self.q_delta_atomic)
+            shifts = torch.einsum(
+                '...i,...ij->...j', self.q_delta_atomic, gamma)
 
-
-        energy = .5 * (shifts * self.q_delta_atomic).sum()
+            energy = .5 * (shifts * self.q_delta_atomic).sum()
 
         gamma_forces, *_ = torch.autograd.grad(
             energy, geometry.positions, create_graph=True)
 
         force = force - gamma_forces
-
 
         return force
 
@@ -1226,14 +1226,6 @@ class Dftb2(Calculator):
 
         rho_weighted = s_occs_weighted @ s_occs.transpose(-1, -2).conj()
 
-        # Loop over unique interactions to calculate dh0 and dS block wise
-        # Identify all unique species combinations
-        unique_interactions = torch.combinations(
-            self.geometry.unique_atomic_numbers(), with_replacement=True)
-
-        # Construct an element-element pair matrix
-        an_mat_a = self.orbs.atomic_number_matrix('atomic')
-
         # Construct shift vector for later off_site finite diff calculation
         shift = torch.eye(3, device=self.device, dtype=self.dtype) * delta
         shift = torch.cat([shift, -shift])
@@ -1252,8 +1244,7 @@ class Dftb2(Calculator):
             blk_idx = self.s_feed.atomic_block_indices(a_idx_l, b_idx_l, self.orbs)
 
             # Identify the off-site blocks
-            off_site = ~torch.tensor(list(
-                map(torch.all, a_idx_l == b_idx_l)), device=self.device)
+            off_site = ~self.s_feed.partition_blocks(a_idx_l, b_idx_l)
 
             if any(off_site):
                 # Create indices for the force calculation
@@ -1563,7 +1554,7 @@ class Dftb2(Calculator):
             overlap: Tensor, gamma: Tensor, orbs: OrbitalInfo,
             n_electrons: float_like, filling_temp: float_like = 0.0,
             filling_scheme: Scheme = fermi_smearing, **kwargs
-        ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+            ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
         """Perform a single self-consistent charge cycle step.
 
         Arguments:
