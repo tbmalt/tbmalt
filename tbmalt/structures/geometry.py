@@ -1015,7 +1015,10 @@ def _atomic_pair_indices(
                 pair_indices = pair_indices[torch.where(
                     pair_indices[..., -2].le(pair_indices[..., -1]))]
 
-        yield pair, pair_indices.T
+        # Only yield if pairs remain after self-interaction purge
+        if len(pair_indices) != 0:
+            yield pair, pair_indices.T
+
 
 
 def _atomic_pair_indices_periodic(
@@ -1103,4 +1106,7 @@ def _atomic_pair_indices_periodic(
         # Filter the interaction list so that only those in range remain
         idx_p = idx_p.T[neighbours[*idx_p]].T
 
-        yield pair, idx_p
+        # Only yield if pairs remain after self-interaction purge
+        if len(idx_p) != 0:
+            yield pair, idx_p
+
