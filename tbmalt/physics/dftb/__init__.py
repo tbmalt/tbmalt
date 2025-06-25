@@ -9,7 +9,7 @@ from tbmalt.ml.module import Calculator
 from tbmalt.ml.integralfeeds import IntegralFeed
 from tbmalt.structures.geometry import atomic_pair_indices
 from tbmalt import OrbitalInfo
-from tbmalt.physics.dftb.feeds import Feed, SkfOccupationFeed, RepulsiveSplineFeed
+from tbmalt.physics.dftb.feeds import Feed, SkfOccupationFeed
 from tbmalt.physics.filling import (
     fermi_search, fermi_smearing, gaussian_smearing, entropy_term,
     aufbau_filling, Scheme)

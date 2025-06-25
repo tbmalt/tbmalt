@@ -4,7 +4,8 @@ import torch
 from tbmalt.io.skf import Skf
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.physics.dftb import Dftb2, Dftb1
-from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed, RepulsiveSplineFeed
+from tbmalt.physics.dftb.feeds import (
+    SkFeed, SkfOccupationFeed, HubbardFeed, PairwiseRepulsiveEnergyFeed)
 from functools import reduce
 
 torch.set_default_dtype(torch.float64)
@@ -86,7 +87,7 @@ def test_forces_single_nonscc(skf_file: str, device):
     hamiltonian_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
     overlap_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     occupation_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
-    repulsive_feed = RepulsiveSplineFeed.from_database(skf_file, species, device=device)
+    repulsive_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species, device=device)
 
     # setup the calculator
     dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, r_feed=repulsive_feed)
@@ -117,7 +118,7 @@ def test_forces_single_scc(skf_file: str, device):
     overlap_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     occupation_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     hubbard_feed = HubbardFeed.from_database(skf_file, species, device=device)
-    repulsive_feed = RepulsiveSplineFeed.from_database(skf_file, species, device=device)
+    repulsive_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species, device=device)
 
     # setup the calculator
     dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
@@ -150,7 +151,7 @@ def test_forces_batch_nonscc(skf_file: str, device):
     hamiltonian_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
     overlap_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     occupation_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
-    repulsive_feed = RepulsiveSplineFeed.from_database(skf_file, species, device=device)
+    repulsive_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species, device=device)
 
     # setup the calculator
     dftb_calculator = Dftb1(hamiltonian_feed, overlap_feed, occupation_feed, r_feed=repulsive_feed)
@@ -180,7 +181,7 @@ def test_forces_batch_scc(skf_file: str, device):
     overlap_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     occupation_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     hubbard_feed = HubbardFeed.from_database(skf_file, species, device=device)
-    repulsive_feed = RepulsiveSplineFeed.from_database(skf_file, species, device=device)
+    repulsive_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species, device=device)
 
     # setup the calculator
     dftb_calculator = Dftb2(hamiltonian_feed, overlap_feed, occupation_feed, hubbard_feed, r_feed=repulsive_feed)
