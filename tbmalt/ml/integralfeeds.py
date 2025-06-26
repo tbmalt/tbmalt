@@ -17,6 +17,7 @@ import torch
 from h5py import Group
 from numpy import ndarray as Array
 from tbmalt import Geometry, OrbitalInfo
+from tbmalt.structures.geometry import atomic_pair_indices
 from tbmalt.ml import Feed
 from tbmalt.ml.module import Calculator
 from tbmalt.common.batch import bT
@@ -95,20 +96,9 @@ class IntegralFeed(Feed, ABC):
         """
         pass
 
-    def __enforce_array(self):
-        """Wrapper function to ensure atomic indices are supplied as arrays.
-
-        Issues arise when using torch.Tensors for advanced indexing operations
-        in bach agnostic code. Thus, numpy.ndarrays are used instead. If a user
-        inadvertently supplies a torch.Tensor then the results can be highly
-        unpredictable. Thus, this wrapper checks for and auto-converts torch
-        tensors into numpy arrays as needed before warning the user.
-        """
-        pass
-
     @staticmethod
-    def _partition_blocks(atomic_idx_1: Tensor, atomic_idx_2: Tensor
-                          ) -> Tensor:
+    def partition_blocks(atomic_idx_1: Tensor, atomic_idx_2: Tensor
+                         ) -> Tensor:
         """Mask identifying on-site interaction pairs.
 
         This helper function constructs a mask which is True wherever the
@@ -124,10 +114,10 @@ class IntegralFeed(Feed, ABC):
             on_site_mask: A tensor that is truthy wherever the atom index
                 pair corresponds to an on-site interaction.
         """
-        return torch.tensor(
-            list(map(torch.all, atomic_idx_1 == atomic_idx_2)),
-            device=atomic_idx_1.device)
-
+        on_site_mask = torch.eq(atomic_idx_1, atomic_idx_2)
+        if on_site_mask.ndim != 1:
+            on_site_mask = on_site_mask.all(dim=-1)
+        return on_site_mask
 
     def blocks(self, atomic_idx_1: Tensor, atomic_idx_2: Tensor,
                geometry: Geometry, orbs: OrbitalInfo, **kwargs) -> Tensor:
@@ -157,28 +147,17 @@ class IntegralFeed(Feed, ABC):
             block will represent an on-site interaction, otherwise it will be
             an off-site interaction.
 
-            Indices are passed as numpy arrays as advanced indexing is not
-            always triggered when indexing with tensors and as no clean
-            alternative is readily apparent. Furthermore, the index array has
-            been split in two; while this increases verbosity it decreases the
-            complexity needed to ensure batch agnosticism.
+            The index tensor has been split in two; while this increases
+            verbosity it decreases the complexity needed to ensure batch
+            agnosticism.
 
-            If operating on a batch of systems; index arrays will be 2xN where
+            If operating on a batch of systems; index tensors will be 2xN where
             the 1'st & 2'nd rows specify the batch & atom indices respectively.
-            Otherwise, they will be one dimensional arrays of length N where N
+            Otherwise, they will be one dimensional tensors of length N where N
             is the number of interactions.
 
         """
         # Developers Notes
-        # Indexing operations can get messy here due to inconsistencies in how
-        # advanced indexing is implemented in pytorch. Normally, this would not
-        # be a significant issue; however, batch agnostic code is hard to write
-        # when advanced indexing works for some systems but not others. Thus,
-        # a pair of numpy arrays are used instead. Do *NOT* use torch tensors
-        # as they will result in highly inconsistent behaviour. Later, a wrapper
-        # will decorate this function to ensure spurious tensors are converted
-        # to arrays. Any alternative solutions are very much welcome here!
-        #
         # This method is mostly called from ``matrix``; which loops over all
         # species combinations, H-C, H-C, C-C, ..., etc. & request all of the
         # interaction blocks associated with that species pair.
@@ -186,7 +165,7 @@ class IntegralFeed(Feed, ABC):
         # The index arrays can be used to retrieve information, such as
         # positions, like so ``geometry.positions[atomic_idx_1.T]``.
         #
-        # The ``_partition_blocks`` helper method make splitting interactions
+        # The ``partition_blocks`` helper method makes splitting interactions
         # into off- and on-site blocks easier when necessary.
         #
         raise NotImplementedError()
@@ -218,31 +197,12 @@ class IntegralFeed(Feed, ABC):
         mat = torch.zeros(orbs.orbital_matrix_shape,
                           dtype=self.dtype, device=self.device)
 
-        # Identify all unique species combinations.
-        unique_interactions = torch.combinations(
-            geometry.unique_atomic_numbers(), with_replacement=True)
-
-        # Construct an element-element pair matrix
-        an_mat_a = orbs.atomic_number_matrix('atomic')
-
-        for pair in unique_interactions:  # Loop over the unique interactions
-            # Get the indices of the atoms in each relevant interaction; but
-            # only look for interactions within, and not between, systems. For
-            # a batch of systems this will take the form:
-            #   [[batch_idx, atom_1_idx, atom_2_idx]... for each interaction]
-            # and for a single system:
-            #   [[atom_1_idx, atom_2_idx]... for each interaction]
-            a_idx = torch.nonzero((an_mat_a == pair).all(-1))
-
-            # Skip the loop if no interactions are found and ignore homo-atomic
-            # blocks in the lower triangle to avoid double computation.
-            if a_idx.nelement() == 0:
-                continue
-            elif pair[0] == pair[1]:
-                a_idx = a_idx[torch.where(a_idx[..., -2].le(a_idx[..., -1]))]
+        # Loop over pairwise interactions by species type
+        for pair, a_idx in atomic_pair_indices(
+                geometry, ignore_periodicity=True):
+            a_idx = a_idx.T
 
             # Reshape atom index list to be more amenable to advanced indexing.
-            # This approach is a little messy but reduces memory on the cpu.
             a_idx_l = a_idx[:, :-1].squeeze(1)
             b_idx_l = a_idx[:, 3 - a_idx.shape[-1]::2].squeeze(1)
 
@@ -313,14 +273,15 @@ class IntegralFeed(Feed, ABC):
             orbs: Orbital information associated with said systems.
 
         Returns:
-            block_indices: the indices of associate with the specified blocks.
+            block_indices: the indices of the specified blocks.
         """
 
         is_batch = atomic_idx_1.ndim == 2
 
         if isinstance(atomic_idx_1, Array):
             import warnings
-            warnings.warn("Do no use numpy arrays here @IntegralFeed.atomic_block_indices")
+            warnings.warn(
+                "Indices must be provided as torch tensors not numpy arrays")
             atomic_idx_1 = torch.tensor(atomic_idx_1)
             atomic_idx_2 = torch.tensor(atomic_idx_2)
 

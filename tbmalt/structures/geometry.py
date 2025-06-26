@@ -199,7 +199,7 @@ class Geometry:
                     "supplied as a list of tensors that are to be pack "
                     "into a single batch tensor. One or more of the supplied "
                     "tensors are gradient-tracked leaf-nodes, however these "
-                    "will not be stored within the  `Geometry` class, only the "
+                    "will not be stored within the `Geometry` class, only the "
                     "packed tensor that results from them. As such auto-grad "
                     "related operations, such as `Geometry.positions.grad`, may "
                     "not behave as expected.")
@@ -294,17 +294,15 @@ class Geometry:
     @property
     def distances(self) -> Tensor:
         """Distance matrix between atoms in the system."""
-
-        # Ensure padding area is zeroed out
-        # But don't modify in place
-        dist = torch.cdist(self.positions, self.positions, p=2).clone()
-        dist[self._mask_dist] = 0
-
-        # cdist bug, sometimes distances diagonal is not zero
-        idx = torch.arange(dist.shape[-1])
-        if not (dist[..., idx, idx].eq(0)).all():
-            dist[..., idx, idx] = 0.0
-
+        # Todo: Modify to account for PBC
+        # This round about method is necessary as the neither the torch
+        # cdist nor the linalg.norm method are compatible with the autograd
+        # engine. Also inplace operations must be avoided.
+        dist_vec = self.positions.unsqueeze(-2) - self.positions.unsqueeze(-3)
+        dist2 = (dist_vec * dist_vec).sum(dim=-1)
+        dist = torch.zeros_like(dist2)
+        mask = dist2.gt(0.0).logical_and(~self._mask_dist)
+        dist[mask] = torch.sqrt(dist2[mask])
         return dist
 
     @property
@@ -330,12 +328,12 @@ class Geometry:
 
         # Identify which atoms are not padding atoms. It is assumed that the
         # value "0" is used for padding that atomic number tensor.
-        mask = self.atomic_numbers != 0
+        mask = self.atomic_numbers.ne(0)
 
         # If no padding atoms are present then no masking is needed, thus the
         # value `False` is returned; i.e. mask out no parts of a tensor.
-        if (mask != 0).all():
-            return False
+        if mask.all():
+            return torch.tensor(False, device=self.device)
         # If padding values are found then expand the mask into a 2D slice for
         # each system present in the current `Geometry` instance.
         else:
@@ -807,7 +805,8 @@ def unique_atom_pairs(
 
 def atomic_pair_distances(
         geometry: Geometry, ignore_self: bool = False,
-        force_batch_index: bool = False) -> Tuple[Tensor, Tensor]:
+        force_batch_index: bool = False, ignore_periodicity: bool = False
+        ) -> Tuple[Tensor, Tensor]:
     """Atomic pair distance generator.
 
     Generates all unique element-pair types and, for each such pair, yields the
@@ -826,8 +825,12 @@ def atomic_pair_distances(
             with copies in neighbouring images.[DEFAULT: False]
         force_batch_index: If ``True``, forces the returned ``pair_indices``
             to include a leading batch index dimension even for single systems.
-            By default (``False``), a batch dimension is only included if
+            By default, (``False``), a batch dimension is only included if
             ``geometry`` actually represents a batch. [DEFAULT: False]
+        ignore_periodicity: If `True`, the system will be treated as
+            non-periodic. Interactions involving neighbouring cells will be
+            ignored and the cell index will be omitted from the returned pair
+            index tensor. [DEFAULT: False]
 
     Yields:
         pair: A tensor of shape `(2,)` specifying the atomic numbers of the two
@@ -861,25 +864,28 @@ def atomic_pair_distances(
             periodic distance; otherwise the direct distance.
     """
 
+    treat_as_periodic = geometry.is_periodic and not ignore_periodicity
+
     # Compute distances between all atom pairs
     distances = geometry.periodicity.periodic_distances \
-        if geometry.is_periodic else geometry.distances
+        if treat_as_periodic else geometry.distances
 
     # Enforcing the presence of a batch dimension if requested
     if force_batch_index and geometry.atomic_numbers.ndim == 1:
         distances = distances.view(
-            -1, *distances.shape[-3 if geometry.is_periodic else -2:])
+            -1, *distances.shape[-3 if treat_as_periodic else -2:])
 
     # Wrap the `atomic_pair_indices` generator to extend its returns to
     # include distances.
     for pair, idx in atomic_pair_indices(
-            geometry, ignore_self, force_batch_index):
+            geometry, ignore_self, force_batch_index, ignore_periodicity):
         yield pair, idx, distances[*idx]
 
 
 def atomic_pair_indices(
         geometry: Geometry, ignore_self: bool = False,
-        force_batch_index: bool = False) -> Tuple[Tensor, Tensor]:
+        force_batch_index: bool = False, ignore_periodicity: bool = False
+        ) -> Tuple[Tensor, Tensor]:
     """Atomic pair index generator
 
     Generates all unique element-pair types & yields the corresponding indices
@@ -899,10 +905,14 @@ def atomic_pair_indices(
             same atom (i.e. an atom interacting with itself) is excluded.
             This only pertains to self-interactions and not interactions
             with copies in neighbouring images.[DEFAULT: False]
-        force_batch_index: If ``True``, forces the returned ``pair_indices``
+        force_batch_index: If `True`, forces the returned ``pair_indices``
             to include a leading batch index dimension even for single systems.
             By default (``False``), a batch dimension is only included if
             ``geometry`` actually represents a batch. [DEFAULT: False]
+        ignore_periodicity: If `True`, the system will be treated as
+            non-periodic. Interactions involving neighbouring cells will be
+            ignored and the cell index will be omitted from the returned pair
+            index tensor. [DEFAULT: False]
 
     Yields:
         pair: A tensor of shape `(2,)` specifying the atomic numbers of the two
@@ -932,7 +942,7 @@ def atomic_pair_indices(
             rows, if present, are the atomic indices within that batch and/or
             cell context.
     """
-    if geometry.is_periodic:
+    if geometry.is_periodic and not ignore_periodicity:
         return _atomic_pair_indices_periodic(geometry, ignore_self, force_batch_index)
     else:
         return _atomic_pair_indices(geometry, ignore_self, force_batch_index)
@@ -1005,7 +1015,9 @@ def _atomic_pair_indices(
                 pair_indices = pair_indices[torch.where(
                     pair_indices[..., -2].le(pair_indices[..., -1]))]
 
-        yield pair, pair_indices.T
+        # Only yield if pairs remain after self-interaction purge
+        if len(pair_indices) != 0:
+            yield pair, pair_indices.T
 
 
 def _atomic_pair_indices_periodic(
@@ -1093,4 +1105,6 @@ def _atomic_pair_indices_periodic(
         # Filter the interaction list so that only those in range remain
         idx_p = idx_p.T[neighbours[*idx_p]].T
 
-        yield pair, idx_p
+        # Only yield if pairs remain after self-interaction purge
+        if len(idx_p) != 0:
+            yield pair, idx_p

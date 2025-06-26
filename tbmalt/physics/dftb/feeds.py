@@ -348,7 +348,7 @@ class ScipySkFeed(IntegralFeed):
                            device=self.device)
 
         # Identify which are on-site blocks and which are off-site
-        on_site = self._partition_blocks(atomic_idx_1, atomic_idx_2)
+        on_site = self.partition_blocks(atomic_idx_1, atomic_idx_2)
         mask_shell = torch.zeros_like(self.on_sites[int(z_1)]).bool()
         mask_shell[:(torch.arange(len(orbs.shell_dict[int(z_1)]))
                      * 2 + 1).sum()] = True
@@ -358,14 +358,14 @@ class ScipySkFeed(IntegralFeed):
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
-            if geometry.periodicity is not None:
+            if geometry.is_periodic:
                 _on_site = self._pe_blocks(
                     atomic_idx_1[on_site], atomic_idx_2[on_site],
                     geometry, orbs, geometry.periodicity, onsite=True)
                 blks[on_site] = blks[on_site] + _on_site
 
         if any(~on_site):  # Then the off-site blocks
-            if geometry.periodicity is None:
+            if not geometry.is_periodic:
                 blks[~on_site] = self._off_site_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
                     geometry, orbs)
@@ -867,7 +867,7 @@ class SkFeed(IntegralFeed):
                            device=self.device)
 
         # Identify which are on-site blocks and which are off-site
-        on_site = self._partition_blocks(atomic_idx_1, atomic_idx_2)
+        on_site = self.partition_blocks(atomic_idx_1, atomic_idx_2)
         mask_shell = torch.zeros_like(self.on_sites[str(z_1.item())]).bool()
         mask_shell[:(torch.arange(len(orbs.shell_dict[z_1.item()]))
                      * 2 + 1).sum()] = True
@@ -878,14 +878,14 @@ class SkFeed(IntegralFeed):
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
-            if geometry.periodicity is not None:
+            if geometry.is_periodic:
                 _on_site = self._pe_blocks(
                     atomic_idx_1[on_site], atomic_idx_2[on_site],
                     geometry, orbs, geometry.periodicity, onsite=True)
                 blks[on_site] = blks[on_site] + _on_site
 
         if any(~on_site):  # Then the off-site blocks
-            if geometry.periodicity is None:
+            if not geometry.is_periodic:
                 blks[~on_site] = self._off_site_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
                     geometry, orbs)
@@ -1395,7 +1395,7 @@ class VcrSkFeed(IntegralFeed):
                            device=self.device)
 
         # Identify which are on-site blocks and which are off-site
-        on_site = self._partition_blocks(atomic_idx_1, atomic_idx_2)
+        on_site = self.partition_blocks(atomic_idx_1, atomic_idx_2)
         mask_shell = torch.zeros_like(self.on_sites[str(z_1.item())]).bool()
         mask_shell[:(torch.arange(len(orbs.shell_dict[z_1.item()]))
                      * 2 + 1).sum()] = True
@@ -1410,14 +1410,14 @@ class VcrSkFeed(IntegralFeed):
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
-            if geometry.periodicity is not None:
+            if geometry.is_periodic:
                 _on_site = self._pe_blocks(
                     atomic_idx_1[on_site], atomic_idx_2[on_site],
                     geometry, orbs, geometry.periodicity, onsite=True)
                 blks[on_site] = blks[on_site] + _on_site
 
         if any(~on_site):  # Then the off-site blocks
-            if geometry.periodicity is None:
+            if not geometry.is_periodic:
                 blks[~on_site] = self._off_site_blocks(
                     atomic_idx_1[~on_site], atomic_idx_2[~on_site],
                     geometry, orbs)
@@ -1896,260 +1896,6 @@ class HubbardFeed(Feed):
             return Parameter(hubbard_us, requires_grad=requires_grad)
 
         return cls(ParameterDict({str(i): get_hubbard_us(i) for i in species}))
-
-
-class RepulsiveSplineFeed(Feed):
-    r"""Repulsive Feed using splines for DFTB calculations.
-
-    Data is derived from a skf file. This feed uses splines to calculate the
-    repulsive energy of a Geometry in the way it is defined for DFTB.
-
-    Arguments:
-        spline_data: Dictionary containing the tuples of atomic number pairs
-            as keys and the corresponding spline data as values.
-    """
-
-    def __init__(self, spline_data: Dict[Tuple, Skf.RSpline]):
-        super().__init__()
-
-        warnings.warn(
-            "The `RepulsiveSplineFeed` class is now deprecated and will be"
-            "removed. Please use the `PairwiseRepulsiveEnergyFeed` and "
-            "`DftbpRepulsiveSpline` classes instead.",
-            category=DeprecationWarning)
-
-        self.spline_data = {
-            frozenset(interaction_pairs): data
-            for interaction_pairs, data in spline_data.items()}
-
-    @property
-    def dtype(self) -> torch.dtype:
-        """Floating point dtype used by `RepulsiveSplineFeed` object."""
-        return list(self.spline_data.values())[0].grid.dtype
-
-    @property
-    def device(self) -> torch.device:
-        """The device on which the `RepulsiveSplineFeed` object resides."""
-        return list(self.spline_data.values())[0].grid.device
-
-    def __call__(self, geo: Geometry) -> Tensor:
-        r"""Calculate the repulsive energy of a Geometry.
-
-        Arguments:
-            geo: `Geometry` object representing the system, or batch thereof,
-                for which the repulsive energy should be calculated.
-
-        Returns:
-            Erep: The repulsive energy of the Geometry object(s).
-        """
-        batch_size, indxs, indx_pairs, normed_distance_vectors = self._calculation_prep(geo)
-
-        Erep = torch.zeros((batch_size), device=self.device, dtype=self.dtype)
-
-        for indx_pair in indx_pairs:
-            atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
-            atomnum2 = geo.atomic_numbers[..., indx_pair[1]].reshape((batch_size, ))
-
-            distance = geo.distances[..., indx_pair[0], indx_pair[1]].reshape((batch_size, ))
-
-            for batch_indx in range(batch_size):
-                if atomnum1[batch_indx] == 0 or atomnum2[batch_indx] == 0:
-                    continue
-                add_Erep = self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx])
-                Erep[batch_indx] += add_Erep
-
-        return Erep
-
-    def gradient(self, geo: Geometry) -> Tensor:
-        """Calculate the gradient of the repulsive energy.
-
-        Arguments:
-            geo: `Geometry` object representing the system, or batch thereof,
-                for which the gradient of the repulsive energy should be
-                calculated.
-
-        returns:
-            dErep: The gradient of the repulsive energy.
-        """
-        batch_size, indxs, indx_pairs, normed_distance_vectors = self._calculation_prep(geo)
-
-        dErep = torch.zeros((batch_size, geo.atomic_numbers.size(dim=-1), 3), device=self.device, dtype=self.dtype)
-
-        for indx_pair in indx_pairs:
-            atomnum1 = geo.atomic_numbers[..., indx_pair[0]].reshape((batch_size, ))
-            atomnum2 = geo.atomic_numbers[..., indx_pair[1]].reshape((batch_size, ))
-
-            distance = geo.distances[..., indx_pair[0], indx_pair[1]].reshape((batch_size, ))
-
-            for batch_indx in range(batch_size):
-                if atomnum1[batch_indx] == 0 or atomnum2[batch_indx] == 0:
-                    continue
-                add_dErep = self._repulsive_calc(distance[batch_indx], atomnum1[batch_indx], atomnum2[batch_indx], grad=True)
-                #TODO: Not yet batched
-                dErep[batch_indx, indx_pair[0]] += add_dErep*normed_distance_vectors[batch_indx, indx_pair[0], indx_pair[1]]
-                dErep[batch_indx, indx_pair[1]] += add_dErep*normed_distance_vectors[batch_indx,indx_pair[1], indx_pair[0]]
-        if batch_size == 1:
-            dErep = dErep.squeeze(0)
-        return dErep
-
-    def _calculation_prep(self, geo: Geometry
-                          ) -> Tuple[int, Tensor, Tensor, Tensor]:
-        """Preliminaries for repulsive energy & gradient calculation.
-
-        Arguments:
-            geo: `Geometry` object representing the system, or batch thereof,
-                for which the calculation preparation steps are to be performed.
-
-        returns:
-            batch_size: The number of geometries in the batch.
-            indxs: The indices of the atoms.
-            indx_pairs: The indices of the interacting atom pairs as tuples.
-            normed_distance_vectors: The normalized distance vectors between the atoms
-        """
-        if geo.atomic_numbers.dim() == 1: # this means it is not a batch
-            batch_size = 1
-        else:
-            batch_size = geo.atomic_numbers.size(dim=0)
-
-        indxs = torch.tensor(range(geo.atomic_numbers.size(dim=-1)), device=self.device)
-        indx_pairs = torch.combinations(indxs)
-
-        normed_distance_vectors = geo.distance_vectors / geo.distances.unsqueeze(-1)
-        normed_distance_vectors[normed_distance_vectors.isnan()] = 0
-        normed_distance_vectors = torch.reshape(
-            normed_distance_vectors, (
-                batch_size, normed_distance_vectors.shape[-3],
-                normed_distance_vectors.shape[-2],
-                normed_distance_vectors.shape[-1]))
-
-        return batch_size, indxs, indx_pairs, normed_distance_vectors
-
-    def _repulsive_calc(
-            self, distance: Tensor, atomnum1: Union[Tensor, int],
-            atomnum2: Union[Tensor, int], grad: bool = False
-        ) -> Tensor:
-        """Calculate the repulsive energy contribution between two atoms.
-
-        Arguments:
-            distance: The distance between the two atoms.
-            atomnum1: The atomic number of the first atom.
-            atomnum2: The atomic number of the second atom.
-
-        returns:
-            Erep: The repulsive energy contribution between the two atoms.
-        """
-        spline = self.spline_data[frozenset((int(atomnum1), int(atomnum2)))]
-        tail_start = spline.grid[-1]
-        exp_head_cutoff = spline.grid[0]
-
-        if distance < spline.cutoff:
-            if distance > tail_start:
-                return self._tail(distance, tail_start, spline.tail_coef, grad=grad)
-            elif distance > exp_head_cutoff:
-                for ind in range(len(spline.grid)):
-                    if distance < spline.grid[ind]:
-                        return self._spline(distance, spline.grid[ind-1], spline.spline_coef[ind-1], grad=grad)
-            else:
-                return self._exponential_head(distance, spline.exp_coef, grad=grad)
-        return torch.tensor(0.0, dtype=self.dtype, device=self.device)
-
-    @classmethod
-    def _exponential_head(cls, distance: Tensor, coeffs: Tensor, grad: bool = False) -> Tensor:
-        r"""Exponential head calculation of the repulsive spline.
-
-        Arguments:
-            distance: The distance between the two atoms.
-            coeffs: The coefficients of the exponential head.
-
-        Returns:
-            energy: The energy value of the exponential head.
-                The energy is calculated as :math:`\exp(-coeffs[0] \cdot r + coeffs[1]) + coeffs[2]`.
-        """
-        a1 = coeffs[0]
-        a2 = coeffs[1]
-        a3 = coeffs[2]
-        if not grad:
-            return torch.exp(-a1*distance + a2) + a3
-        else:
-            return -a1*torch.exp(-a1*distance + a2)
-
-    @classmethod
-    def _spline(cls, distance: Tensor, start: Tensor, coeffs: Tensor, grad: bool = False) -> Tensor:
-        r"""3rd order polynomial Spline calculation of the repulsive spline.
-
-        Arguments:
-            distance: The distance between the two atoms.
-            start: The start of the spline segment.
-            coeffs: The coefficients of the polynomial.
-
-        Returns:
-            energy: The energy value of the spline segment.
-                The energy is calculated as :math:`coeffs[0] + coeffs[1]*(distance - start) + coeffs[2]*(distance - start)^2 + coeffs[3]*(distance - start)^3`.
-        """
-        rDiff = distance - start
-        if not grad:
-            energy = coeffs[0] + coeffs[1]*rDiff + coeffs[2]*rDiff**2 + coeffs[3]*rDiff**3
-            return energy
-        else:
-            denergy = coeffs[1] + 2*coeffs[2]*rDiff + 3*coeffs[3]*rDiff**2
-            return denergy
-
-    @classmethod
-    def _tail(cls, distance: Tensor, start: Tensor, coeffs: Tensor, grad: bool = False) -> Tensor:
-        r"""5th order polynomial trailing tail calculation of the repulsive spline.
-
-        Arguments:
-            distance: The distance between the two atoms.
-            start: The start of the trailing tail segment.
-            coeffs: The coefficients of the polynomial.
-
-        Returns:
-            energy: The energy value of the tail.
-                The energy is calculated as :math:`coeffs[0] + coeffs[1]*(distance - start) + coeffs[2]*(distance - start)^2 + coeffs[3]*(distance - start)^3 + coeffs[4]*(distance - start)^4 + coeffs[5]*(distance - start)^5`.
-        """
-        rDiff = distance - start
-        if not grad:
-            energy = coeffs[0] + coeffs[1]*rDiff + coeffs[2]*rDiff**2 + coeffs[3]*rDiff**3 + coeffs[4]*rDiff**4 + coeffs[5]*rDiff**5
-            return energy
-        else:
-            denergy = coeffs[1] + 2*coeffs[2]*rDiff + 3*coeffs[3]*rDiff**2 + 4*coeffs[4]*rDiff**3 + 5*coeffs[5]*rDiff**4
-            return denergy
-
-    @classmethod
-    def from_database(
-            cls, path: str, species: List[int],
-            dtype: Optional[torch.dtype] = None,
-            device: Optional[torch.device] = None
-            ) -> 'RepulsiveSplineFeed':
-        r"""Instantiate instance from a HDF5 database of Slater-Koster files.
-
-        Instantiate a `RepulsiveSplineFeed` instance from a HDF5 database for the specified elements.
-
-        Arguments:
-            path: Path to the HDF5 file from which the repulsive interaction data should be taken.
-            species: List of atomic numbers for which the repulsive spline data should be read.
-            device: Device on which the feed object and its contents resides.
-
-        Returns:
-            repulsive_feed: A `RepulsiveSplineFeed` instance.
-
-        Notes:
-            This method will not instantiate `SkFeed` instances directly
-            from human readable skf files, or a directory thereof. Thus, any
-            such files must first be converted into their binary equivalent.
-            This reduces overhead & file format error instabilities. The code
-            block provide below shows how this can be done:
-
-            >>> from tbmalt.io.skf import Skf
-            >>> Zs = ['H', 'C', 'Au', 'S']
-            >>> for file in [f'{i}-{j}.skf' for i in Zs for j in Zs]:
-            >>>     Skf.read(file).write('my_skf.hdf5')
-        """
-        interaction_pairs = combinations_with_replacement(species, r=2)
-        return cls({
-            interaction_pair: Skf.read(
-                path, interaction_pair, device=device, dtype=dtype
-            ).r_spline for interaction_pair in interaction_pairs})
 
 
 class DftbpRepulsiveSpline(Feed):
