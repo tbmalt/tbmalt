@@ -600,7 +600,7 @@ class CubicSpline(Feed):
 
         # Prevent users from unintentionally optimizing the knot locations.
         if isinstance(x, Parameter) or x.requires_grad:
-            raise warnings.warn(
+            warnings.warn(
                 "Setting the knot positions 'x' as a freely tunable parameter"
                 " is strongly advised against as it may lead to instability or"
                 " incorrect behavior of the spline during optimisation."

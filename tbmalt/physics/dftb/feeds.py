@@ -1947,7 +1947,7 @@ class DftbpRepulsiveSpline(Feed):
 
         # Ensure parameters are correctly typed
         if isinstance(grid, Parameter) or grid.requires_grad:
-            raise warnings.warn(
+            warnings.warn(
                 "Setting the grid points as a freely tunable parameter is "
                 "strongly advised against as it may result in unexpected "
                 "behaviour. Please ensure that the `grid` argument is a "
