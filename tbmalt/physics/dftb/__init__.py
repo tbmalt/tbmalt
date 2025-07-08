@@ -417,6 +417,7 @@ class Dftb1(Calculator):
 
     @property
     def forces(self) -> Tensor:
+        """Atomic forces"""
         if not self.geometry.positions.requires_grad:
             raise RuntimeError(
                 "Forces are computed via the PyTorch auto-grad engine, thus "
@@ -956,8 +957,8 @@ class Dftb2(Calculator):
         self._invr = value
 
     @property
-    def forces(self):
-
+    def forces(self) -> Tensor:
+        """Atomic forces"""
         if not self.geometry.positions.requires_grad:
             raise RuntimeError(
                 "Forces are computed via the PyTorch auto-grad engine, thus "
