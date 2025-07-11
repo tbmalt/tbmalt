@@ -74,13 +74,13 @@ def dftb_calculator(device, skf_file: str):
 
 def implicit_gradient_helper(mol: Geometry, orbs: OrbitalInfo, dftb_calculator, device):
     dftb_calculator.grad_mode = "direct"
-    energy_direct = dftb_calculator(mol, orbs, grad_mode='direct')
+    energy_direct = dftb_calculator(mol, orbs)
     forces_direct = -torch.autograd.grad(
         energy_direct, mol.positions,
         grad_outputs=torch.ones_like(energy_direct))[0]
 
     dftb_calculator.grad_mode = "implicit"
-    energy_imp = dftb_calculator(mol, orbs, grad_mode='implicit')
+    energy_imp = dftb_calculator(mol, orbs)
     forces_imp = - torch.autograd.grad(
         energy_imp, mol.positions,
         grad_outputs=torch.ones_like(energy_imp))[0]

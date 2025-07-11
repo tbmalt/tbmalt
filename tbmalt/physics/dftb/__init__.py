@@ -113,12 +113,12 @@ class Dftb1(Calculator):
             construct overlap matrix.
         o_feed: this feed provides the angular-momenta resolved occupancies
             for the requested species.
-        r_feed: this feed describes the repulsive interaction. [DEFAULT: None]
+        r_feed: this feed describes the repulsive interaction.[DEFAULT=`None`]
         filling_temp: Electronic temperature used to calculate Fermi-energy.
-            [DEFAULT: 0.0]
+            [DEFAULT=0.0]
         filling_scheme: The scheme used for finite temperature broadening.
             There are two broadening methods, Fermi-Dirac broadening and
-            Gaussian broadening, supported in TBMaLT. [DEFAULT: fermi]
+            Gaussian broadening, supported in TBMaLT. [DEFAULT="fermi"]
 
     Attributes:
         rho: density matrix.
@@ -486,16 +486,16 @@ class Dftb2(Calculator):
             the gamma matrix. This must be a `Feed` type object which when
             provided with a `OrbitalInfo` object returns the Hubbard-U values
             for the target system.
-        r_feed: this feed describes the repulsive interaction. [DEFAULT: None]
+        r_feed: this feed describes the repulsive interaction.[DEFAULT=`None`]
         filling_temp: Electronic temperature used to calculate Fermi-energy.
-            [DEFAULT: 0.0]
+            [DEFAULT=0.0]
         filling_scheme: The scheme used for finite temperature broadening.
             There are two broadening methods, Fermi-Dirac broadening and
-            Gaussian broadening, supported in TBMaLT. [DEFAULT: fermi]
-        grad_mode: controls gradient mode is used when running the SCC
-            cycles. Available options are [DEFAULT:"last_step"]:
+            Gaussian broadening, supported in TBMaLT. [DEFAULT="fermi"]
+        grad_mode: controls gradient mode used when running the SCC
+            cycle. Available options are [DEFAULT="last_step"]:
 
-                - "direct": run the SCC cycle with without special treatment.
+                - "direct": run the SCC cycle without any special treatment.
                 - "last_step": run the SCC cycle outside the purview of the
                     PyTorch graph to obtain the converged charges. Then run a
                     single SCC step within the graph using the converged
@@ -515,8 +515,8 @@ class Dftb2(Calculator):
                     dedicated mixer can be supplied via the
                     ``implicit_mixer`` argument.
 
-        implicit_mixer: Dedicated mixer to be used by the implicit solver use
-            when using the "implicit" ``grad_mode`` option. This is only used
+        implicit_mixer: Dedicated mixer to be used by the implicit solver if
+            using the "implicit" ``grad_mode`` option. This is only used
             when the "implicit" option is set via ``grad_mode``. If not set
             then the standard SCC mixer will be used.
         max_scc_iter: maximum permitted number of SCC iterations. If one or
@@ -971,8 +971,7 @@ class Dftb2(Calculator):
         return -gradient
 
     def forward(
-            self, cache: Optional[Dict[str, Any]] = None,
-            **kwargs) -> Tensor:
+            self, cache: Optional[Dict[str, Any]] = None) -> Tensor:
         """Execute the SCC-DFTB calculation.
 
         Invoking this will trigger the execution of the self-consistent-charge
@@ -1204,11 +1203,11 @@ class Dftb2(Calculator):
             orbs: `OrbitalInfo` object for the associated systems.
             n_electrons: total number of electrons.
             filling_temp: electronic temperature used to calculate Fermi-energy.
-                [DEFAULT: 0.0]
+                [DEFAULT=0.0]
             filling_scheme: scheme used for finite temperature broadening.
                 There are two broadening methods, Fermi-Dirac broadening and
                 Gaussian broadening, supported in TBMaLT.
-                [DEFAULT: `fermi_smearing`]
+                [DEFAULT=`fermi_smearing`]
 
         Keyword Arguments:
             eigen_solver_settings: a dictionary storing advanced settings to
@@ -1303,16 +1302,17 @@ class Dftb2(Calculator):
             overlap: overlap matrix.
             gamma: gamma matrix.
             filling_temp: electronic temperature used to calculate Fermi-energy.
-                [DEFAULT: 0.0]
+                [DEFAULT=0.0]
             filling_scheme: scheme used for finite temperature broadening.
                 There are two broadening methods, Fermi-Dirac broadening and
-                Gaussian broadening, supported in TBMaLT. [DEFAULT: fermi]
+                Gaussian broadening, supported in TBMaLT.
+                [DEFAULT=`fermi_smearing`]
             max_scc_iter: maximum permitted number of SCC iterations. If one or
                 more system fail to converge within ``max_scc_iter`` cycles
                 then a convergence error will be raised; unless the
                 ``suppress_scc_error`` flag has been set. [DEFAULT=200]
             mixer: the `Mixer` instance with which to mix the charges during
-                the SCC cycle. [DEFAULT=Anderson]
+                the SCC cycle. [DEFAULT=`Anderson`]
 
         Keyword Arguments:
             suppress_scc_error: if True, convergence errors will be suppressed
