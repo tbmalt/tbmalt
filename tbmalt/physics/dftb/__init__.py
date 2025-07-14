@@ -856,12 +856,12 @@ class Dftb2(Calculator):
     @property
     def band_free_energy(self):
         """Band free energy including SCC contributions; i.e. E_band-TS"""
-        return self.band_energy * self._get_entropy_term()
+        return self.band_energy - self._get_entropy_term()
 
     @property
     def core_band_free_energy(self):
         """Core band free energy, excluding SCC contributions"""
-        return self.core_band_energy * self._get_entropy_term()
+        return self.core_band_energy - self._get_entropy_term()
 
     def _get_entropy_term(self):
         # Note that this scale factor assumes spin-restricted and will need to
