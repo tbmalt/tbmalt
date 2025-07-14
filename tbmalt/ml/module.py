@@ -35,7 +35,7 @@ class Calculator(ABC):
         pass
 
     def __call__(self, geometry: Geometry, orbs: OrbitalInfo,
-                 cache: Optional[Dict[str, Any]] = None, **kwargs):
+                 cache: Optional[Dict[str, Any]] = None):
         """Run the calculator instance.
 
         Arguments:
@@ -82,7 +82,7 @@ class Calculator(ABC):
             self.reset()
             self._geometry, self._orbs = geometry, orbs
 
-        return self.forward(cache=cache, **kwargs)
+        return self.forward(cache=cache)
 
     @property
     def is_batch(self):

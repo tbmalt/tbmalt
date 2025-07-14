@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """Code associated with carrying out DFTB calculations."""
-import numpy as np
 import torch
 
 from typing import Optional, Dict, Any, Literal, Union, Tuple, Callable
@@ -9,13 +8,13 @@ import warnings
 from tbmalt.ml.module import Calculator
 from tbmalt.ml.integralfeeds import IntegralFeed
 from tbmalt import OrbitalInfo
-from tbmalt.physics.dftb.feeds import Feed, SkfOccupationFeed, RepulsiveSplineFeed
+from tbmalt.physics.dftb.feeds import Feed, SkfOccupationFeed
 from tbmalt.physics.filling import (
     fermi_search, fermi_smearing, gaussian_smearing, entropy_term,
     aufbau_filling, Scheme)
 from tbmalt.common.maths import eighb
 from tbmalt.physics.dftb.coulomb import build_coulomb_matrix
-from tbmalt.physics.dftb.gamma import build_gamma_matrix, gamma_exponential_gradient
+from tbmalt.physics.dftb.gamma import build_gamma_matrix
 from tbmalt.physics.dftb.properties import dos
 from tbmalt.common.batch import prepeat_interleave
 from tbmalt.common import float_like
@@ -24,6 +23,7 @@ from tbmalt.data.units import energy_units
 from tbmalt import ConvergenceError
 
 from torch import Tensor
+
 
 # Issues:
 #   - There is an issue with how thins are currently being dealt with; according
@@ -113,12 +113,12 @@ class Dftb1(Calculator):
             construct overlap matrix.
         o_feed: this feed provides the angular-momenta resolved occupancies
             for the requested species.
-        r_feed: this feed describes the repulsive interaction. [DEFAULT: None]
+        r_feed: this feed describes the repulsive interaction.[DEFAULT=`None`]
         filling_temp: Electronic temperature used to calculate Fermi-energy.
-            [DEFAULT: 0.0]
+            [DEFAULT=0.0]
         filling_scheme: The scheme used for finite temperature broadening.
             There are two broadening methods, Fermi-Dirac broadening and
-            Gaussian broadening, supported in TBMaLT. [DEFAULT: fermi]
+            Gaussian broadening, supported in TBMaLT. [DEFAULT="fermi"]
 
     Attributes:
         rho: density matrix.
@@ -177,7 +177,7 @@ class Dftb1(Calculator):
     def __init__(
             self, h_feed: IntegralFeed, s_feed: IntegralFeed, o_feed: Feed,
             r_feed: Optional[Feed] = None, filling_temp: Optional[float] = 0.0,
-            filling_scheme: str = 'fermi', **kwargs):
+            filling_scheme: Optional[str] = 'fermi', **kwargs):
 
         super().__init__(h_feed.dtype, h_feed.device)
 
@@ -321,7 +321,7 @@ class Dftb1(Calculator):
 
         # If finite temperature is active then use the appropriate smearing
         # method.
-        if self.filling_temp is not None:
+        if self.filling_temp is not None and self.filling_scheme is not None:
             return self.filling_scheme(
                 self.eig_values, self.fermi_energy, self.filling_temp,
                 e_mask=self.orbs if self.is_batch else None) * scale_factor
@@ -416,198 +416,18 @@ class Dftb1(Calculator):
         return dos(self.eig_values, self.dos_energy, sigma=sigma, mask=mask)
 
     @property
-    def forces(self, delta: float = 1.0e-6) -> Tensor:
-        """Forces acting on the atoms as calculated via analytical expression.
-               
-        Arguments:
-            delta: Finite difference delta for the overlap and hamiltonian
-                gradients. [DEFAULT: 1.0e-6]
+    def forces(self) -> Tensor:
+        """Atomic forces"""
+        if not self.geometry.positions.requires_grad:
+            raise RuntimeError(
+                "Forces are computed via the PyTorch auto-grad engine, thus "
+                "the positions tensor must be differentiable, i.e. "
+                "\"Geometry.positions.requires_grad = True\".")
 
-        Returns:
-            forces: tensor reporting the force on each atom along each
-                dimension.
-        """
-        # Current issue that need to be resolved:
-        #   - 1) This makes an explicit call to a private method of the
-        #       Hamiltonian and Overlap `Feed` objects. Specifically the
-        #       `SkFeed._off_site_blocks` as such this will break when
-        #       using a different feed object or working with periodic
-        #       systems. It also requires manually tweaking private methods of
-        #       the `SkFeed` class to adapt them for use in another private
-        #       method of a different unrelated class causing unintentional
-        #       coupling.
-        #   - 2) Given the cost of evaluating the forces, and to a lesser
-        #       extent the repulsive energy, it might be worth caching these
-        #       values after computing them.
-        #   - 3) Hard coding of gradients associated with the repulsive spline
-        #       feeds needs to be removed and replaced with a generic auto-grad
-        #       solution.
-        #   - 4) This is only compatible with the now deprecated
-        #       `RepulsiveSplineFeed` class.
+        gradient, *_ = torch.autograd.grad(
+            self.mermin_energy.sum(), self.geometry.positions, create_graph=True)
 
-        from tbmalt.physics.dftb.feeds import SkFeed
-
-        warnings.warn(
-            "This is an experimental feature which is not intended for "
-            "public use!")
-
-        if not isinstance(self.h_feed, SkFeed) or not isinstance(
-                self.s_feed, SkFeed):
-            raise NotImplementedError(
-                "Manual evaluation of atomic forces is only supported when "
-                "using `SkFeed` instances for the Hamiltonian & overlap "
-                "matrix feeds; `h_feed` & `s_feed`.")
-
-        if self.geometry.is_periodic:
-            raise NotImplementedError(
-                "Manual evaluation of atomic forces is not compatible with "
-                "periodic systems.")
-
-        # Compute atomic force component associated with the gradient of
-        # the hamiltonian and overlap matrices.
-        force = -self._finite_diff_overlap_h0_blocks(delta=delta)
-
-        # Include contributions associated with the repulsive feed if
-        # present.
-        if self.r_feed is not None:
-            # This will error out if the repulsive feed is anything other
-            # than a `RepulsiveSplineFeed` instance.
-            if isinstance(self.r_feed, RepulsiveSplineFeed):
-                force = force - self.r_feed.gradient(self.geometry)
-            else:
-                raise NotImplementedError(
-                    "Analytical computation of atomic forces is only "
-                    "compatible with `RepulsiveSplineFeed` type repulsive "
-                    "feeds.")
-
-        return force
-
-    def _finite_diff_overlap_h0_blocks(self, delta: float = 1.0e-6) -> Tensor:
-        """Atomic forces based on the gradient of the S & H matrices.
-
-        This method computes the atomic forces via a block-wise evaluation of
-        the gradient of the hamiltonian and overlap matrices using the finite
-        difference method. Note that this does not include contributions from
-        the repulsive spline.
-
-        Arguments:
-            delta: Finite difference delta for the overlap and hamiltonian
-                gradients. [DEFAULT: 1.0e-6]
-
-        Returns:
-            forces: tensor reporting the force on each atom along each
-                dimension based on contributions from the hamiltonian
-                and overlap matrices.
-        """
-
-        force = torch.zeros(
-            self.geometry.positions.size(), device=self.device, dtype=self.dtype)
-
-        # TODO:
-        #  Check to see if there is a better solution for incorporating energy.
-        # Calculate energy weighted density matrix
-        s_occs = torch.einsum(
-                   '...i,...ji->...ji', torch.sqrt(self.occupancy), self.eig_vectors)
-        s_occs_weighted = torch.einsum(
-                   '...i,...ji->...ji', self.eig_values * torch.sqrt(self.occupancy), self.eig_vectors)
-
-        rho_weighted = s_occs_weighted @ s_occs.transpose(-1, -2).conj()
-
-        # Loop over unique interactions to calculate dh0 and dS block wise
-        # Identify all unique species combinations
-        unique_interactions = torch.combinations(
-                self.geometry.unique_atomic_numbers(), with_replacement=True)
-
-        # Construct an element-element pair matrix
-        an_mat_a = self.orbs.atomic_number_matrix('atomic')
-
-        # Construct shift vector for later off_site finite diff calculation
-        shift = torch.eye(3, device=self.device, dtype=self.dtype) * delta
-        shift = torch.cat([shift, -shift])
-
-        # Loop over the unique interactions
-        for pair in unique_interactions:
-            a_idx = torch.nonzero((torch.eq(an_mat_a, pair)).all(-1))
-
-            # Skip the loop if no interactions are found and ignore homo-atomic
-            # blocks in the lower triangle to avoid double computation.
-            if a_idx.nelement() == 0:
-                continue
-
-            elif pair[0] == pair[1]:
-                a_idx = a_idx[torch.where(a_idx[..., -2].le(a_idx[..., -1]))]
-
-            # Reshape atom index list to be more amenable to advanced indexing.
-            # This approach is a little messy but reduces memory on the cpu.
-            a_idx_l = a_idx[:, :-1].squeeze(1)
-            b_idx_l = a_idx[:, 3 - a_idx.shape[-1]::2].squeeze(1)
-            
-            # Get the matrix indices associated with the target blocks.
-            blk_idx = self.s_feed.atomic_block_indices(a_idx_l, b_idx_l, self.orbs)
-
-            # Identify the off-site blocks
-            off_site = ~torch.tensor(list(
-                map(torch.all, a_idx_l == b_idx_l)), device=self.device)
-
-            if any(off_site):
-                # Create indices for the force calculation
-                if a_idx_l[off_site].dim() == 2:
-                    force_a_idx = (a_idx_l[off_site][:, 0],
-                                   a_idx_l[off_site][:, 1],)
-                    force_b_idx = (b_idx_l[off_site][:, 0],
-                                   b_idx_l[off_site][:, 1],)
-
-                    block_a_idx = a_idx_l[off_site].repeat(6, 1)
-                    block_b_idx = b_idx_l[off_site].repeat(6, 1)
-
-                else:
-                    force_a_idx = (a_idx_l[off_site], )
-                    force_b_idx = (b_idx_l[off_site], )
-
-                    block_a_idx = a_idx_l[off_site].repeat(6)
-                    block_b_idx = b_idx_l[off_site].repeat(6)
-
-                # Repeats shift vector elements for each of site block
-                # currently being calculated
-                block_shift = shift.repeat_interleave(
-                    repeats=len(a_idx_l[off_site]), dim=0)
-                atom_block_shape = self.orbs.n_orbs_on_species(pair)
-                split = block_a_idx.shape[0] // 2
-
-                # Overlap
-                blk_shift_xyz_s = self.s_feed._off_site_blocks(
-                        block_a_idx, block_b_idx, self.geometry, self.orbs,
-                        shift_vec=block_shift)
-
-                finite_diff_overlap_xyz = ((
-                    blk_shift_xyz_s[:split] - blk_shift_xyz_s[split:]
-                    ) / (2 * delta)).view(3, -1, *atom_block_shape)
-
-                # Hamiltonian
-                blk_shift_xyz_h = self.h_feed._off_site_blocks(
-                        block_a_idx, block_b_idx, self.geometry, self.orbs,
-                        shift_vec=block_shift)
-
-                finite_diff_hamiltonian_xyz = ((
-                        blk_shift_xyz_h[:split] - blk_shift_xyz_h[split:]
-                        ) / (2 * delta)).view(3, -1, *atom_block_shape)
-
-                # Calculate shifted off_sites in x,y,z direction
-                for coord in range(0, 3):
-                    finite_diff_overlap = finite_diff_overlap_xyz[coord]
-                    finite_diff_hamiltonian = finite_diff_hamiltonian_xyz[coord]
-
-                    # Calculate blocks of force contribution in val2 and then sum over in val
-                    val2 = 2 * ((self.rho.mT[*blk_idx][off_site] * finite_diff_hamiltonian) -
-                                (rho_weighted.mT[*blk_idx][off_site] * finite_diff_overlap))
-
-                    val = val2.sum(dim=tuple(range(1, val2.dim()))).unsqueeze(-1)
-                    force[..., :, coord:coord + 1].index_put_(
-                        force_a_idx, -val, accumulate=True)
-                    force[..., :, coord:coord + 1].index_put_(
-                        force_b_idx, val, accumulate=True)
-
-        return force
+        return -gradient
 
     def reset(self):
         """Reset all attributes and cached properties."""
@@ -666,12 +486,39 @@ class Dftb2(Calculator):
             the gamma matrix. This must be a `Feed` type object which when
             provided with a `OrbitalInfo` object returns the Hubbard-U values
             for the target system.
-        r_feed: this feed describes the repulsive interaction. [DEFAULT: None]
+        r_feed: this feed describes the repulsive interaction.[DEFAULT=`None`]
         filling_temp: Electronic temperature used to calculate Fermi-energy.
-            [DEFAULT: 0.0]
+            [DEFAULT=0.0]
         filling_scheme: The scheme used for finite temperature broadening.
             There are two broadening methods, Fermi-Dirac broadening and
-            Gaussian broadening, supported in TBMaLT. [DEFAULT: fermi]
+            Gaussian broadening, supported in TBMaLT. [DEFAULT="fermi"]
+        grad_mode: controls gradient mode used when running the SCC
+            cycle. Available options are [DEFAULT="last_step"]:
+
+                - "direct": run the SCC cycle without any special treatment.
+                - "last_step": run the SCC cycle outside the purview of the
+                    PyTorch graph to obtain the converged charges. Then run a
+                    single SCC step within the graph using the converged
+                    charges as the initial "guess". Gradients obtained via the
+                    "last_step" approach are inexact. While such gradients are
+                    commonly a good enough approximation for many cases they
+                    are not as accurate as either the "direct" or "implicit"
+                    gradient modes.
+                - "implicit": uses implicit function theorem to accurately
+                    and memory efficiently compute the derivative. This
+                    requires the use of an iterative solver. By default,
+                    the solver will employ the same mixer provided for
+                    the SCC cycle, `DFTB2.mixer`. It is critical to note
+                    that the accuracy of the gradients produced by the
+                    implicit method is directly tied to the tolerance
+                    and stability of the mixer. As such a different
+                    dedicated mixer can be supplied via the
+                    ``implicit_mixer`` argument.
+
+        implicit_mixer: Dedicated mixer to be used by the implicit solver if
+            using the "implicit" ``grad_mode`` option. This is only used
+            when the "implicit" option is set via ``grad_mode``. If not set
+            then the standard SCC mixer will be used.
         max_scc_iter: maximum permitted number of SCC iterations. If one or
             more system fail to converge within ``max_scc_iter`` cycles then a
             convergence error will be raised; unless the ``suppress_scc_error``
@@ -780,7 +627,10 @@ class Dftb2(Calculator):
     def __init__(
             self, h_feed: IntegralFeed, s_feed: IntegralFeed, o_feed: Feed,
             u_feed: Feed, r_feed: Optional[Feed] = None,
-            filling_temp: Optional[float] = 0.0, filling_scheme: str = 'fermi',
+            filling_temp: Optional[float] = 0.0,
+            filling_scheme: Optional[str] = 'fermi',
+            grad_mode: Literal["direct", "last_step", "implicit"] | str = "last_step",
+            implicit_mixer: Optional[Mixer] = None,
             max_scc_iter: int = 200,
             mixer: Union[Mixer, Literal['anderson', 'simple']] = 'anderson',
             **kwargs):
@@ -817,6 +667,9 @@ class Dftb2(Calculator):
             'fermi': fermi_smearing, 'gaussian': gaussian_smearing,
             None: None
         }[filling_scheme]
+
+        self.grad_mode = grad_mode
+        self.implicit_mixer = implicit_mixer
         self.max_scc_iter = max_scc_iter
         self.suppress_scc_error = kwargs.get('suppress_scc_error', False)
         self.gamma_scheme = kwargs.get('gamma_scheme', 'exponential')
@@ -833,6 +686,11 @@ class Dftb2(Calculator):
         # Optional keyword arguments can be passed through to the `eighb`
         # solver via the `_solver_settings` dictionary argument.
         self._solver_settings = kwargs.get('eigen_solver_settings', {})
+
+        if grad_mode not in ["direct", "last_step", "implicit"]:
+            raise ValueError(
+                f"\"{grad_mode}\" does not correspond to a known gradient mode."
+                " Valid options are \"direct\", \"last_step\", \"implicit\"")
 
     @property
     def overlap(self):
@@ -966,7 +824,7 @@ class Dftb2(Calculator):
 
         # If finite temperature is active then use the appropriate smearing
         # method.
-        if self.filling_temp is not None:
+        if self.filling_temp is not None and self.filling_scheme is not None:
             return self.filling_scheme(
                 self.eig_values, self.fermi_energy, self.filling_temp,
                 e_mask=self.orbs if self.is_batch else None) * scale_factor
@@ -998,12 +856,12 @@ class Dftb2(Calculator):
     @property
     def band_free_energy(self):
         """Band free energy including SCC contributions; i.e. E_band-TS"""
-        return self.band_energy * self._get_entropy_term()
+        return self.band_energy - self._get_entropy_term()
 
     @property
     def core_band_free_energy(self):
         """Core band free energy, excluding SCC contributions"""
-        return self.core_band_energy * self._get_entropy_term()
+        return self.core_band_energy - self._get_entropy_term()
 
     def _get_entropy_term(self):
         # Note that this scale factor assumes spin-restricted and will need to
@@ -1084,7 +942,7 @@ class Dftb2(Calculator):
     def invr(self):
         """1/R matrix"""
         if self._invr is None:
-            if self.geometry.periodicity is not None:
+            if self.geometry.is_periodic:
                 self._invr = build_coulomb_matrix(self.geometry,
                                                   method=self.coulomb_scheme)
             else:
@@ -1099,241 +957,21 @@ class Dftb2(Calculator):
         self._invr = value
 
     @property
-    def forces(self, delta: float = 1.0e-6):
-        """Forces acting on the atoms as calculated via analytical expression.
+    def forces(self) -> Tensor:
+        """Atomic forces"""
+        if not self.geometry.positions.requires_grad:
+            raise RuntimeError(
+                "Forces are computed via the PyTorch auto-grad engine, thus "
+                "the positions tensor must be differentiable, i.e. "
+                "\"Geometry.positions.requires_grad = True\".")
 
-        Arguments:
-            delta: Finite difference delta for the overlap and hamiltonian
-                gradients. [DEFAULT: 1.0e-6]
+        gradient, *_ = torch.autograd.grad(
+            self.mermin_energy.sum(), self.geometry.positions, create_graph=True)
 
-        Returns:
-            forces: tensor reporting the force on each atom along each
-                dimension.
-        """
-        # Current issue that need to be resolved:
-        #   - 1) This uses a manual and hard coded method to compute the
-        #       gradients of the gamma matrix. This will fail if a gamma
-        #       scheme other than "exponential" is used. Considerations should
-        #       be made as to what the best way to deal with this is. If
-        #       PyTorch is able to safely compute the gradients then the
-        #       `gamma_exponential_gradient` method could be moved into
-        #       a unit-test and a more generic approach implemented here.
-        #   - 2) This makes an explicit call to a private method of the
-        #       Hamiltonian and Overlap `Feed` objects. Specifically the
-        #       `SkFeed._off_site_blocks` as such this will break when
-        #       using a different feed object or working with periodic
-        #       systems. It also requires manually tweaking private methods of
-        #       the `SkFeed` class to adapt them for use in another private
-        #       method of a different unrelated class causing unintentional
-        #       coupling.
-        #   - 3) Given the cost of evaluating the forces, and to a lesser
-        #       extent the repulsive energy, it might be worth caching these
-        #       values after computing them.
-        #   - 4) Hard coding of gradients associated with the repulsive spline
-        #       feeds needs to be removed and replaced with a generic auto-grad
-        #       solution.
-        #   - 5) This is only compatible with the now deprecated
-        #       `RepulsiveSplineFeed` class.
-
-        from tbmalt.physics.dftb.feeds import SkFeed
-
-        warnings.warn(
-            "This is an experimental feature which is not intended for "
-            "public use!")
-
-        if not isinstance(self.h_feed, SkFeed) or not isinstance(
-                self.s_feed, SkFeed):
-            raise NotImplementedError(
-                "Manual evaluation of atomic forces is only supported when "
-                "using `SkFeed` instances for the Hamiltonian & overlap "
-                "matrix feeds; `h_feed` & `s_feed`.")
-
-        if self.geometry.is_periodic:
-            raise NotImplementedError(
-                "Manual evaluation of atomic forces is not compatible with "
-                "periodic systems.")
-
-        if self.gamma_scheme != "exponential":
-            raise NotImplementedError(
-                "Manual evaluation of atomic forces is only compatible with "
-                "the exponential gamma scheme.")
-
-        # Non-scc Forces and h1 correction
-        force = -self._finite_diff_overlap_h_blocks(delta=delta)
-
-        # Include contributions associated with the repulsive feed if
-        # present.
-        if self.r_feed is not None:
-            # This will error out if the repulsive feed is anything other
-            # than a `RepulsiveSplineFeed` instance.
-            if isinstance(self.r_feed, RepulsiveSplineFeed):
-                force = force - self.r_feed.gradient(self.geometry)
-            else:
-                raise NotImplementedError(
-                    "Analytical computation of atomic forces is only "
-                    "compatible with `RepulsiveSplineFeed` type repulsive "
-                    "feeds.")
-
-        # Scc corrections (additional to h1)
-        # Gamma gradient correction
-        gamma_grad = gamma_exponential_gradient(
-            self.geometry, self.orbs, self.u_feed.forward(self.orbs))
-
-        gamma_correction = torch.einsum(
-            '...a,...abc,...b->...ac', self.q_delta_atomic,
-            gamma_grad, self.q_delta_atomic)
-
-        force = force - gamma_correction
-
-        return force
-
-    def _finite_diff_overlap_h_blocks(self, delta: float = 1.0e-6) -> Tensor:
-        """Atomic forces based on the gradient of the S & H matrices.
-
-        This method computes the atomic forces via a block-wise evaluation of
-        the gradient of the hamiltonian and overlap matrices using the finite
-        difference method. Note that this does not include contributions from
-        the repulsive spline.
-
-        Arguments:
-            delta: Finite difference delta for the overlap and hamiltonian
-                gradients. [DEFAULT: 1.0e-6]
-
-        Returns:
-            forces: tensor reporting the force on each atom along each
-                dimension based on contributions from the hamiltonian
-                and overlap matrices.
-
-        """
-        # Results tensor
-        force = torch.zeros(
-            self.geometry.positions.size(), device=self.device, dtype=self.dtype)
-
-        # Calculate h1 hamiltonian matrix for block wise force calculation
-        # (calculated together with Non-Scc part)
-        # Construct the shift matrix
-        shifts = torch.einsum(
-            '...i,...ij->...j', self.q_final_atomic - self.q_zero_res, self.gamma)
-        shifts = prepeat_interleave(shifts, self.orbs.orbs_per_res)
-        shifts = (shifts[..., None] + shifts[..., None, :])
-
-        # Compute the h1 hamiltonian matrix
-        h1 = .5 * shifts
-
-        # TODO:
-        #  Check to see if there is a better solution for incorporating energy.
-        # Calculate energy weighted density matrix
-        s_occs = torch.einsum(
-            '...i,...ji->...ji', torch.sqrt(self.occupancy), self.eig_vectors)
-        s_occs_weighted = torch.einsum(
-            '...i,...ji->...ji', self.eig_values * torch.sqrt(self.occupancy), self.eig_vectors)
-
-        rho_weighted = s_occs_weighted @ s_occs.transpose(-1, -2).conj()
-
-        # Loop over unique interactions to calculate dh0 and dS block wise
-        # Identify all unique species combinations
-        unique_interactions = torch.combinations(
-            self.geometry.unique_atomic_numbers(), with_replacement=True)
-
-        # Construct an element-element pair matrix
-        an_mat_a = self.orbs.atomic_number_matrix('atomic')
-
-        # Construct shift vector for later off_site finite diff calculation
-        shift = torch.eye(3, device=self.device, dtype=self.dtype) * delta
-        shift = torch.cat([shift, -shift])
-
-        # Loop over the unique interactions
-        for pair in unique_interactions:
-            a_idx = torch.nonzero((torch.eq(an_mat_a, pair)).all(-1))
-
-            # Skip the loop if no interactions are found and ignore homo-atomic
-            # blocks in the lower triangle to avoid double computation.
-            if a_idx.nelement() == 0:
-                continue
-
-            elif pair[0] == pair[1]:
-                a_idx = a_idx[torch.where(a_idx[..., -2].le(a_idx[..., -1]))]
-
-            # Reshape atom index list to be more amenable to advanced indexing.
-            # This approach is a little messy but reduces memory on the cpu.
-            a_idx_l = a_idx[:, :-1].squeeze(1)
-            b_idx_l = a_idx[:, 3 - a_idx.shape[-1]::2].squeeze(1)
-
-            # Get the matrix indices associated with the target blocks.
-            blk_idx = self.s_feed.atomic_block_indices(a_idx_l, b_idx_l, self.orbs)
-
-            # Identify the off-site blocks
-            off_site = ~torch.tensor(list(
-                map(torch.all, a_idx_l == b_idx_l)), device=self.device)
-
-            if any(off_site):
-                # Create indices for the force calculation
-                if a_idx_l[off_site].dim() == 2:
-                    force_a_idx = (a_idx_l[off_site][:, 0],
-                                   a_idx_l[off_site][:, 1],)
-                    force_b_idx = (b_idx_l[off_site][:, 0],
-                                   b_idx_l[off_site][:, 1],)
-
-                    block_a_idx = a_idx_l[off_site].repeat(6, 1)
-                    block_b_idx = b_idx_l[off_site].repeat(6, 1)
-
-                else:
-                    force_a_idx = (a_idx_l[off_site],)
-                    force_b_idx = (b_idx_l[off_site],)
-
-                    block_a_idx = a_idx_l[off_site].repeat(6)
-                    block_b_idx = b_idx_l[off_site].repeat(6)
-
-                # Repeats shift vector elements for each of site block
-                # currently being calculated
-                block_shift = shift.repeat_interleave(
-                    repeats=len(a_idx_l[off_site]), dim=0)
-                atom_block_shape = self.orbs.n_orbs_on_species(pair)
-                split = block_a_idx.shape[0] // 2
-
-                # Overlap
-                blk_shift_xyz_s = self.s_feed._off_site_blocks(
-                    block_a_idx, block_b_idx, self.geometry, self.orbs,
-                    shift_vec=block_shift)
-
-                finite_diff_overlap_xyz = ((
-                    blk_shift_xyz_s[:split] - blk_shift_xyz_s[split:]
-                    ) / (2 * delta)).view(3, -1, *atom_block_shape)
-
-                # Hamiltonian
-                blk_shift_xyz_h = self.h_feed._off_site_blocks(
-                    block_a_idx, block_b_idx, self.geometry, self.orbs,
-                    shift_vec=block_shift)
-
-                finite_diff_hamiltonian_xyz = ((
-                    blk_shift_xyz_h[:split] - blk_shift_xyz_h[split:]
-                    ) / (2 * delta)).view(3, -1, *atom_block_shape)
-
-                # Calculate shifted off_sites in x,y,z direction
-                for coord in range(0, 3):
-                    finite_diff_overlap = finite_diff_overlap_xyz[coord]
-                    finite_diff_hamiltonian = finite_diff_hamiltonian_xyz[coord]
-
-                    # Calculate blocks of force contribution in val2 and then sum over in val
-                    val2 = 2 * ((self.rho.mT[*blk_idx][off_site] * finite_diff_hamiltonian) -
-                                (rho_weighted.mT[*blk_idx][off_site] * finite_diff_overlap))
-
-                    val2 += 2 * (self.rho.mT[*blk_idx][off_site]
-                                 * h1.mT[*blk_idx][off_site]
-                                 * finite_diff_overlap)
-
-                    val = val2.sum(dim=tuple(range(1, val2.dim()))).unsqueeze(-1)
-                    force[..., :, coord:coord + 1].index_put_(
-                        force_a_idx, -val, accumulate=True)
-                    force[..., :, coord:coord + 1].index_put_(
-                        force_b_idx, val, accumulate=True)
-
-        return force
+        return -gradient
 
     def forward(
-            self, cache: Optional[Dict[str, Any]] = None,
-            grad_mode: Literal["direct", "last_step", "implicit"] | str = "last_step",
-            implicit_mixer: Optional[Mixer] = None, **kwargs) -> Tensor:
+            self, cache: Optional[Dict[str, Any]] = None) -> Tensor:
         """Execute the SCC-DFTB calculation.
 
         Invoking this will trigger the execution of the self-consistent-charge
@@ -1345,35 +983,9 @@ class Dftb2(Calculator):
 
                     - "q_initial": initial starting guess for the SCC cycle.
 
-            grad_mode: controls gradient mode is used when running the SCC
-                cycles. Available options are [DEFAULT:"last_step"]:
-
-                    - "direct": run the SCC cycle with without any special
-                        handling.
-                    - "last_step": run the SCC cycle outside the purview of the
-                        PyTorch graph to obtain the converged charges. Then
-                        run a single SCC step within the graph using the
-                        converged charges as the initial "guess".
-                    - "implicit": uses implicit function theorem to accurately
-                        and memory efficiently compute the derivative. This
-                        requires the use of an iterative solver. By default,
-                        the solver will employ the same mixer provided for
-                        the SCC cycle, `DFTB2.mixer`. It is critical to note
-                        that the accuracy of the gradients produced by the
-                        implicit method is directly tied to the tolerance
-                        and stability of the mixer. As such a different
-                        dedicated mixer can be supplied via the
-                        ``implicit_mixer`` argument.
-
-            implicit_mixer: This can be used to provide a dedicated mixer
-                to be used by the implicit solver used when using the
-                "implicit" ``grad_mode``. See discussion of the "implicit"
-                option of the ``grad_mode`` argument description.
-
         Returns:
             total_energy: total energy for the target systems this will include
                 both the repulsive and entropy terms, where appropriate.
-
         """
 
         # Step 1: Initial Setup
@@ -1401,12 +1013,12 @@ class Dftb2(Calculator):
         # approaches are needed depending on what gradient mode is to be used.
         # The "direct" approach carries out the SCC cycle without any special
         # handling. Therefor the gradient will pass through the full SCC cycle.
-        if grad_mode == "direct":
+        if self.grad_mode == "direct":
             (q_out, self._hamiltonian, self.eig_values, self.eig_vectors,
              self.rho) = Dftb2.scc_cycle(
                 self.q_zero_res, self.orbs, *hsg_args, **kwargs_in)
 
-        elif grad_mode == "last_step" or grad_mode == "implicit":
+        elif self.grad_mode == "last_step" or self.grad_mode == "implicit":
 
             # In the "last step" approach the SCC cycle is performed outside the
             # purview of the graph and is used only to obtain the converged
@@ -1429,7 +1041,7 @@ class Dftb2(Calculator):
                 q_converged, *_ = Dftb2.scc_cycle(
                     self.q_zero_res, self.orbs, *hsg_args, **kwargs_in)
 
-            if grad_mode == "implicit":
+            if self.grad_mode == "implicit":
                 # The implicit method requires the parameter-to-charge gradient
                 # path. Thus, an initial single SCC step must be performed to
                 # "re-attach" the charges. Note that this is in addition to the
@@ -1446,8 +1058,8 @@ class Dftb2(Calculator):
                 # compute and apply the gradient correction during the
                 # backwards pass. This will use the same mixer as the SCC
                 # cycle unless the user provides a dedicated mixer.
-                implicit_mixer = (self.mixer if implicit_mixer is None
-                                  else implicit_mixer)
+                implicit_mixer = (self.mixer if self.implicit_mixer is None
+                                  else self.implicit_mixer)
                 q_converged.register_hook(self._implicit_solver_hook(
                     f0, q0, implicit_mixer, self.max_scc_iter,
                     self.suppress_scc_error))
@@ -1459,7 +1071,7 @@ class Dftb2(Calculator):
 
         else:
             raise ValueError(
-                f"\"{grad_mode}\" does not correspond to a known gradient mode."
+                f"\"{self.grad_mode}\" does not correspond to a known gradient mode."
                 " Valid options are \"direct\", \"last_step\", \"implicit\"")
 
         # Calculate and return the total system energy, taking into account
@@ -1591,11 +1203,11 @@ class Dftb2(Calculator):
             orbs: `OrbitalInfo` object for the associated systems.
             n_electrons: total number of electrons.
             filling_temp: electronic temperature used to calculate Fermi-energy.
-                [DEFAULT: 0.0]
+                [DEFAULT=0.0]
             filling_scheme: scheme used for finite temperature broadening.
                 There are two broadening methods, Fermi-Dirac broadening and
                 Gaussian broadening, supported in TBMaLT.
-                [DEFAULT: `fermi_smearing`]
+                [DEFAULT=`fermi_smearing`]
 
         Keyword Arguments:
             eigen_solver_settings: a dictionary storing advanced settings to
@@ -1633,7 +1245,7 @@ class Dftb2(Calculator):
         e_mask = orbs if orbs.atomic_numbers.dim() == 2 else None
 
         # Compute the new occupancy values, performing smearing as necessary.
-        if filling_scheme is not None:
+        if filling_scheme is not None and filling_temp is not None:
             fermi_energy = fermi_search(eig_values, n_electrons, filling_temp,
                                         filling_scheme, e_mask=e_mask)
 
@@ -1690,16 +1302,17 @@ class Dftb2(Calculator):
             overlap: overlap matrix.
             gamma: gamma matrix.
             filling_temp: electronic temperature used to calculate Fermi-energy.
-                [DEFAULT: 0.0]
+                [DEFAULT=0.0]
             filling_scheme: scheme used for finite temperature broadening.
                 There are two broadening methods, Fermi-Dirac broadening and
-                Gaussian broadening, supported in TBMaLT. [DEFAULT: fermi]
+                Gaussian broadening, supported in TBMaLT.
+                [DEFAULT=`fermi_smearing`]
             max_scc_iter: maximum permitted number of SCC iterations. If one or
                 more system fail to converge within ``max_scc_iter`` cycles
                 then a convergence error will be raised; unless the
                 ``suppress_scc_error`` flag has been set. [DEFAULT=200]
             mixer: the `Mixer` instance with which to mix the charges during
-                the SCC cycle. [DEFAULT=Anderson]
+                the SCC cycle. [DEFAULT=`Anderson`]
 
         Keyword Arguments:
             suppress_scc_error: if True, convergence errors will be suppressed

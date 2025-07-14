@@ -100,8 +100,10 @@ mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2,
               'generations': 3, 'tolerance': 1e-10}
 kwargs = {}
 kwargs['mix_params'] = mix_params
-dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, supress_SCF_error=True,
-                        filling_scheme=None, filling_temp=None, **kwargs)
+dftb_calculator = Dftb2(
+    h_feed, s_feed, o_feed, u_feed, supress_SCF_error=True,
+    filling_scheme=None, filling_temp=None, grad_mode="direct",
+    **kwargs)
 
 
 # ======================== #
@@ -271,7 +273,7 @@ def dftb_results(numbers, positions, cells, **kwargs):
     orbs = OrbitalInfo(geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
     if not dftb:
-        dftb_calculator(geometry, orbs, grad_mode="direct")
+        dftb_calculator(geometry, orbs)
     else:
         # Build new feeds
         h_feed_o = SkFeed.from_database(parameter_db_path, species, 'hamiltonian',

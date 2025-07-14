@@ -130,8 +130,9 @@ u_feed = HubbardFeed.from_database(parameter_db_path, species)
 # ---------------------------------------------
 # As this is a minimal working example, no optional settings are provided to the
 # calculator object.
-dftb_calculator = Dftb2(h_feed, s_feed, o_feed, u_feed,
-                        filling_scheme=None, filling_temp=None)
+dftb_calculator = Dftb2(
+    h_feed, s_feed, o_feed, u_feed, filling_scheme=None,
+    filling_temp=None, grad_mode="direct")
 
 # Construct machine learning object
 lr = 0.003
@@ -192,7 +193,7 @@ if fit_model:
         orbs = OrbitalInfo(data.geometry.atomic_numbers, shell_dict, shell_resolved=False)
 
         # Perform the forwards operation
-        dftb_calculator(data.geometry, orbs, grad_mode="direct")
+        dftb_calculator(data.geometry, orbs)
 
         # Calculate the loss
         loss = calculate_losses(dftb_calculator, data)

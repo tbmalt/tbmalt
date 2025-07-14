@@ -291,7 +291,8 @@ def single_fit(dftb_calculator, dataloder, n_batch, global_r):
         # Perform the forwards operation
         dftb_calculator.h_feed.compression_radii = this_cr
         dftb_calculator.s_feed.compression_radii = this_cr
-        dftb_calculator(data.geometry, orbs, grad_mode="direct")
+        dftb_calculator.grad_mode = "direct"
+        dftb_calculator(data.geometry, orbs)
 
         # Calculate the loss
         loss = calculate_losses(dftb_calculator, data)

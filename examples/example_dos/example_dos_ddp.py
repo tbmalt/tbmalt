@@ -271,8 +271,8 @@ def dftb_results(numbers, positions, cells, h_feed_n, s_feed_n, **kwargs):
     # Build objects for DFTB calculaitons
     dftb_calculator = Dftb2(h_feed_n, s_feed_n, o_feed, u_feed,
                             suppress_scc_error=True, filling_scheme=None,
-                            filling_temp=None, **kwargs)
-    dftb_calculator(geometry, orbs, grad_mode="direct")
+                            filling_temp=None, grad_mode="direct", **kwargs)
+    dftb_calculator(geometry, orbs)
 
     return dftb_calculator
 
