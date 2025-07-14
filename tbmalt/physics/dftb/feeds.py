@@ -623,9 +623,7 @@ class SkFeed(IntegralFeed):
         self._off_sites = value
 
     def _off_site_blocks(self, atomic_idx_1: Tensor, atomic_idx_2: Tensor,
-                         geometry: Geometry, orbs: OrbitalInfo,
-                         shift_vec: Optional[Tensor] = None, **kwargs
-                         ) -> Tensor:
+                         geometry: Geometry, orbs: OrbitalInfo) -> Tensor:
         """Compute atomic interaction blocks (off-site only).
 
         Constructs the off-site atomic blocks using Slater-Koster integral
@@ -638,7 +636,6 @@ class SkFeed(IntegralFeed):
                   desired interaction block.
               geometry: The systems to which the atomic indices relate.
               orbs: Orbital information associated with said systems.
-              shift_vec: Vector to shift the distance vector by. [DEFAULT=`None`]
           Returns:
               blocks: Requested atomic interaction sub-blocks.
         """
@@ -652,8 +649,7 @@ class SkFeed(IntegralFeed):
         # Inter-atomic distance and distance vector calculator.
         dist_vec = (geometry.positions[*bT2(atomic_idx_2)]
                     - geometry.positions[*bT2(atomic_idx_1)])
-        if shift_vec is not None:
-            dist_vec = dist_vec + shift_vec
+
         dist = torch.linalg.norm(dist_vec, dim=-1)
         u_vec = (dist_vec.T / dist).T
 

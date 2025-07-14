@@ -425,7 +425,7 @@ class Dftb1(Calculator):
                 "\"Geometry.positions.requires_grad = True\".")
 
         gradient, *_ = torch.autograd.grad(
-            self.total_energy.sum(), self.geometry.positions, create_graph=True)
+            self.mermin_energy.sum(), self.geometry.positions, create_graph=True)
 
         return -gradient
 
@@ -966,7 +966,7 @@ class Dftb2(Calculator):
                 "\"Geometry.positions.requires_grad = True\".")
 
         gradient, *_ = torch.autograd.grad(
-            self.total_energy.sum(), self.geometry.positions, create_graph=True)
+            self.mermin_energy.sum(), self.geometry.positions, create_graph=True)
 
         return -gradient
 
