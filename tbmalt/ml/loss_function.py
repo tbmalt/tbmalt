@@ -1,4 +1,4 @@
-from tbmalt.ml.module import Calculator
+from tbmalt.ml.calculator import Calculator
 import tbmalt.common.maths as tb_math
 from typing import Callable, Optional, Union, Any, Dict, Tuple
 from warnings import warn

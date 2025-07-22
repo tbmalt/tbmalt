@@ -3,11 +3,10 @@
 import torch
 
 from typing import Optional, Dict, Any, Literal, Union, Tuple, Callable
-import warnings
 
-from tbmalt.ml.module import Calculator
+from tbmalt.ml.calculator import Calculator
 from tbmalt.ml.integralfeeds import IntegralFeed
-from tbmalt import OrbitalInfo
+from tbmalt import Geometry, OrbitalInfo
 from tbmalt.physics.dftb.feeds import Feed, SkfOccupationFeed
 from tbmalt.physics.filling import (
     fermi_search, fermi_smearing, gaussian_smearing, entropy_term,
@@ -25,23 +24,7 @@ from tbmalt import ConvergenceError
 from torch import Tensor
 
 
-# Issues:
-#   - There is an issue with how thins are currently being dealt with; according
-#     to DFTB+ Eband, E0, TS, & fillings should be doubled for spin unpolarised
-#     calculations. For k-point dependant calculations there should be a loop
-#     over k-points like so `Ef(:) = Ef + EfTmp(:nSpinHams) * kWeights(iK)`.
-#     Common Fermi level across two colinear spin channels Ef(2) = Ef(1), and
-#     for ! Fixed value of the Fermi level for each spin channel `things are
-#     just left as they are`.
-
-# Notes:
-#   - Do we really want q_zero, q_final, etc to be the number of electrons or
-#     the charge?
-
-# This method really could benefit from a refactoring. It should be more
-# clear in its intent and operation. This function will be made private
-# until it is cleared up.
-def _mulliken(
+def mulliken(
         rho: Tensor, S: Tensor, orbs: Optional[OrbitalInfo] = None,
         resolution: Optional[Literal['atom', 'shell', 'orbital']] = None
 ) -> Tensor:
@@ -86,7 +69,6 @@ def _mulliken(
     q = (rho * S).sum(-1)  # Calculate the per-orbital Mulliken populations
     if orbs is not None:  # Resolve to per-shell/atom if instructed to
         if resolution is None:
-            # TODO: Change orbs to have a res_matrix_shape property.
             size, ind = orbs.res_matrix_shape, orbs.on_res
         elif resolution == 'atom':
             size, ind = orbs.atomic_matrix_shape, orbs.on_atoms
@@ -243,12 +225,12 @@ class Dftb1(Calculator):
     @property
     def q_zero(self):
         """Initial orbital populations"""
-        return self.o_feed.forward(self.orbs)
+        return self.o_feed(self.orbs)
 
     @property
     def q_final(self):
         """Final orbital populations"""
-        return _mulliken(self.rho, self.overlap)
+        return mulliken(self.rho, self.overlap)
 
     @property
     def q_delta(self):
@@ -266,7 +248,7 @@ class Dftb1(Calculator):
     @property
     def q_final_shells(self):
         """Final shell-wise populations"""
-        return _mulliken(self.rho, self.overlap, self.orbs, 'shell')
+        return mulliken(self.rho, self.overlap, self.orbs, 'shell')
 
     @property
     def q_delta_shells(self):
@@ -284,7 +266,7 @@ class Dftb1(Calculator):
     @property
     def q_final_atomic(self):
         """Final atomic populations"""
-        return _mulliken(self.rho, self.overlap, self.orbs, 'atom')
+        return mulliken(self.rho, self.overlap, self.orbs, 'atom')
 
     @property
     def q_delta_atomic(self):
@@ -437,7 +419,8 @@ class Dftb1(Calculator):
         self.eig_values = None
         self.eig_vectors = None
 
-    def forward(self, cache: Optional[Dict[str, Any]] = None):
+    def forward(self, geometry: Geometry, orbs: OrbitalInfo,
+                cache: Optional[Dict[str, Any]] = None) -> Tensor:
         """Execute the non-SCC DFTB calculation.
 
         This method triggers the execution of the non-self-consistent-charge
@@ -445,17 +428,24 @@ class Dftb1(Calculator):
         this will return the total system energy.
 
         Arguments:
+            geometry: System(s) upon which the calculation is to be run.
+            orbs: Orbital information associated with said system(s).
             cache: Currently, the `Dftb1` calculator does not make use of the
                 `cache` argument.
 
         Returns:
-            total_energy: total energy of the target system(s). If repulsive
+            energy: Total energy of the target system(s). If repulsive
                 interactions are not considered, i.e. the repulsion feed is
-                omitted, then this will be the band structure energy. If finite
-                temperature is active then this will technically be the Mermin
-                energy.
+                omitted, then this will be the band structure energy. If
+                finite temperature is active then this will be the Mermin
+                free energy.
 
         """
+        # Reset the calculator and assign the `geometry` & `orbs` attributes
+        self.reset()
+        self._geometry = geometry
+        self._orbs = orbs
+
         # Construct the Hamiltonian & overlap matrices then perform the eigen
         # decomposition to get the eigen values and vectors.
         self.eig_values, self.eig_vectors = eighb(
@@ -736,7 +726,7 @@ class Dftb2(Calculator):
         if self._gamma is None:
             self._gamma = build_gamma_matrix(
                 self.geometry, self.orbs, self.invr,
-                self.u_feed.forward(self.orbs), self.gamma_scheme)
+                self.u_feed(self.orbs), self.gamma_scheme)
         return self._gamma
 
     @gamma.setter
@@ -746,12 +736,12 @@ class Dftb2(Calculator):
     @property
     def q_zero(self):
         """Initial orbital populations"""
-        return self.o_feed.forward(self.orbs)
+        return self.o_feed(self.orbs)
 
     @property
     def q_final(self):
         """Final orbital populations"""
-        return _mulliken(self.rho, self.overlap)
+        return mulliken(self.rho, self.overlap)
 
     @property
     def q_delta(self):
@@ -769,7 +759,7 @@ class Dftb2(Calculator):
     @property
     def q_final_shells(self):
         """Final shell-wise populations"""
-        return _mulliken(self.rho, self.overlap, self.orbs, 'shell')
+        return mulliken(self.rho, self.overlap, self.orbs, 'shell')
 
     @property
     def q_delta_shells(self):
@@ -787,7 +777,7 @@ class Dftb2(Calculator):
     @property
     def q_final_atomic(self):
         """Final atomic populations"""
-        return _mulliken(self.rho, self.overlap, self.orbs, 'atom')
+        return mulliken(self.rho, self.overlap, self.orbs, 'atom')
 
     @property
     def q_delta_atomic(self):
@@ -851,7 +841,7 @@ class Dftb2(Calculator):
     @property
     def core_band_energy(self):
         """Core band structure energy, excluding SCC contributions"""
-        return ((self.rho * self.core_hamiltonian).sum(-1).sum(-1))
+        return (self.rho * self.core_hamiltonian).sum(-1).sum(-1)
 
     @property
     def band_free_energy(self):
@@ -878,7 +868,7 @@ class Dftb2(Calculator):
     @property
     def scc_energy(self):
         """Energy contribution from charge fluctuation"""
-        q_delta = _mulliken(self.rho, self.overlap, self.orbs) - self.q_zero_res
+        q_delta = mulliken(self.rho, self.overlap, self.orbs) - self.q_zero_res
         shifts = torch.einsum('...i,...ij->...j', q_delta, self.gamma)
         return .5 * (shifts * q_delta).sum(-1)
 
@@ -970,25 +960,34 @@ class Dftb2(Calculator):
 
         return -gradient
 
-    def forward(
-            self, cache: Optional[Dict[str, Any]] = None) -> Tensor:
+    def forward(self, geometry: Geometry, orbs: OrbitalInfo,
+                cache: Optional[Dict[str, Any]] = None) -> Tensor:
         """Execute the SCC-DFTB calculation.
 
         Invoking this will trigger the execution of the self-consistent-charge
         density functional tight binding theory calculation.
 
         Arguments:
+            geometry: System(s) upon which the calculation is to be run.
+            orbs: Orbital information associated with said system(s).
             cache: This stores any information which can be used to bootstrap
                 the calculation. Currently supported values are:
 
                     - "q_initial": initial starting guess for the SCC cycle.
 
         Returns:
-            total_energy: total energy for the target systems this will include
-                both the repulsive and entropy terms, where appropriate.
+            energy: Total energy of the target system(s). If repulsive
+                interactions are not considered, i.e. the repulsion feed is
+                omitted, then this will be the band structure energy. If
+                finite temperature is active then this will be the Mermin
+                free energy.
         """
-
         # Step 1: Initial Setup
+        # Reset the calculator and assign the `geometry` & `orbs` attributes
+        self.reset()
+        self._geometry = geometry
+        self._orbs = orbs
+
         # Gather keyword arguments relevant to the SCC cycle
         kwargs_in = {
             "filling_temp": self.filling_temp,
@@ -1277,7 +1276,7 @@ class Dftb2(Calculator):
         rho = (s_occs @ s_occs.transpose(-1, -2).conj()) + offset * rho
 
         # Compute the new charges
-        q_out = _mulliken(rho, overlap, orbs)
+        q_out = mulliken(rho, overlap, orbs)
 
         return q_out, hamiltonian, eig_values, eig_vectors, rho
 

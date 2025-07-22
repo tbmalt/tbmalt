@@ -131,8 +131,7 @@ def test_polyinterpu_single(device):
         torch.from_numpy(data[:, 9]).to(device), requires_grad=False)
     ref = -2.7051061568285979E-002
     fit = PolyInterpU(xa, yb, n_interp=8, n_interp_r=4)
-    pred = fit.forward(
-        torch.tensor([4.3463697737315234], device=device))
+    pred = fit(torch.tensor([4.3463697737315234], device=device))
 
     assert abs(ref - pred) < 1E-14, 'tolerance check'
 
@@ -143,8 +142,7 @@ def test_polyinterpu_single(device):
     # Check n_interp
     ref2 = -2.705744877076714E-02
     fit.n_interp, fit.n_interp_r = 3, 2
-    pred = fit.forward(
-        torch.tensor([4.3463697737315234], device=device))
+    pred = fit(torch.tensor([4.3463697737315234], device=device))
 
     assert abs(ref2 - pred) < 1E-14, 'tolerance check'
 
@@ -155,7 +153,7 @@ def test_polyinterpu_batch(device):
     yb = Parameter(
         torch.from_numpy(data[:, 9]).to(device), requires_grad=False)
     fit = PolyInterpU(xa, yb)
-    pred = fit.forward(torch.tensor(
+    pred = fit(torch.tensor(
         [4.3463697737315234, 8.1258217508893704], device=device))
     ref = torch.tensor(
         [-2.7051061568285979E-002, -7.9892794322938818E-005], device=device)
@@ -170,7 +168,7 @@ def test_polyinterpu_batch(device):
     ref2 = torch.tensor(
         [-2.705744877076714E-02, -8.008294135339589E-05], device=device)
     fit.n_interp, fit.n_interp_r = 3, 2
-    pred = fit.forward(torch.tensor(
+    pred = fit(torch.tensor(
         [4.3463697737315234, 8.1258217508893704], device=device))
 
     assert (abs(ref2 - pred) < 1E-14).all(), 'tolerance check'
@@ -190,24 +188,24 @@ def test_polyinterpu_tail(device):
         torch.from_numpy(data[:, 9]).to(device), requires_grad=False)
     fit = PolyInterpU(xa, yb)
 
-    check_1 = torch.allclose(ref[0], fit.forward(xt), **tol)
+    check_1 = torch.allclose(ref[0], fit(xt), **tol)
 
     assert check_1, 'tail region tolerance check failed'
 
     # Check device: Device persistence check
-    check_dev = fit.forward(xt).device == xa.device
+    check_dev = fit(xt).device == xa.device
     assert check_dev, 'Device of prediction is not consistent with input'
 
     # Check tail
     fit.tail = 0.6
 
-    check_2 = torch.allclose(ref[1], fit.forward(xt), **tol)
+    check_2 = torch.allclose(ref[1], fit(xt), **tol)
     assert check_2, 'tail region out of tolerance when tail distance modified'
 
     # Check delta_r
     fit.tail, fit.delta_r = 1.0, 1E-4
 
-    check_3 = torch.allclose(ref[2], fit.forward(xt), **tol)
+    check_3 = torch.allclose(ref[2], fit(xt), **tol)
     assert check_3, 'tail region out of tolerance when displacement distance modified'
 
 @pytest.mark.grad
@@ -216,7 +214,7 @@ def test_polyinterpu_grad(device):
 
     x_knots = torch.linspace(0.2, 10, 50, device=device)
     x_target = torch.tensor([0.6], device=device)
-    spline_proxy = lambda y: PolyInterpU(x_knots, y).forward(x_target)
+    spline_proxy = lambda y: PolyInterpU(x_knots, y)(x_target)
 
     y_knots = Parameter(torch.from_numpy(data[:, 9]).to(device))
     grad_is_safe = gradcheck(spline_proxy, y_knots, raise_exception=False)
@@ -238,7 +236,7 @@ def test_spline_cubic(device):
                     requires_grad=False)
 
     fit0 = CubicSpline(xa0, yb0)
-    pred0 = fit0.forward(
+    pred0 = fit0(
         torch.tensor([2.0, 2.5, 3.5, 4.9, 5.5, 6.2], device=device))
 
     cs0 = SciCubSpl(xa0.cpu(), yb0.cpu())
@@ -256,7 +254,7 @@ def test_spline_cubic(device):
                    requires_grad=False)
 
     fit = CubicSpline(xa, yb)
-    pred = fit.forward(
+    pred = fit(
         torch.tensor([2.0, 2.5, 3.5, 4.9, 5.5, 6.2], device=device))
 
     cs = SciCubSpl(xa.cpu(), yb.cpu())
@@ -278,7 +276,7 @@ def test_cubic_spline_tail(device):
     yb = Parameter(torch.from_numpy(data[:, 9]).to(device),
                    requires_grad=False)
     fit = CubicSpline(xa, yb)
-    pred = fit.forward(distance)
+    pred = fit(distance)
     ref = torch.tensor([1.33409107588738e-05], device=device)
 
     assert (abs(ref - pred) < 1E-11).all(), 'tolerance check'
@@ -289,7 +287,7 @@ def test_cubic_spline_tail(device):
 
     # Check tail
     fit.tail = 0.6
-    pred2 = fit.forward(distance)
+    pred2 = fit(distance)
     ref2 = torch.tensor([1.3334001762933034E-005], device=device)
     assert (abs(ref2 - pred2) < 1E-11).all(), 'tolerance check'
 
@@ -301,7 +299,7 @@ def test_cubic_spline_grad(device):
 
     x_knots = torch.linspace(0.2, 10, 50, device=device)
     x_target = torch.tensor([0.6], device=device)
-    spline_proxy = lambda y: CubicSpline(x_knots, y).forward(x_target)
+    spline_proxy = lambda y: CubicSpline(x_knots, y)(x_target)
 
     y_knots = Parameter(torch.from_numpy(data[:, 9]).to(device))
     grad_is_safe = gradcheck(spline_proxy, y_knots, raise_exception=False)

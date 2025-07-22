@@ -672,7 +672,7 @@ class SkFeed(IntegralFeed):
             for j, l_2 in enumerate(shells_2[o:], start=o):
                 # Retrieve/interpolate the integral spline, remove any NaNs
                 # due to extrapolation then convert to a torch tensor.
-                inte = self._off_sites[str((z_1, z_2, i, j))].forward(dist)
+                inte = self._off_sites[str((z_1, z_2, i, j))](dist)
 
                 # Apply the Slater-Koster transformation
                 inte = sub_block_rot(torch.tensor([l_1, l_2]), u_vec, inte)
@@ -782,7 +782,7 @@ class SkFeed(IntegralFeed):
             for j, l_2 in enumerate(shells_2[o:], start=o):
                 # Retrieve/interpolate the integral spline, remove any NaNs
                 # due to extrapolation then convert to a torch tensor.
-                inte = self._off_sites[str((z_1, z_2, i, j))].forward(dist)
+                inte = self._off_sites[str((z_1, z_2, i, j))](dist)
                 inte[inte != inte] = 0.0
 
                 # Apply the Slater-Koster transformation
@@ -864,9 +864,9 @@ class SkFeed(IntegralFeed):
 
         # Identify which are on-site blocks and which are off-site
         on_site = self.partition_blocks(atomic_idx_1, atomic_idx_2)
-        mask_shell = torch.zeros_like(self.on_sites[str(z_1.item())]).bool()
-        mask_shell[:(torch.arange(len(orbs.shell_dict[z_1.item()]))
-                     * 2 + 1).sum()] = True
+        mask_shell = torch.ones(
+            sum(map(lambda x: x * 2 + 1, orbs.shell_dict[z_1.item()])),
+            dtype=torch.bool, device=geometry.device)
 
         # Construct the on-site blocks (if any are present)
         if any(on_site):
@@ -1316,7 +1316,7 @@ class VcrSkFeed(IntegralFeed):
             for j, l_2 in enumerate(shells_2[o:], start=o):
                 # Retrieve/interpolate the integral spline, remove any NaNs
                 # due to extrapolation then convert to a torch tensor.
-                inte = self._off_sites[str((z_1, z_2, i, j))].forward(
+                inte = self._off_sites[str((z_1, z_2, i, j))](
                     compression_radii, dist)
 
                 # Apply the Slater-Koster transformation
@@ -1582,9 +1582,22 @@ class SkfOccupationFeed(Feed):
             as required by the PyTorch `ParameterDict` structure.
 
     Examples:
+        >>> from torch import tensor
+        >>> from torch.nn import ParameterDict
         >>> from tbmalt.physics.dftb.feeds import SkfOccupationFeed
-        >>> l_resolved = SkfOccupationFeed(  #     fs, fp, fd
-        ...     ParameterDict({"79": torch.tensor([1., 0., 10.])}))
+        >>> from tbmalt import OrbitalInfo
+        >>>
+        >>> # Shell resolved occupancies — {H: [s], C: [s, p]}
+        >>> occupation_feed = SkfOccupationFeed(ParameterDict({
+        ...     "1": tensor([1.]), "6": tensor([2., 2.])}))
+        >>> # Orbital information instance for CH4
+        >>> orbs = OrbitalInfo(
+        ...     tensor([6, 1, 1, 1, 1]), {1: [0], 6: [0, 1]})
+        >>> # Interrogate the occupancy feed
+        >>> occs = occupation_feed(orbs)
+        >>> # The feed will always return one occupancy value per-orbital.
+        >>> print(occs)
+        tensor([2.000, 0.667, 0.667, 0.667, 1.000, 1.000, 1.000, 1.000])
 
     Notes:
         Note that this method discriminates between orbitals based only on
@@ -1670,11 +1683,6 @@ class SkfOccupationFeed(Feed):
         # Divide the occupancy by the number of shells
         return occupancies / (2 * ls + 1)
 
-    def __call__(self, *args, **kwargs):
-        warnings.warn(
-            "`SkfOccupationFeed` instances should be invoked via their "
-            "`.forward` method now.")
-        return self.forward(*args, **kwargs)
 
     @classmethod
     def from_database(cls, path: str, species: List[int], **kwargs
@@ -1714,7 +1722,7 @@ class SkfOccupationFeed(Feed):
             >>> shell_dict = {1: [0], 6: [0, 1]}
 
             # Occupancy information of an example system
-            >>> o_feed.forward(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
+            >>> o_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
             tensor([2.0000, 0.6667, 0.6667, 0.6667,
                     1.0000, 1.0000, 1.0000, 1.0000])
 
@@ -1746,8 +1754,24 @@ class HubbardFeed(Feed):
             as required by the PyTorch `ParameterDict` structure.
 
     Examples:
+        >>> from torch import tensor
+        >>> from torch.nn import ParameterDict
         >>> from tbmalt.physics.dftb.feeds import HubbardFeed
-        >>> l_resolved = HubbardFeed(ParameterDict({"1": torch.tensor([0.5])}))
+        >>> from tbmalt import OrbitalInfo
+        >>>
+        >>> # Shell resolved Hubbard-U feed — {H: [s], C: [s, p]}
+        >>> hubbard_u_feed = HubbardFeed(ParameterDict({
+        ...     "1": tensor([0.4196]), "6": tensor([0.3647, 0.3647])}))
+        >>> # Orbital information instance for CH4 (shell resolved)
+        >>> orbs = OrbitalInfo(
+        ...     tensor([6, 1, 1, 1, 1]), {1: [0], 6: [0, 1]}, True)
+        >>> # Interrogate the Hubbard-U feed
+        >>> l_resolved_us = hubbard_u_feed(orbs)
+        >>> # The feed returns one Hubbard-U value per-shell as the OrbitalInfo
+        >>> # entity is shell resolved. If it were atom resolved, then it would
+        >>> # yield only one value per-atom.
+        >>> print(l_resolved_us)
+        tensor([0.3647, 0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
 
     Notes:
         Note that this method discriminates between orbitals based only on
@@ -1832,12 +1856,6 @@ class HubbardFeed(Feed):
 
         return hubbard_us
 
-    def __call__(self, *args, **kwargs):
-        warnings.warn(
-            "`HubbardFeed` instances should be invoked via their "
-            "`.forward` method now.")
-        return self.forward(*args, **kwargs)
-
     @classmethod
     def from_database(cls, path: str, species: List[int], **kwargs
                       ) -> HubbardFeed:
@@ -1876,7 +1894,7 @@ class HubbardFeed(Feed):
             >>> shell_dict = {1: [0], 6: [0, 1]}
 
             # Hubbard U values of an example system
-            >>> u_feed.forward(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
+            >>> u_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
             tensor([0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
 
         """
@@ -2241,7 +2259,7 @@ class PairwiseRepulsiveEnergyFeed(Feed):
                 str((species_pair[0].item(), species_pair[1].item()))]
 
             # evaluate it at the relevant distances
-            e_pairs = feed.forward(distances)
+            e_pairs = feed(distances)
 
             # add the resulting energies to the current total(s)
             e_rep.scatter_add_(0, atomic_indices[0], e_pairs)

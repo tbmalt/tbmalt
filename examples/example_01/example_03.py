@@ -7,7 +7,7 @@ import h5py
 from sklearn.ensemble import RandomForestRegressor
 
 from tbmalt import Geometry, OrbitalInfo
-from tbmalt.ml.module import Calculator
+from tbmalt.ml.calculator import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, VcrSkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.io.dataset import DataSetIM
