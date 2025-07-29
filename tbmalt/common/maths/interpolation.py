@@ -31,6 +31,7 @@ class BicubInterpSpl(Feed):
     Examples:
         >>> import matplotlib.pyplot as plt
         >>> import torch
+        >>> from tbmalt.common.maths.interpolation import BicubInterpSpl
         >>> x = torch.arange(0., 5., 0.25)
         >>> y = torch.arange(0., 5., 0.25)
         >>> xx, yy = torch.meshgrid(x, y)
@@ -231,9 +232,10 @@ class PolyInterpU(Feed):
         points will rapidly, but smoothly, decay to zero.
 
     Examples:
+        >>> import matplotlib.pyplot as plt
         >>> import torch
         >>> from torch.nn import Parameter
-        >>> import matplotlib.pyplot as plt
+        >>> from tbmalt.common.maths.interpolation import PolyInterpU
         >>> x = torch.linspace(0, 2. * torch.pi, 100)
         >>> y = Parameter(torch.sin(x), requires_grad=False)
         >>> poly = PolyInterpU(x, y, n_interp=8, n_interp_r=4)
@@ -536,14 +538,13 @@ class CubicSpline(Feed):
         >>> y = Parameter(torch.sin(x), requires_grad=False)
         >>> spline = CubicSpline(x, y)
         >>> spline(torch.tensor([3.5]))
-        #   tensor([-0.3526])
+        tensor([-0.3526])
         >>> torch.sin(torch.tensor([3.5]))
-        #   tensor([-0.3508])
+        tensor([-0.3508])
 
     """
 
-    def __init__(self, x: Tensor, y: Parameter, tail: Real = 1.0,
-                 **kwargs):
+    def __init__(self, x: Tensor, y: Parameter, tail: Real = 1.0):
         super().__init__()
 
         # X-knot values must be of an anticipated type
@@ -588,15 +589,9 @@ class CubicSpline(Feed):
         self.xp = x
         self._y = y
 
-        # Coefficients will be build when the `coefficients` property is
-        # first invoked. Unless the user has supplied the spline coefficients
-        # manually.
+        # Coefficients will be built when the `coefficients` property is
+        # first invoked.
         self._coefficients: Optional[Tensor] = None
-        if "coefficients" in kwargs.keys():
-            warnings.warn(
-                "Manual specification of coefficients is deprecated.",
-                DeprecationWarning, stacklevel=2)
-            self._coefficients: Optional[Tensor] = kwargs.get("coefficients")
 
         self.grid_step = x[1] - x[0]
         self.tail = tail
