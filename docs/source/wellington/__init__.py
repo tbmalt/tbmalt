@@ -9,29 +9,16 @@ from sphinx.ext.napoleon import (
     Config, setup, _patch_python_domain, _process_docstring, _skip_member,
     GoogleDocstring, NumpyDocstring)
 
-from typing import Any, Callable, Dict, List, Tuple, Union
+from sphinx.util.typing import ExtensionMetadata
+from sphinx.application import Sphinx
+import sphinx
 
-#from sphinx.ext.napoleon._version import __version__
-from sphinx import __display_version__ as __version__
 
 class NewGoogleDocstring(GoogleDocstring):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-#    def _consume_fields(self, parse_type=True, prefer_type=False, numpy=False):
-#        # type: (bool, bool) -> List[Tuple[unicode, unicode, List[unicode]]]
-#        func = NumpyDocstring._consume_field if numpy else self._consume_field
-#
-#        self._consume_empty()
-#        fields = []
-#        while not self._is_section_break():
-#            _name, _type, _desc = func(parse_type, prefer_type)
-#            if _name or _type or _desc:
-#                fields.append((_name, _type, _desc,))
-#        return fields
-
-    def _consume_fields(self, parse_type: bool = True, prefer_type: bool = False,
-                        multiple: bool = False) -> List[Tuple[str, str, List[str]]]:
+    def _consume_fields(self, parse_type=True, prefer_type=False, multiple=False):
         self._consume_empty()
         fields = []
         while not self._is_section_break():
@@ -43,31 +30,31 @@ class NewGoogleDocstring(GoogleDocstring):
                 fields.append((_name, _type, _desc,))
         return fields
 
-    def _consume_returns_section(self):
-        return self._consume_fields(prefer_type=True)
+    def _consume_returns_section(self, *args, **kwargs):
+        return self._consume_fields(prefer_type=True, parse_type=True)
+
 
 def _process_docstring(app, what, name, obj, options, lines):
-    result_lines = lines
-    docstring = None  # type: GoogleDocstring
     if app.config.napoleon_numpy_docstring:
-        docstring = NumpyDocstring(result_lines, app.config, app, what, name,
-                                   obj, options)
-        result_lines = docstring.lines()
+        docstring = NumpyDocstring(
+            lines, app.config, app, what, name, obj, options)
+        lines[:] = docstring.lines()[:]
     if app.config.napoleon_google_docstring:
-        docstring = NewGoogleDocstring(result_lines, app.config, app, what, name,
-                                    obj, options)
-        result_lines = docstring.lines()
-    lines[:] = result_lines[:]
+        docstring = NewGoogleDocstring(
+            lines, app.config, app, what, name, obj, options)
+        lines[:] = docstring.lines()[:]
+    return lines
 
-def setup(app):
-    from sphinx.application import Sphinx
-    if not isinstance(app, Sphinx):
-        # probably called by tests
-        return {'version': __version__, 'parallel_read_safe': True}
-    _patch_python_domain()
-    app.setup_extension('sphinx.ext.autodoc')
-    app.connect('autodoc-process-docstring', _process_docstring)
-    app.connect('autodoc-skip-member', _skip_member)
-    for name, (default, rebuild) in Config._config_values.items():
-        app.add_config_value(name, default, rebuild)
-    return {'version': __version__, 'parallel_read_safe': True}
+
+def setup(app: Sphinx) -> ExtensionMetadata:
+    if isinstance(app, Sphinx):
+        _patch_python_domain()
+        app.setup_extension('sphinx.ext.autodoc')
+        app.connect('autodoc-process-docstring', _process_docstring)
+        app.connect('autodoc-skip-member', _skip_member)
+
+        for name, default, rebuild, types in Config._config_values:
+            app.add_config_value(name, default, rebuild, types=types)
+
+    return {'version': sphinx.__display_version__,
+            'parallel_read_safe': True}

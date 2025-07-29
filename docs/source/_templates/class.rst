@@ -6,26 +6,20 @@
    :members:
    :show-inheritance:
    :inherited-members:
-   :special-members:
+   :member-order: groupwise
+   :exclude-members: {{ attributes|join(', ') }}
 
-   {% block attributes %}
    {% if attributes %}
-   .. rubric:: {{ _('Properties') }}
+   .. rubric:: Attributes and Properties
 
    .. autosummary::
    {% for item in attributes %}
       ~{{ name }}.{{ item }}
-   {%- endfor %}
-   {% endif %}
-   {% endblock %}
+   {% endfor %}
 
-   {% block methods %}
+   {% endif %}
+
    {% if methods %}
-   .. rubric:: {{ _('Methods') }}
+   .. rubric:: Methods
 
-   .. autosummary::
-   {% for item in methods %}
-      ~{{ name }}.{{ item }}
-   {%- endfor %}
    {% endif %}
-   {% endblock %}

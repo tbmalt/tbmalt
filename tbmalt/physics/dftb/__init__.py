@@ -84,9 +84,7 @@ def mulliken(
 
 
 class Dftb1(Calculator):
-    """
-    Non-self-consistent-charge density-functional tight-binding method
-    (non-SCC DFTB).
+    """Density-functional tight-binding theory method.
 
     Arguments:
         h_feed: this feed provides the Slater-Koster based integrals used to
@@ -124,29 +122,26 @@ class Dftb1(Calculator):
         >>> from tbmalt.tools.downloaders import download_dftb_parameter_set
         >>> from ase.build import molecule
         >>> torch.set_default_dtype(torch.float64)
-        # Download the auorg-1-1 parameter set
+        >>>
+        >>> # Download the auorg-1-1 parameter set
         >>> url = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
         >>> path = "auorg.h5"
         >>> download_dftb_parameter_set(url, path)
-
-        # Preparation of system to calculate
-
-        # Single system
+        >>> # Preparation of system(s) to calculate
+        >>> # Single system
         >>> geos = Geometry.from_ase_atoms(molecule('CH4'))
         >>> orbs_s = OrbitalInfo(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
-
-        # Batch systems
+        >>> # Batch systems
         >>> geob = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
         >>> orbs_b = OrbitalInfo(geob.atomic_numbers, shell_dict={
         ...     1: [0], 6: [0, 1], 8: [0, 1]})
-
-        # Definition of feeds
+        >>> # Definition of feeds
         >>> h_feed = SkFeed.from_database(path, [1, 6, 8], 'hamiltonian')
         >>> s_feed = SkFeed.from_database(path, [1, 6, 8], 'overlap')
         >>> o_feed = SkfOccupationFeed.from_database(path, [1, 6, 8])
-
-        # Run DFTB1 calculation
+        >>> # Create Dftb1 calculator instances
         >>> dftb = Dftb1(h_feed, s_feed, o_feed, filling_temp=0.0036749324)
+        >>> # Run DFTB1 calculation(s)
         >>> dftb(geos, orbs_s)
         >>> print(dftb.q_final_atomic)
         tensor([4.3591, 0.9102, 0.9102, 0.9102, 0.9102])
@@ -193,7 +188,7 @@ class Dftb1(Calculator):
         self._solver_settings = kwargs.get('eigen_solver_settings', {})
 
     @property
-    def overlap(self):
+    def overlap(self) -> Tensor:
         """Overlap matrix"""
 
         # Check to see if the overlap matrix has already been constructed. If
@@ -209,7 +204,7 @@ class Dftb1(Calculator):
         self._overlap = value
 
     @property
-    def hamiltonian(self):
+    def hamiltonian(self) -> Tensor:
         """Hamiltonian matrix"""
 
         # See `Dftb1.overlap` for an explanation of what this code does.
@@ -223,22 +218,22 @@ class Dftb1(Calculator):
         self._hamiltonian = value
 
     @property
-    def q_zero(self):
+    def q_zero(self) -> Tensor:
         """Initial orbital populations"""
         return self.o_feed(self.orbs)
 
     @property
-    def q_final(self):
+    def q_final(self) -> Tensor:
         """Final orbital populations"""
         return mulliken(self.rho, self.overlap)
 
     @property
-    def q_delta(self):
+    def q_delta(self) -> Tensor:
         """Delta orbital populations"""
         return self.q_final - self.q_zero
 
     @property
-    def q_zero_shells(self):
+    def q_zero_shells(self) -> Tensor:
         """Initial shell-wise populations"""
         return torch.zeros(
             self.orbs.shell_matrix_shape[:-1],
@@ -246,17 +241,17 @@ class Dftb1(Calculator):
             -1, self.orbs.on_shells.clamp(min=0), self.q_zero)
 
     @property
-    def q_final_shells(self):
+    def q_final_shells(self) -> Tensor:
         """Final shell-wise populations"""
         return mulliken(self.rho, self.overlap, self.orbs, 'shell')
 
     @property
-    def q_delta_shells(self):
+    def q_delta_shells(self) -> Tensor:
         """Delta shell-wise populations"""
         return self.q_final_shells - self.q_zero_shells
 
     @property
-    def q_zero_atomic(self):
+    def q_zero_atomic(self) -> Tensor:
         """Initial atomic populations"""
         return torch.zeros(
             self.orbs.atomic_matrix_shape[:-1],
@@ -264,17 +259,17 @@ class Dftb1(Calculator):
             -1, self.orbs.on_atoms.clamp(min=0), self.q_zero)
 
     @property
-    def q_final_atomic(self):
+    def q_final_atomic(self) -> Tensor:
         """Final atomic populations"""
         return mulliken(self.rho, self.overlap, self.orbs, 'atom')
 
     @property
-    def q_delta_atomic(self):
+    def q_delta_atomic(self) -> Tensor:
         """Delta atomic populations"""
         return self.q_final_atomic - self.q_zero_atomic
 
     @property
-    def q_zero_res(self):
+    def q_zero_res(self) -> Tensor:
         """Initial charges, atom or shell resolved according to `OrbitalInfo`"""
         if self.orbs.shell_resolved:
             return self.q_zero_shells
@@ -289,12 +284,12 @@ class Dftb1(Calculator):
         )
 
     @property
-    def n_electrons(self):
+    def n_electrons(self) -> Tensor:
         """Number of electrons"""
         return self.q_zero.sum(-1)
 
     @property
-    def occupancy(self):
+    def occupancy(self) -> Tensor:
         """Occupancies of each state"""
 
         # Note that this scale factor assumes spin-restricted and will need to
@@ -314,7 +309,7 @@ class Dftb1(Calculator):
                 e_mask=self.orbs if self.is_batch else None) * scale_factor
 
     @property
-    def fermi_energy(self):
+    def fermi_energy(self) -> Tensor:
         """Fermi energy"""
         return fermi_search(
             self.eig_values, self.n_electrons, self.filling_temp,
@@ -323,12 +318,12 @@ class Dftb1(Calculator):
             e_mask=self.orbs if self.is_batch else None)
 
     @property
-    def band_energy(self):
+    def band_energy(self) -> Tensor:
         """Band structure energy"""
         return torch.einsum('...i,...i->...', self.eig_values, self.occupancy)
 
     @property
-    def band_free_energy(self):
+    def band_free_energy(self) -> Tensor:
         """Band free energy; i.e. E_band-TS"""
         # Note that this scale factor assumes spin-restricted and will need to
         # be refactored when implementing spin-unrestricted calculations.
@@ -342,22 +337,22 @@ class Dftb1(Calculator):
         return energy
 
     @property
-    def repulsive_energy(self):
+    def repulsive_energy(self) -> Tensor:
         """Repulsive energy; zero in the absence of a repulsive feed"""
         return 0.0 if self.r_feed is None else self.r_feed(self.geometry)
 
     @property
-    def total_energy(self):
+    def total_energy(self) -> Tensor:
         """Total system energy"""
         return self.band_energy + self.repulsive_energy
 
     @property
-    def mermin_energy(self):
+    def mermin_energy(self) -> Tensor:
         """Mermin free energy; i.e. E_total-TS"""
         return self.band_free_energy + self.repulsive_energy
 
     @property
-    def homo_lumo(self):
+    def homo_lumo(self) -> Tensor:
         """Highest occupied and lowest unoccupied energy level in unit hartree"""
         # Number of occupied states
         nocc = (~(self.occupancy - 0 < 1E-10)).long().sum(-1)
@@ -377,7 +372,7 @@ class Dftb1(Calculator):
         return homo_lumo
 
     @property
-    def dos_energy(self, ext=energy_units['ev'], grid=1000):
+    def dos_energy(self, ext=energy_units['ev'], grid=1000) -> Tensor:
         """Energy distribution of (p)DOS in unit hartree"""
         e_min = torch.min(self.eig_values.detach(), dim=-1).values - ext
         e_max = torch.max(self.eig_values.detach(), dim=-1).values + ext
@@ -390,7 +385,7 @@ class Dftb1(Calculator):
         return dos_energy
 
     @property
-    def dos(self):
+    def dos(self) -> Tensor:
         """Electronic density of states"""
         # Mask to remove padding values.
         mask = torch.where(self.eig_values == 0, False, True)
@@ -462,8 +457,7 @@ class Dftb1(Calculator):
 
 
 class Dftb2(Calculator):
-    """Self-consistent-charge density-functional tight-binding method
-    (SCC-DFTB).
+    """Self-consistent-charge density-functional tight-binding method.
 
     Arguments:
         h_feed: this feed provides the Slater-Koster based integrals used to
@@ -485,25 +479,26 @@ class Dftb2(Calculator):
         grad_mode: controls gradient mode used when running the SCC
             cycle. Available options are [DEFAULT="last_step"]:
 
-                - "direct": run the SCC cycle without any special treatment.
-                - "last_step": run the SCC cycle outside the purview of the
-                    PyTorch graph to obtain the converged charges. Then run a
-                    single SCC step within the graph using the converged
-                    charges as the initial "guess". Gradients obtained via the
-                    "last_step" approach are inexact. While such gradients are
-                    commonly a good enough approximation for many cases they
-                    are not as accurate as either the "direct" or "implicit"
-                    gradient modes.
-                - "implicit": uses implicit function theorem to accurately
-                    and memory efficiently compute the derivative. This
-                    requires the use of an iterative solver. By default,
-                    the solver will employ the same mixer provided for
-                    the SCC cycle, `DFTB2.mixer`. It is critical to note
-                    that the accuracy of the gradients produced by the
-                    implicit method is directly tied to the tolerance
-                    and stability of the mixer. As such a different
-                    dedicated mixer can be supplied via the
-                    ``implicit_mixer`` argument.
+                - "direct":
+                    Run the SCC cycle without any special treatment.
+                - "last_step":
+                    Run the SCC cycle outside the purview of the PyTorch graph
+                    to obtain the converged charges. Then run a single SCC step
+                    within the graph using the converged charges as the initial
+                    "guess". Gradients obtained via the "last_step" approach are
+                    inexact. While such gradients are commonly a good enough
+                    approximation for many cases they are not as accurate as
+                    either the "direct" or "implicit" gradient modes.
+                - "implicit":
+                    Uses implicit function theorem to accurately and memory
+                    efficiently compute the derivative. This requires the use
+                    of an iterative solver. By default, the solver will employ
+                    the same mixer provided for the SCC cycle, `DFTB2.mixer`.
+                    It is critical to note that the accuracy of the gradients
+                    produced by the implicit method is directly tied to the
+                    tolerance and stability of the mixer. As such a different
+                    dedicated mixer can be supplied via the ``implicit_mixer``
+                    argument.
 
         implicit_mixer: Dedicated mixer to be used by the implicit solver if
             using the "implicit" ``grad_mode`` option. This is only used
@@ -531,16 +526,6 @@ class Dftb2(Calculator):
             be either "search" or "experience". [DEFAULT="search"]
 
     Attributes:
-        overlap: overlap matrix as constructed by the supplied `s_feed`.
-        core_hamiltonian: first order core Hamiltonian matrix as built by the
-            `h_feed` entity.
-        gamma: the gamma matrix, this is constructed via the specified scheme
-            and uses the Hubbard-U values produced by the `u_feed`.
-        invr: the 1/R matrix.
-        hamiltonian: second order Hamiltonian matrix as produced via the SCC
-            cycle.
-        scc_energy: energy contribution from charge fluctuation via the SCC
-            cycle.
         converged: a tensor of booleans indicating which systems have and
             have not converged (True if converged). This can be used during
             training, alongside `suppress_scc_error`, to allow unconverged
@@ -560,23 +545,20 @@ class Dftb2(Calculator):
         >>> from tbmalt.tools.downloaders import download_dftb_parameter_set
         >>> from ase.build import molecule
         >>> torch.set_default_dtype(torch.float64)
-        # Download the auorg-1-1 parameter set
+        >>>
+        >>> # Download the auorg-1-1 parameter set
         >>> url = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
         >>> path = "auorg.h5"
         >>> download_dftb_parameter_set(url, path)
-
-        # Preparation of system to calculate
-
-        # Single system
+        >>> # Preparation of system(s) to calculate
+        >>> # Single system
         >>> geos = Geometry.from_ase_atoms(molecule('CH4'))
         >>> orbs_s = OrbitalInfo(geos.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
-
-        # Batch systems
+        >>> # Batch systems
         >>> geob = Geometry.from_ase_atoms([molecule('H2O'), molecule('CH4')])
         >>> orbs_b = OrbitalInfo(geob.atomic_numbers, shell_dict={
         ...     1: [0], 6: [0, 1], 8: [0, 1]})
-
-        # Single system with pbc
+        >>> # Single periodic system
         >>> geop = Geometry(
         ...     torch.tensor([6, 1, 1, 1, 1]),
         ...     torch.tensor([[3.0, 3.0, 3.0],
@@ -589,14 +571,12 @@ class Dftb2(Calculator):
         ...                   [0.0, 6.0, 6.0]]),
         ...     units='a', cutoff=torch.tensor([9.98]))
         >>> orbs_p = OrbitalInfo(geop.atomic_numbers, shell_dict={1: [0], 6: [0, 1]})
-
-        # Definition of feeds
+        >>> # Definition of feeds
         >>> h_feed = SkFeed.from_database(path, [1, 6, 8], 'hamiltonian')
         >>> s_feed = SkFeed.from_database(path, [1, 6, 8], 'overlap')
         >>> o_feed = SkfOccupationFeed.from_database(path, [1, 6, 8])
         >>> u_feed = HubbardFeed.from_database(path, [1, 6, 8])
-
-        # Run DFTB2 calculation
+        >>> # Run DFTB2 calculation
         >>> mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2,
         ...               'generations': 3, 'tolerance': 1e-10}
         >>> dftb2 = Dftb2(h_feed, s_feed, o_feed, u_feed,
@@ -684,7 +664,7 @@ class Dftb2(Calculator):
 
     @property
     def overlap(self):
-        """Overlap matrix"""
+        """Overlap matrix as constructed by the supplied `s_feed`"""
 
         # Check to see if the overlap matrix has already been constructed. If
         # not then construct it.
@@ -709,8 +689,7 @@ class Dftb2(Calculator):
 
     @property
     def core_hamiltonian(self):
-        """First order core Hamiltonian matrix as built by the `h_feed`
-        entity"""
+        """First order core Hamiltonian matrix as built by the `h_feed` entity"""
         if self._core_hamiltonian is None:
             self._core_hamiltonian = self.h_feed.matrix_from_calculator(self)
 
@@ -722,7 +701,7 @@ class Dftb2(Calculator):
 
     @property
     def gamma(self):
-        """Gamma matrix as constructed using the `u_feed`"""
+        """Gamma matrix constructed via the specified scheme using the Hubbard-U values produced by the `u_feed`"""
         if self._gamma is None:
             self._gamma = build_gamma_matrix(
                 self.geometry, self.orbs, self.invr,
@@ -867,7 +846,7 @@ class Dftb2(Calculator):
 
     @property
     def scc_energy(self):
-        """Energy contribution from charge fluctuation"""
+        """Energy contribution from charge fluctuation via the SCC cycle"""
         q_delta = mulliken(self.rho, self.overlap, self.orbs) - self.q_zero_res
         shifts = torch.einsum('...i,...ij->...j', q_delta, self.gamma)
         return .5 * (shifts * q_delta).sum(-1)
@@ -1014,7 +993,7 @@ class Dftb2(Calculator):
         # handling. Therefor the gradient will pass through the full SCC cycle.
         if self.grad_mode == "direct":
             (q_out, self._hamiltonian, self.eig_values, self.eig_vectors,
-             self.rho) = Dftb2.scc_cycle(
+             self.rho, self.converged) = Dftb2.scc_cycle(
                 self.q_zero_res, self.orbs, *hsg_args, **kwargs_in)
 
         elif self.grad_mode == "last_step" or self.grad_mode == "implicit":
@@ -1037,7 +1016,7 @@ class Dftb2(Calculator):
                          self.n_electrons)
 
             with torch.no_grad():
-                q_converged, *_ = Dftb2.scc_cycle(
+                q_converged, *_, self.converged = Dftb2.scc_cycle(
                     self.q_zero_res, self.orbs, *hsg_args, **kwargs_in)
 
             if self.grad_mode == "implicit":
@@ -1286,7 +1265,7 @@ class Dftb2(Calculator):
             overlap: Tensor, gamma: Tensor, filling_temp: float_like = 0.0,
             filling_scheme: Scheme = fermi_smearing, max_scc_iter: int = 200,
             mixer: Mixer = Anderson(True),
-            **kwargs):
+            **kwargs) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
         """Perform the self-consistent charge cycle.
 
         This method runs the full self-consistent charge cycle to compute the
@@ -1329,11 +1308,15 @@ class Dftb2(Calculator):
             eig_values: resulting eigenvalues.
             eig_vectors: associated eigenvectors.
             rho: density matrix.
+            system_converged: Tensor of booleans indicating which systems have
+                converged. This is of use when SCF convergence failure
+                exceptions are suppressed via ``suppress_scc_error``.
+
 
         Raises:
             ConvergenceFailure: if the charge convergence is not reached within
                 the permitted number of iterations as specified by the argument
-                ``max_scc_iter``. The ``suppress_scc_error` flag can be used to
+                ``max_scc_iter``. The ``suppress_scc_error`` flag can be used to
                 suppress this error.
         """
 
@@ -1352,6 +1335,8 @@ class Dftb2(Calculator):
             core_hamiltonian = core_hamiltonian.unsqueeze(0)
             overlap = overlap.unsqueeze(0)
             gamma = gamma.unsqueeze(0)
+
+        system_converged = torch.zeros_like(overlap[:, 0, 0], dtype=torch.bool)
 
         # Reset the mixer and ensure it is in batch-mode
         mixer.reset()
@@ -1403,6 +1388,8 @@ class Dftb2(Calculator):
             # the converged systems into the results tensor.
             if converged.any():
                 idxs = system_indices[converged]
+
+                system_converged[idxs] = True
 
                 n_orbs = torch.max(orbs.n_orbitals)
                 n_res = orbs.res_matrix_shape[-1]
@@ -1475,5 +1462,7 @@ class Dftb2(Calculator):
             eig_values_out = eig_values_out.squeeze(0)
             eig_vectors_out = eig_vectors_out.squeeze(0)
             rho_out = rho_out.squeeze(0)
+            system_converged = system_converged.squeeze(0)
 
-        return q_new_out, hamiltonian_out, eig_values_out, eig_vectors_out, rho_out
+        return (q_new_out, hamiltonian_out, eig_values_out, eig_vectors_out,
+                rho_out, system_converged)

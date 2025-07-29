@@ -5,6 +5,7 @@ This module implement cell translation for 1D & 2D & 3D periodic
 boundary conditions. Distance matrix and position vectors for pbc
 will be constructed.
 """
+from __future__ import annotations
 from typing import Union, Optional
 from abc import ABC, abstractmethod
 import torch
@@ -12,6 +13,11 @@ from torch import Tensor
 import numpy as np
 from tbmalt.common.batch import pack, bT
 from tbmalt.common import cached_property
+
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from tbmalt.structures.geometry import Geometry
 
 
 class Periodicity(ABC):
@@ -61,7 +67,7 @@ class Periodicity(ABC):
 
     """
     def __init__(
-            self, geometry: "Geometry", cutoff: Union[Tensor, float]):
+            self, geometry: Geometry, cutoff: Union[Tensor, float]):
 
         cutoff = self._check(geometry.lattice, cutoff)
 
@@ -454,7 +460,7 @@ class Triclinic(Periodicity):
 
     """
 
-    def __init__(self, geometry: "Geometry", cutoff: Union[Tensor, float]):
+    def __init__(self, geometry: Geometry, cutoff: Union[Tensor, float]):
         super().__init__(geometry, cutoff)
 
     @property

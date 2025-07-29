@@ -19,8 +19,8 @@ def gamma_exponential(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
             be constructed.
         orbs: `OrbitalInfo` instance associated with the target system.
         hubbard_Us: Hubbard U values. one value should be specified for each
-            atom or shell depending if the calculation being performed is atom
-            or shell resolved.
+            atom or shell depending on if the calculation being performed is
+            atom or shell resolved.
 
     Returns:
         gamma: gamma matrix.
@@ -29,14 +29,13 @@ def gamma_exponential(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
         >>> from tbmalt import OrbitalInfo, Geometry
         >>> from tbmalt.physics.dftb.gamma import gamma_exponential
         >>> from ase.build import molecule
-
-        # Preparation of system to calculate
+        >>>
+        >>> # Preparation of system to calculate
         >>> geo = Geometry.from_ase_atoms(molecule('CH4'))
         >>> orbs = OrbitalInfo(geo.atomic_numbers,
-                               shell_dict= {1: [0], 6: [0, 1]})
+        ...                    shell_dict= {1: [0], 6: [0, 1]})
         >>> hubbard_U = torch.tensor([0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
-
-        # Build the gamma matrix
+        >>> # Build the gamma matrix
         >>> gamma = gamma_exponential(geo, orbs, hubbard_U)
         >>> print(gamma)
         tensor([[0.3647, 0.3234, 0.3234, 0.3234, 0.3234],
@@ -136,20 +135,21 @@ def gamma_gaussian(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
 
     Elements of the gamma matrix are calculated via the following equation:
 
-    .. math::
+        .. math::
 
-        \gamma_{ij}(R_{ij}) = \frac{\text{erf}(C_{ij}R_{ij})}{R_{ij}}
+            \gamma_{ij}(R_{ij}) = \frac{\text{erf}(C_{ij}R_{ij})}{R_{ij}}
 
     Where the coefficients :math:`C` are calculated as
 
-    .. math::
+        .. math::
 
-        C_{ij} = \sqrt{\frac{4\ln{2}}{\text{FWHM}_{i}^2 + \text{FWHM}_{j}^2}}
+            C_{ij} = \sqrt{\frac{4\ln{2}}{\text{FWHM}_{i}^2 + \text{FWHM}_{j}^2}}
 
     and the full width half max values, FWHM, like so
 
-    .. math::
-        \text{FWHM}_{i} = \sqrt{\frac{8\ln{2}}{\pi}}\frac{1}{U_i}
+        .. math::
+
+            \text{FWHM}_{i} = \sqrt{\frac{8\ln{2}}{\pi}}\frac{1}{U_i}
 
     Where U and R are the hubbard U and distance values respectively.
 
@@ -170,7 +170,7 @@ def gamma_gaussian(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
         Note that this must be consistent with the `shell_resolved` attribute
         of the supplied `OrbitalInfo` instance ``orbs``.
 
-        Currently the Hubbard U values must be specified manually, however the
+        Currently, the Hubbard U values must be specified manually, however the
         option to supply a feed object will be added at a later data. This will
         facilitate the automated construction of the Hubbard U tensor and shall
         permit the use of environmentally dependent U values if desired.
@@ -179,14 +179,13 @@ def gamma_gaussian(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
         >>> from tbmalt import OrbitalInfo, Geometry
         >>> from tbmalt.physics.dftb.gamma import gamma_gaussian
         >>> from ase.build import molecule
-
-        # Preparation of system to calculate
+        >>>
+        >>> # Preparation of system to calculate
         >>> geo = Geometry.from_ase_atoms(molecule('CH4'))
         >>> orbs = OrbitalInfo(geo.atomic_numbers,
-                               shell_dict= {1: [0], 6: [0, 1]})
+        ...                    shell_dict= {1: [0], 6: [0, 1]})
         >>> hubbard_U = torch.tensor([0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
-
-        # Build the gamma matrix
+        >>> # Build the gamma matrix
         >>> gamma = gamma_gaussian(geo, orbs, hubbard_U)
         >>> print(gamma)
         tensor([[0.3647, 0.3326, 0.3326, 0.3326, 0.3326],
@@ -286,22 +285,20 @@ def gamma_exponential_pbc(geometry: Geometry, orbs: OrbitalInfo,
     Examples:
         >>> from tbmalt import OrbitalInfo, Geometry
         >>> from tbmalt.physics.dftb.gamma import gamma_exponential_pbc
-
-        # Preparation of system to calculate
+        >>>
+        >>> # Preparation of system to calculate
         >>> cell = torch.tensor([[2., 0., 0.], [0., 4., 0.], [0., 0., 2.]])
         >>> pos = torch.tensor([[0., 0., 0.], [0., 2., 0.]])
         >>> num = torch.tensor([1, 1])
         >>> cutoff = torch.tensor([9.98])
         >>> geo = Geometry(num, pos, cell, units='a', cutoff=cutoff)
         >>> orbs = OrbitalInfo(geo.atomic_numbers,
-                               shell_dict= {1: [0]})
+        ...                    shell_dict= {1: [0]})
         >>> hubbard_U = torch.tensor([0.4196, 0.4196])
-
-        # 1/R matrix.calculated from coulomb module
+        >>> # 1/R matrix, normally calculated by the coulomb module
         >>> invr = torch.tensor([[-0.4778, -0.2729],
-                                 [-0.2729, -0.4778]])
-
-        # Build the gamma matrix
+        ...                      [-0.2729, -0.4778]])
+        >>> # Build the gamma matrix
         >>> gamma = gamma_exponential_pbc(geo, orbs, invr, hubbard_U)
         >>> print(gamma)
         tensor([[-0.1546, -0.3473],
@@ -407,9 +404,8 @@ def _expgamma_cutoff(alpha: Tensor, beta: Tensor, gamma_tem: Tensor,
         >>> ua = torch.tensor([0.3647, 0.4196]) # Hubbard U values of C, H
         >>> ub = torch.tensor([0.4196, 0.4196]) # Hubbard U values of H, H
         >>> cutoff = _expgamma_cutoff(ua * 3.2, ub * 3.2,
-                                      torch.zeros_like(ua))
-
-        # Cutoff distances for C-H and H-H in a.u.
+        ...                           torch.zeros_like(ua))
+        >>> # Cutoff distances for C-H and H-H in a.u.
         >>> print(cutoff)
         tensor([22.0375, 20.0250])
 
@@ -546,16 +542,15 @@ def build_gamma_matrix(
         >>> from tbmalt import OrbitalInfo, Geometry
         >>> from tbmalt.physics.dftb.gamma import build_gamma_matrix
         >>> from ase.build import molecule
-
-        # Preparation of system to calculate
+        >>>
+        >>> # Preparation of system to calculate
         >>> geo = Geometry.from_ase_atoms(molecule('CH4'))
         >>> orbs = OrbitalInfo(geo.atomic_numbers,
-                               shell_dict= {1: [0], 6: [0, 1]})
+        ...                    shell_dict= {1: [0], 6: [0, 1]})
         >>> hubbard_U = torch.tensor([0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
         >>> r = geo.distances
         >>> r[r != 0.0] = 1.0 / r[r != 0.0]
-
-        # Build the gamma matrix
+        >>> # Build the gamma matrix
         >>> gamma = build_gamma_matrix(geo, orbs, r, hubbard_U, 'exponential')
         >>> print(gamma)
         tensor([[0.3647, 0.3234, 0.3234, 0.3234, 0.3234],

@@ -35,26 +35,25 @@ def sub_block_rot(l_pair: Tensor, u_vec: Tensor,
     Examples:
         >>> import torch
         >>> from tbmalt.physics.dftb.slaterkoster import sub_block_rot
-
-        # Slater-Koster transformation for single system
+        >>>
+        >>> # Slater-Koster transformation for single system
         >>> l_pair = torch.tensor([0, 0])  # s-s orbital
         >>> u_vecs = torch.tensor([0.7001, 0.6992, 0.1449])
         >>> integrals = torch.tensor([-0.1610])
         >>> pred = sub_block_rot(l_pair, u_vecs, integrals)
         >>> print(pred)
         tensor([[-0.1610]])
-
-        # Slater-Koster transformation for batch system
+        >>> # Slater-Koster transformation for batch system
         >>> l_pair = torch.tensor([0, 1])  # s-p orbital
         >>> u_vecs  = torch.tensor([
-        [0.7001, 0.6992, 0.1449], [0.8199, 0.5235, 0.2317],
-        [0.1408, 0.7220, 0.6774], [0.5945, 0.6138, 0.5195],
-        [0.5749, 0.6112, 0.5440], [0.4976, 0.5884, 0.6374],
-        [0.0075, 0.5677, 0.8232], [0.7632, 0.4264, 0.4856],
-        [0.3923, 0.3178, 0.8632], [0.0278, 0.6896, 0.7237]])
+        ...     [0.7001, 0.6992, 0.1449], [0.8199, 0.5235, 0.2317],
+        ...     [0.1408, 0.7220, 0.6774], [0.5945, 0.6138, 0.5195],
+        ...     [0.5749, 0.6112, 0.5440], [0.4976, 0.5884, 0.6374],
+        ...     [0.0075, 0.5677, 0.8232], [0.7632, 0.4264, 0.4856],
+        ...     [0.3923, 0.3178, 0.8632], [0.0278, 0.6896, 0.7237]])
         >>> integrals = torch.tensor([
-        [-0.1011], [-0.1011], [-0.1011], [-0.1011], [-0.1011],
-        [-0.1011], [-0.1011], [-0.1011], [-0.1011], [-0.1011]])
+        ...     [-0.1011], [-0.1011], [-0.1011], [-0.1011], [-0.1011],
+        ...     [-0.1011], [-0.1011], [-0.1011], [-0.1011], [-0.1011]])
         >>> pred = sub_block_rot(l_pair, u_vecs, integrals)
         >>> print(pred)
         tensor([[[-0.0707, -0.0146, -0.0708]],

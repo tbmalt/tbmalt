@@ -424,22 +424,18 @@ class ScipySkFeed(IntegralFeed):
             >>> from ase.build import molecule
             >>> import torch
             >>> torch.set_default_dtype(torch.float64)
-
-            # Download the auorg-1-1 parameter set
+            >>> # Download the auorg-1-1 parameter set
             >>> url = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
             >>> path = "auorg.h5"
             >>> download_dftb_parameter_set(url, path)
-
-            # Preparation of system to calculate
+            >>> # Preparation of system to calculate
             >>> geo = Geometry.from_ase_atoms(molecule('H2'))
             >>> orbs = OrbitalInfo(geo.atomic_numbers,
-                                     shell_dict={1: [0]})
-
-            # Definition of feeds
+            ...                    shell_dict={1: [0]})
+            >>> # Definition of feeds
             >>> h_feed = ScipySkFeed.from_database(path, [1], 'hamiltonian')
             >>> s_feed = ScipySkFeed.from_database(path, [1], 'overlap')
-
-            # Matrix elements
+            >>> # Matrix elements
             >>> H = h_feed.matrix(geo, orbs)
             >>> S = s_feed.matrix(geo, orbs)
             >>> print(H)
@@ -948,40 +944,22 @@ class SkFeed(IntegralFeed):
         Examples:
             >>> from tbmalt import OrbitalInfo, Geometry
             >>> from tbmalt.physics.dftb.feeds import SkFeed
-            >>> from tbmalt.io.skf import Skf
+            >>> from tbmalt.tools.downloaders import download_dftb_parameter_set
             >>> from ase.build import molecule
-            >>> import urllib
-            >>> import tarfile
-            >>> from os.path import join
             >>> import torch
             >>> torch.set_default_dtype(torch.float64)
-
-            # Link to the auorg-1-1 parameter set
-            >>> link = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
-
-            # Preparation of sk file
-            >>> elements = ['H', 'C', 'O', 'Au', 'S']
-            >>> tmpdir = './'
-            >>> urllib.request.urlretrieve(
-            ...     link, path := join(tmpdir, 'auorg-1-1.tar.xz'))
-            >>> with tarfile.open(path) as tar:
-            ...     tar.extractall(tmpdir)
-            >>> skf_files = [join(tmpdir, 'auorg-1-1', f'{i}-{j}.skf')
-            ...              for i in elements for j in elements]
-            >>> for skf_file in skf_files:
-            ...     Skf.read(skf_file).write(path := join(tmpdir,
-            ...                                           'auorg.hdf5'))
-
-            # Preparation of system to calculate
+            >>>
+            >>> # Download auorg-1-1 parameter set
+            >>> url = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
+            >>> path = "auorg.h5"
+            >>> download_dftb_parameter_set(url, path)
+            >>> # Specify target system
             >>> geo = Geometry.from_ase_atoms(molecule('H2'))
-            >>> orbs = OrbitalInfo(geo.atomic_numbers,
-            ...                    shell_dict={1: [0]})
-
-            # Definition of feeds
+            >>> orbs = OrbitalInfo(geo.atomic_numbers, shell_dict={1: [0]})
+            >>> # Define feeds
             >>> h_feed = SkFeed.from_database(path, [1], 'hamiltonian')
             >>> s_feed = SkFeed.from_database(path, [1], 'overlap')
-
-            # Matrix elements
+            >>> # Construct Hamiltonian and overlap matrices
             >>> H = h_feed.matrix(geo, orbs)
             >>> S = s_feed.matrix(geo, orbs)
             >>> print(H)
@@ -990,6 +968,7 @@ class SkFeed(IntegralFeed):
             >>> print(S)
             tensor([[1.0000, 0.6433],
                     [0.6433, 1.0000]])
+
 
         """
         # As C-H & C-H interactions are the same only one needs to be loaded.
@@ -1711,18 +1690,16 @@ class SkfOccupationFeed(Feed):
             >>> from tbmalt.physics.dftb.feeds import SkfOccupationFeed
             >>> from tbmalt.tools.downloaders import download_dftb_parameter_set
             >>> torch.set_default_dtype(torch.float64)
-
-            # Download the auorg-1-1 parameter set
+            >>>
+            >>> # Download the auorg-1-1 parameter set
             >>> url = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
             >>> path = "auorg.h5"
             >>> download_dftb_parameter_set(url, path)
-
-            # Definition of feeds
+            >>> # Definition of feeds
             >>> o_feed = SkfOccupationFeed.from_database(path, [1, 6])
             >>> shell_dict = {1: [0], 6: [0, 1]}
-
-            # Occupancy information of an example system
-            >>> o_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
+            >>> # Occupancy information of an example system
+            >>> print(o_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict)))
             tensor([2.0000, 0.6667, 0.6667, 0.6667,
                     1.0000, 1.0000, 1.0000, 1.0000])
 
@@ -1881,20 +1858,17 @@ class HubbardFeed(Feed):
             >>> import torch
             >>> from tbmalt import OrbitalInfo
             >>> from tbmalt.physics.dftb.feeds import HubbardFeed
-            from tbmalt.tools.downloaders import download_dftb_parameter_set
+            >>> from tbmalt.tools.downloaders import download_dftb_parameter_set
             >>> torch.set_default_dtype(torch.float64)
-
-            # Download the auorg-1-1 parameter set
+            >>> # Download the auorg-1-1 parameter set
             >>> url = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
             >>> path = "auorg.h5"
             >>> download_dftb_parameter_set(url, path)
-
-            # Definition of feeds
+            >>> # Definition of feeds
             >>> u_feed = HubbardFeed.from_database(path, [1, 6])
             >>> shell_dict = {1: [0], 6: [0, 1]}
-
-            # Hubbard U values of an example system
-            >>> u_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict))
+            >>> # Hubbard U values of an example system
+            >>> print(u_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1]), shell_dict)))
             tensor([0.3647, 0.4196, 0.4196, 0.4196, 0.4196])
 
         """
@@ -1921,15 +1895,21 @@ class DftbpRepulsiveSpline(Feed):
     only within the specified cutoff radius, being zero beyond this distance.
 
     1. **Short-range exponential head** when distances ≤ first grid point:
+
        .. math::
+
            e^{-a_{1} r + a_{2}} + a_{3}
 
     2. **Intermediate cubic spline body** defined on each interval [r_i, r_{i+1}]:
+
        .. math::
+
            c_{0} + c_{1}(r - r_{0}) + c_{2}(r - r_{0})^{2} + c_{3}(r - r_{0})^{3}
 
     3. **Long-range polynomial tail** between the last spline point and cutoff:
+
        .. math::
+
            c_{0} + c_{1}(r - r_{n}) + c_{2}(r - r_{n})^{2}
            + c_{3}(r - r_{n})^{3} + c_{4}(r - r_{n})^{4} + c_{5}(r - r_{n})^{5}
 

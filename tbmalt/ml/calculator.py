@@ -1,4 +1,10 @@
+# -*- coding: utf-8 -*-
+"""Calculator module.
 
+This module defines the abstract base class ``Calculator`` upon which all
+calculator instances are based. Calculator instances, such as ``Dftb2`` play
+a foundational roll within TBMaLT.
+"""
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any
 import torch
@@ -57,9 +63,11 @@ class Calculator(Module, ABC):
         pass
 
     def cache(self) -> Dict[str, Any]:
-        """
+        """Return a cache for bootstrapping subsequent calculations.
+
         This returns a cache that may be fed into the next call to bootstrap the
         startup. This is only meaningful when restarting a calculation on a
         system after the calculator has been reset.
         """
-        pass
+        raise NotImplementedError(
+            "Abstract method has not been implemented for this class.")
