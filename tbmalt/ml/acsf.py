@@ -9,14 +9,14 @@ from tbmalt import Geometry
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
 from tbmalt.structures.orbitalinfo import _rows_to_NxNx2
+from tbmalt.ml import Feed
 
 
-class Acsf:
+class Acsf(Feed):
     """Construct Atom-centered symmetry functions (Acsf).
 
     This class is designed for batch calculations. Single geometry will be
-    transferred to batch in the beginning. If `geometry` is in `__call__`,
-    the code will update all initial information related to `geometry`.
+    transferred to batch in the beginning.
 
     Arguments:
         geometry: Geometry instance.
@@ -61,6 +61,7 @@ class Acsf:
                  unit: Literal['bohr', 'angstrom'] = 'angstrom',
                  element_resolve: Optional[bool] = True,
                  atom_like: Optional[bool] = True):
+        super().__init__()
         self.geometry = geometry
         self.unit = unit
         self.n_atoms: Tensor = self.geometry.atomic_numbers.count_nonzero(-1)
@@ -106,7 +107,7 @@ class Acsf:
 
         return _rows_to_NxNx2(self.atomic_numbers, matrix_shape, 0)
 
-    def __call__(self):
+    def forward(self):
         """Calculate G values with input parameters."""
         _g = self.g1.clone()
 

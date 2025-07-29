@@ -40,12 +40,19 @@ class Feed(torch.nn.Module, ABC):
 
     Note:
         Subclasses must implement the `forward` method to define the computation
-        performed by the feed. Other methods may be required depending on the
-        specific subclass implementation.
+        performed by the feed. However, as per PyTorch's recommendation, feeds
+        should be invoked via their call method. Other methods may be required
+        depending on the specific subclass implementation.
 
     """
     def __init__(self):
         super().__init__()
 
-    def forward(self, *args, **kwargs):
-        self(*args, **kwargs)
+    # Note that the `forward` method must be implemented but inheriting
+    # classes, as mandated by the parent class `torch.nn.Module`. However,
+    # to prevent method signature conflict warnings the abstract method has
+    # not been concretely enforced.
+    # @abstractmethod
+    # def forward(self, *args, **kwargs):
+    #     raise NotImplementedError(
+    #         "Abstract method `forward` has not been implemented.")

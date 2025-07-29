@@ -5,7 +5,7 @@ import torch
 import h5py
 
 from tbmalt import OrbitalInfo
-from tbmalt.ml.module import Calculator
+from tbmalt.ml.calculator import Calculator
 from tbmalt.physics.dftb import Dftb2
 from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
 from tbmalt.common.maths.interpolation import CubicSpline

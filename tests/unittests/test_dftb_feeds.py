@@ -512,22 +512,22 @@ def test_skfoccupationfeed_single(device, skf_file):
     shell_dict = {1: [0], 6: [0, 1], 8: [0, 1]}
 
     # Check 1: verify that results are returned on the correct device.
-    check_1 = device == o_feed.forward(
+    check_1 = device == o_feed(
         OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)).device
 
     assert check_1, 'Results were placed on the wrong device'
 
     # Check 2: ensure results are within tolerance
     check_2a = torch.allclose(
-        o_feed.forward(OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)),
+        o_feed(OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)),
         torch.tensor([1., 1], device=device))
 
     check_2b = torch.allclose(
-        o_feed.forward(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1], device=device), shell_dict)),
+        o_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1], device=device), shell_dict)),
         torch.tensor([2., 2/3, 2/3, 2/3, 1, 1, 1, 1], device=device))
 
     check_2c = torch.allclose(
-        o_feed.forward(OrbitalInfo(torch.tensor([1, 1, 8], device=device), shell_dict)),
+        o_feed(OrbitalInfo(torch.tensor([1, 1, 8], device=device), shell_dict)),
         torch.tensor([1., 1, 2, 4/3, 4/3, 4/3], device=device))
 
     check_2 = check_2a and check_2b and check_2c
@@ -552,7 +552,7 @@ def test_skfoccupationfeed_batch(device, skf_file):
         [1, 1,   2,   4/3, 4/3, 4/3, 0, 0]
     ], device=device)
 
-    predicted = o_feed.forward(orbs)
+    predicted = o_feed(orbs)
 
     check_1 = predicted.device == device
     assert check_1, 'Results were placed on the wrong device'
@@ -622,23 +622,23 @@ def test_hubbardfeed_single(device, skf_file):
     shell_dict = {1: [0], 6: [0, 1], 8: [0, 1]}
 
     # Check 1: verify that results are returned on the correct device.
-    check_1 = device == u_feed.forward(
+    check_1 = device == u_feed(
         OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)).device
 
     assert check_1, 'Results were placed on the wrong device'
 
     # Check 2: ensure results are within tolerance
     check_2a = torch.allclose(
-        u_feed.forward(OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)),
+        u_feed(OrbitalInfo(torch.tensor([1, 1], device=device), shell_dict)),
         torch.tensor([0.4196174261, 0.4196174261], device=device))
 
     check_2b = torch.allclose(
-        u_feed.forward(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1], device=device), shell_dict)),
+        u_feed(OrbitalInfo(torch.tensor([6, 1, 1, 1, 1], device=device), shell_dict)),
         torch.tensor([0.3646664974, 0.4196174261, 0.4196174261,
                       0.4196174261, 0.4196174261], device=device))
 
     check_2c = torch.allclose(
-        u_feed.forward(OrbitalInfo(torch.tensor([1, 1, 8], device=device), shell_dict)),
+        u_feed(OrbitalInfo(torch.tensor([1, 1, 8], device=device), shell_dict)),
         torch.tensor([0.4196174261, 0.4196174261, 0.4954041702], device=device))
 
     check_2 = check_2a and check_2b and check_2c
@@ -663,7 +663,7 @@ def test_hubbardfeed_batch(device, skf_file):
         [0.4196174261, 0.4196174261, 0.4954041702, 0,            0]
     ], device=device)
 
-    predicted = u_feed.forward(orbs)
+    predicted = u_feed(orbs)
 
     check_1 = predicted.device == device
     assert check_1, 'Results were placed on the wrong device'

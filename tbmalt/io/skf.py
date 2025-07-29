@@ -317,7 +317,8 @@ class Skf:
             #            |   ↓ Sorting ↓   |    ↓ Segmentation by ℓ pair ↓    |
             zip(l_pairs, integrals.T[sort].split((l_pairs[:, 0] + 1).tolist()))
             if not ((integral == 0.).all()  # ← Ignore any dummy interactions
-            or (integral[:, 1:] == 0.).all())}  # Case for siband overlap
+            or (integral[:, 1:] == 0.).all()  # Case for siband overlap
+            or ((n_grids > 21) and (integral[:, 20:] == 0.).all()))}  # pbc case
             for integrals in [h_data, s_data]]
 
         if atomic:  # Parse homo data; on-site/Hubbard-U/occupations. (skip spe)

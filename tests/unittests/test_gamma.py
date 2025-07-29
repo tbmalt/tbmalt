@@ -250,7 +250,7 @@ def test_exponential_gamma_single(device, hubbard_feeds):
     systems = [H2, H2O, CH4]
     for system in systems:
         geometry, orbs, results = system(device)
-        gamma_cal = gamma_exponential(geometry, orbs, u_feed.forward(orbs))
+        gamma_cal = gamma_exponential(geometry, orbs, u_feed(orbs))
         gamma_helper(gamma_cal, geometry, orbs, results)
 
 
@@ -262,7 +262,7 @@ def test_exponential_gamma_batch(device, hubbard_feeds):
     batches = [[H2], [H2, H2O], [H2, H2O, CH4]]
     for batch in batches:
         geometry, orbs, results = merge_systems(device, *batch)
-        gamma_cal = gamma_exponential(geometry, orbs, u_feed.forward(orbs))
+        gamma_cal = gamma_exponential(geometry, orbs, u_feed(orbs))
         gamma_helper(gamma_cal, geometry, orbs, results)
 
 
@@ -274,7 +274,7 @@ def test_exponential_gamma_single_shell_resolved(device, hubbard_feeds):
     systems = [H2_shell_resolved, H2O_shell_resolved, CH4_shell_resolved]
     for system in systems:
         geometry, orbs, results = system(device)
-        gamma_cal = gamma_exponential(geometry, orbs, u_feed.forward(orbs))
+        gamma_cal = gamma_exponential(geometry, orbs, u_feed(orbs))
         gamma_helper(gamma_cal, geometry, orbs, results)
 
 
@@ -287,7 +287,7 @@ def test_exponential_gamma_batch_shell_resolved(device, hubbard_feeds):
                [H2_shell_resolved, H2O_shell_resolved, CH4_shell_resolved]]
     for batch in batches:
         geometry, orbs, results = merge_systems(device, *batch)
-        gamma_cal = gamma_exponential(geometry, orbs, u_feed.forward(orbs))
+        gamma_cal = gamma_exponential(geometry, orbs, u_feed(orbs))
         gamma_helper(gamma_cal, geometry, orbs, results)
 
 
@@ -301,7 +301,7 @@ def test_exponential_gamma_single_pbc(device, hubbard_feeds):
         geometry, orbs, results = system(device)
         invr = build_coulomb_matrix(geometry, method='search')
         gamma_cal = build_gamma_matrix(geometry, orbs, invr,
-                                       u_feed.forward(orbs), 'exponential')
+                                       u_feed(orbs), 'exponential')
         gamma_helper(gamma_cal, geometry, orbs, results)
 
 
@@ -315,5 +315,5 @@ def test_exponential_gamma_batch_pbc(device, hubbard_feeds):
         geometry, orbs, results = merge_systems(device, *batch)
         invr = build_coulomb_matrix(geometry, method='search')
         gamma_cal = build_gamma_matrix(geometry, orbs, invr,
-                                       u_feed.forward(orbs), 'exponential')
+                                       u_feed(orbs), 'exponential')
         gamma_helper(gamma_cal, geometry, orbs, results)

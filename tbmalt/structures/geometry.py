@@ -49,9 +49,9 @@ class Geometry:
         lattice_vector: Lattice vectors of the periodic systems. This is
             argument, commonly a 3x3 tensor, is only relevant for periodic
             systems. This is used by underlying `Periodicity` instances to
-            construct periodic dependant properties. [DEFAULT: None]
+            construct periodic dependant properties. [DEFAULT=None]
         frac: Whether using fractional coordinates to describe periodic
-            systems. [DEFAULT: False]
+            systems. [DEFAULT=False]
         cutoff: Global cutoff for the diatomic interactions in periodic
             systems. Currently, this value is only used by periodic systems
             when computing the number of cell images that must be considered.
@@ -63,7 +63,7 @@ class Geometry:
             gamma matrices in DFTB. This can have a noticeable impact on
             accuracy. For calculations requiring strict convergence, increase
             ``cutoff`` to a value exceeding the gamma matrix cut-offs listed
-            in :mod:`tbmalt.data.elements`. [DEFAULT: 11.0]
+            in :mod:`tbmalt.data.elements`. [DEFAULT=11.0]
         units: Unit in which ``positions``, ``lattice_vector``, & ``cutoff``
             were specified. For a list of available units see :mod:`.units`
             [DEFAULT='bohr'].
@@ -785,7 +785,7 @@ def unique_atom_pairs(
             ordered. If set to `False`, pairs like (1, 2) and (2, 1) are
             treated as equivalent and only the former is returned. If set to
             `True`, both (2, 1) and (1, 2) will be returned as they will be
-            considered to be distinct. [DEFAULT: False]
+            considered to be distinct. [DEFAULT=False]
 
     Returns:
         unique_atom_pairs: A tensor specifying all unique atom pairs.
@@ -822,15 +822,15 @@ def atomic_pair_distances(
             be ignored. If enabled, any pair where both indices refer to the
             same atom (i.e. an atom interacting with itself) is excluded.
             This only pertains to self-interactions and not interactions
-            with copies in neighbouring images.[DEFAULT: False]
+            with copies in neighbouring images.[DEFAULT=False]
         force_batch_index: If ``True``, forces the returned ``pair_indices``
             to include a leading batch index dimension even for single systems.
             By default, (``False``), a batch dimension is only included if
-            ``geometry`` actually represents a batch. [DEFAULT: False]
+            ``geometry`` actually represents a batch. [DEFAULT=False]
         ignore_periodicity: If `True`, the system will be treated as
             non-periodic. Interactions involving neighbouring cells will be
             ignored and the cell index will be omitted from the returned pair
-            index tensor. [DEFAULT: False]
+            index tensor. [DEFAULT=False]
 
     Yields:
         pair: A tensor of shape `(2,)` specifying the atomic numbers of the two
@@ -904,15 +904,15 @@ def atomic_pair_indices(
             be ignored. If enabled, any pair where both indices refer to the
             same atom (i.e. an atom interacting with itself) is excluded.
             This only pertains to self-interactions and not interactions
-            with copies in neighbouring images.[DEFAULT: False]
+            with copies in neighbouring images.[DEFAULT=False]
         force_batch_index: If `True`, forces the returned ``pair_indices``
             to include a leading batch index dimension even for single systems.
             By default (``False``), a batch dimension is only included if
-            ``geometry`` actually represents a batch. [DEFAULT: False]
+            ``geometry`` actually represents a batch. [DEFAULT=False]
         ignore_periodicity: If `True`, the system will be treated as
             non-periodic. Interactions involving neighbouring cells will be
             ignored and the cell index will be omitted from the returned pair
-            index tensor. [DEFAULT: False]
+            index tensor. [DEFAULT=False]
 
     Yields:
         pair: A tensor of shape `(2,)` specifying the atomic numbers of the two
@@ -962,13 +962,13 @@ def _atomic_pair_indices(
         ignore_self: Boolean indicating whether self-interaction pairs should
             be ignored. If enabled, pairs involving an atom interacting with
             itself will be filtered out. Caution is advised when using this
-            flag in conjunction with periodic systems. [DEFAULT: False]
+            flag in conjunction with periodic systems. [DEFAULT=False]
         force_batch_index: `bool` indicating whether to force the presence of
             batch indices in the returned ``pair_indices`` tensor. By default,
             batch indices are only present when the system in question is a
             batch. However, it is sometimes useful to include a batch index
             for single systems to aid in writing batch agnostic code.
-            [DEFAULT: False]
+            [DEFAULT=False]
 
     Yields:
         pair: Atomic-number pair tensor of shape (2, ) specifying which
@@ -1034,13 +1034,13 @@ def _atomic_pair_indices_periodic(
         ignore_self: Boolean indicating whether self-interaction pairs should
             be ignored. If enabled, pairs involving an atom interacting with
             itself will be filtered out. Caution is advised when using this
-            flag in conjunction with periodic systems. [DEFAULT: False]
+            flag in conjunction with periodic systems. [DEFAULT=False]
         force_batch_index: `bool` indicating whether to force the presence of
             batch indices in the returned ``pair_indices`` tensor. By default,
             batch indices are only present when the system in question is a
             batch. However, it is sometimes useful to include a batch index
             for single systems to aid in writing batch agnostic code.
-            [DEFAULT: False]
+            [DEFAULT=False]
 
     Yields:
         pair: Atomic-number pair tensor of shape (2, ) specifying which

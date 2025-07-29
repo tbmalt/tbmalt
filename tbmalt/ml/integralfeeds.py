@@ -19,7 +19,7 @@ from numpy import ndarray as Array
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.structures.geometry import atomic_pair_indices
 from tbmalt.ml import Feed
-from tbmalt.ml.module import Calculator
+from tbmalt.ml.calculator import Calculator
 from tbmalt.common.batch import bT
 from torch import Tensor
 

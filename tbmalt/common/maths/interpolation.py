@@ -31,6 +31,7 @@ class BicubInterpSpl(Feed):
     Examples:
         >>> import matplotlib.pyplot as plt
         >>> import torch
+        >>> from tbmalt.common.maths.interpolation import BicubInterpSpl
         >>> x = torch.arange(0., 5., 0.25)
         >>> y = torch.arange(0., 5., 0.25)
         >>> xx, yy = torch.meshgrid(x, y)
@@ -69,7 +70,7 @@ class BicubInterpSpl(Feed):
         # Device type of the tensor in this class
         self._device = compr.device
 
-    def __call__(self, rr: Tensor, distances=None):
+    def forward(self, rr: Tensor, distances=None):
         """Calculate bicubic interpolation.
 
         If distances is not None, the polynomial interpolation will be
@@ -101,7 +102,7 @@ class BicubInterpSpl(Feed):
                 'distances is expected'
 
             ski = PolyInterpU(self.hs_grid, Parameter(self.zmesh, requires_grad=False))
-            zmesh = ski.forward(distances).permute(0, -2, -1, 1)
+            zmesh = ski(distances).permute(0, -2, -1, 1)
         elif self.zmesh.dim() == 2 or self.zmesh.dim() == 3:
             zmesh = self.zmesh.repeat(rr.shape[0], 1, 1)
         else:
@@ -139,25 +140,6 @@ class BicubInterpSpl(Feed):
         znew = torch.stack([torch.matmul(torch.matmul(
             xmat[:, i, 0], a_mat[i]), xmat[:, i, 1]) for i in range(self.batch)])
         return znew
-
-    def forward(self, rr: Tensor, distances=None):
-        """Perform the bicubic-like interpolation.
-
-        If distances is not None, the polynomial interpolation will be
-        used to interpolate distances from ``hamiltonian`` & ``overlap``.
-        Then the bicubic interpolation will be used to interpolate rr
-        from the interpolated ``hamiltonian`` & ``overlap`` values.
-
-        Arguments:
-            rr: The points to be interpolated for the first dimension and
-                second dimension.
-            distances: Distances between atoms.
-
-        Returns:
-            znew: Interpolation values with given rr, or rr and distances.
-
-        """
-        return self(rr, distances=distances)
 
     def _get_indices(self, xi):
         """Get indices and repeat indices."""
@@ -250,14 +232,15 @@ class PolyInterpU(Feed):
         points will rapidly, but smoothly, decay to zero.
 
     Examples:
+        >>> import matplotlib.pyplot as plt
         >>> import torch
         >>> from torch.nn import Parameter
-        >>> import matplotlib.pyplot as plt
+        >>> from tbmalt.common.maths.interpolation import PolyInterpU
         >>> x = torch.linspace(0, 2. * torch.pi, 100)
         >>> y = Parameter(torch.sin(x), requires_grad=False)
         >>> poly = PolyInterpU(x, y, n_interp=8, n_interp_r=4)
         >>> new_x = torch.rand(10) * 2. * torch.pi
-        >>> new_y = poly.forward(new_x)
+        >>> new_y = poly(new_x)
         >>> plt.plot(x, y, 'k-')
         >>> plt.plot(new_x, new_y, 'rx')
         >>> plt.show()
@@ -277,7 +260,8 @@ class PolyInterpU(Feed):
 
         super().__init__()
 
-        if not torch.allclose(x.diff(), x[1] - x[0]):
+        if not torch.allclose(x.diff(), x[1] - x[0],
+                              atol=torch.finfo(x.dtype).resolution):
             raise ValueError("Spacing of grid points must be uniform.")
 
         # Ensure that the y values are a parameter instance
@@ -429,12 +413,6 @@ class PolyInterpU(Feed):
             len(xx) + int(tail / (xx[1] - xx[0])),
             device=self._device)
 
-    def __call__(self, *args, **kwargs) -> Tensor:
-        warnings.warn(
-            "`PolyInterpU` instances should be invoked via their "
-            "`.forward` method now.")
-        return self.forward(*args, **kwargs)
-
 
 def poly_to_zero(xx: Tensor, dx: Tensor, inv_x: Tensor,
                  y0: Tensor, y0p: Tensor, y0pp: Tensor) -> Tensor:
@@ -559,15 +537,14 @@ class CubicSpline(Feed):
         >>> x = torch.linspace(1, 10, 10)
         >>> y = Parameter(torch.sin(x), requires_grad=False)
         >>> spline = CubicSpline(x, y)
-        >>> spline.forward(torch.tensor([3.5]))
-        #   tensor([-0.3526])
+        >>> spline(torch.tensor([3.5]))
+        tensor([-0.3526])
         >>> torch.sin(torch.tensor([3.5]))
-        #   tensor([-0.3508])
+        tensor([-0.3508])
 
     """
 
-    def __init__(self, x: Tensor, y: Parameter, tail: Real = 1.0,
-                 **kwargs):
+    def __init__(self, x: Tensor, y: Parameter, tail: Real = 1.0):
         super().__init__()
 
         # X-knot values must be of an anticipated type
@@ -612,15 +589,9 @@ class CubicSpline(Feed):
         self.xp = x
         self._y = y
 
-        # Coefficients will be build when the `coefficients` property is
-        # first invoked. Unless the user has supplied the spline coefficients
-        # manually.
+        # Coefficients will be built when the `coefficients` property is
+        # first invoked.
         self._coefficients: Optional[Tensor] = None
-        if "coefficients" in kwargs.keys():
-            warnings.warn(
-                "Manual specification of coefficients is deprecated.",
-                DeprecationWarning, stacklevel=2)
-            self._coefficients: Optional[Tensor] = kwargs.get("coefficients")
 
         self.grid_step = x[1] - x[0]
         self.tail = tail
@@ -762,12 +733,6 @@ class CubicSpline(Feed):
                 dr, dx, 1.0 / dx, y2, y1p, y1pp)
 
         return result
-
-    def __call__(self, *args, **kwargs) -> Tensor:
-        warnings.warn(
-            "`CubicSpline` instances should be invoked via their "
-            "`.forward` method now.")
-        return self.forward(*args, **kwargs)
 
     def _update_knot_version_tracking_data(self):
         self._y_version = self._y._version

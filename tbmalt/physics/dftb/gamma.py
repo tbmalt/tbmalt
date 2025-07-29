@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Short gamma calculations."""
-from typing import Literal
+from typing import Literal, Union
 import torch
 from torch import Tensor
 from tbmalt import Geometry, OrbitalInfo
@@ -523,8 +523,9 @@ def _expgamma(distance_tr: Tensor, alpha: Tensor, beta: Tensor,
 
 def build_gamma_matrix(
         geometry: Geometry, orbs: OrbitalInfo, invr: Tensor,
-        hubbard_Us: Tensor, scheme: Literal['exponential', 'gaussian'] =
-        'exponential') -> Tensor:
+        hubbard_Us: Tensor,
+        scheme: Union[Literal['exponential', 'gaussian'], str] = 'exponential'
+        ) -> Tensor:
     """Construct the gamma matrix
 
     Arguments:

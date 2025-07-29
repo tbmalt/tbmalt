@@ -14,7 +14,7 @@ import pytest
 import torch
 
 from tbmalt import Geometry, OrbitalInfo
-from tbmalt.ml.module import Calculator
+from tbmalt.ml.calculator import Calculator
 from tbmalt.physics.dftb import Dftb1, Dftb2
 from tbmalt.physics.dftb.feeds import HubbardFeed
 from tbmalt.common.batch import pack

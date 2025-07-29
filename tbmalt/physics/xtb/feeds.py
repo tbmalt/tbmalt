@@ -19,7 +19,7 @@ import torch
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.ml import Feed
 from tbmalt.ml.integralfeeds import IntegralFeed
-from tbmalt.ml.module import Calculator
+from tbmalt.ml.calculator import Calculator
 
 try:
     from external.dxtb.origin.dxtb.ncoord import get_coordination_number, exp_count
@@ -100,7 +100,7 @@ class XtbOccupationFeed(Feed):
         """Floating point dtype used by feed object."""
         return self.__dtype
 
-    def __call__(self, orbs: OrbitalInfo) -> torch.Tensor:
+    def forward(self, orbs: OrbitalInfo) -> torch.Tensor:
         numbers = orbs.atomic_numbers
 
         # helper for mapping atomic, orbital and shell indices
