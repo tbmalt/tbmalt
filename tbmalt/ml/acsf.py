@@ -13,7 +13,7 @@ from tbmalt.ml import Feed
 
 
 class Acsf(Feed):
-    """Construct Atom-centered symmetry functions (Acsf).
+    """Construct Atom-centered symmetry functions (ACSF).
 
     This class is designed for batch calculations. Single geometry will be
     transferred to batch in the beginning.
@@ -41,12 +41,15 @@ class Acsf(Feed):
         >>> geo = Geometry.from_ase_atoms(ch4)
         >>> species = geo.chemical_symbols
         >>> acsf = Acsf(geo, g1_params=rcut, g4_params=torch.tensor(
-        [[0.02, 1.0, -1.0]]), element_resolve=True, atom_like=False)
+        ...             [[0.02, 1.0, -1.0]]), element_resolve=True,
+        ...             atom_like=False)
         >>> g = acsf()
 
+    Notes:
+        For more information reguarding ACSF's see [Behler2011]_.
 
     References:
-        .. [ACSF] Jörg Behler. Atom-centered symmetry functions for constructing
+        .. [Behler2011] Jörg Behler. Atom-centered symmetry functions for constructing
                   high-dimensional neural network potentials. J. Chem. Phys.,
                   134(7):074106, 2011.
 

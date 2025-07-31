@@ -5,7 +5,7 @@ The primary machine learning components of TBMaLT are located within this
 module.
 """
 import torch
-from abc import ABC, abstractmethod
+from abc import ABC
 
 
 class Feed(torch.nn.Module, ABC):
@@ -26,6 +26,7 @@ class Feed(torch.nn.Module, ABC):
     quantum mechanical solvers.
 
     Key Features:
+
     - Automatic tracking of optimisable parameters, facilitating integration
       with PyTorch's optimization routines.
     - Support for nested `Feed` objects, allowing for the construction of

@@ -61,16 +61,15 @@ def fermi_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
 
         Examples:
             >>> from tbmalt.physics.filling import fermi_entropy
-
-            # An example H2 system
+            >>>
+            >>> # An example H2 system
             >>> e_vals = torch.tensor([-0.3405911944959140,
-                                       0.2311892808528265])
+            ...                        0.2311892808528265])
             >>> kt = torch.tensor(0.0036749324000000)
             >>> e_fermi = torch.tensor(-0.0547009568215437)
-
-            # Calculate the entropy term
+            >>> # Calculate the entropy term
             >>> ts = fermi_entropy(e_vals, e_fermi, kt)
-            >>> ts
+            >>> print(ts)
             tensor(0.)
 
         """
@@ -122,16 +121,15 @@ def gaussian_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
 
         Examples:
             >>> from tbmalt.physics.filling import gaussian_entropy
-
-            # An example H2 system
+            >>>
+            >>> # An example H2 system
             >>> e_vals = torch.tensor([-0.3405911944959140,
             ...                        0.2311892808528265])
             >>> kt = torch.tensor(0.0036749324000000)
             >>> e_fermi = torch.tensor(-0.0547009568215437)
-
-            # Calculate the entropy term
+            >>> # Calculate the entropy term
             >>> ts = gaussian_entropy(e_vals, e_fermi, kt)
-            >>> ts
+            >>> print(ts)
             tensor(0.)
 
         """
@@ -270,16 +268,15 @@ def fermi_smearing(
 
     Examples:
         >>> from tbmalt.physics.filling import fermi_smearing
-
-        # An example H2 system
+        >>>
+        >>> # An example H2 system
         >>> e_vals = torch.tensor([-0.3405911944959140,
-                                   0.2311892808528265])
+        ...                        0.2311892808528265])
         >>> kt = torch.tensor(0.0036749324000000)
         >>> e_fermi = torch.tensor(-0.0547009568215437)
-
-        # Fermi smearing
+        >>> # Fermi smearing
         >>> occ = fermi_smearing(e_vals, e_fermi, kt)
-        >>> occ
+        >>> print(occ)
         tensor([1.0000e+00, 1.6375e-34])
 
     """
@@ -344,16 +341,15 @@ def gaussian_smearing(
 
     Examples:
         >>> from tbmalt.physics.filling import gaussian_smearing
-
-        # An example H2 system
+        >>>
+        >>> # An example H2 system
         >>> e_vals = torch.tensor([-0.3405911944959140,
         ...                        0.2311892808528265])
         >>> kt = torch.tensor(0.0036749324000000)
         >>> e_fermi = torch.tensor(-0.0547009568215437)
-
-        # Gaussian smearing
+        >>> # Gaussian smearing
         >>> occ = gaussian_smearing(e_vals, e_fermi, kt)
-        >>> occ
+        >>> print(occ)
         tensor([1., 0.])
 
     """
@@ -372,7 +368,43 @@ def _middle_gap_approximation(
         eigenvalues: Tensor, n_electrons: Tensor, scale_factor: Tensor,
         e_mask: Optional[Tensor] = None, return_occupations: bool = False
         ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
-    """Returns the midpoint between the HOMO and LUMO."""
+    """Returns the midpoint between the HOMO and LUMO.
+
+    Determines the middle of the fundamental gap for each system/batch by
+    locating the highest occupied molecular orbital (HOMO) and the lowest
+    unoccupied molecular orbital (LUMO) in the sorted eigen‑energy spectrum.
+    The procedure is agnostic to padding states, honours per‑state occupation
+    scaling (e.g. spin multiplicity and k‑point weights) and can optionally
+    supply the Aufbau‑filled occupation tensor required by other routines.
+
+    Arguments:
+        eigenvalues: Eigen‑energies, i.e. orbital‑energies. May have up to
+            four dimensions in the order
+            ``[batch, spin, k‑points, eigenvalues]``.
+        n_electrons: Total number of (valence) electrons per system.
+        scale_factor: Maximum occupancy of each eigenstate; equals 2 or 1 for
+            restricted and unrestricted molecular systems respectively and is
+            additionally scaled by any k‑point weights for periodic systems.
+        e_mask: Boolean mask that distinguishes *real* eigenstates from
+            *ghost* padding states. **Must** be supplied when, and only when,
+            batched systems are processed. [DEFAULT=None]
+        return_occupations: If `True` the fractional orbital occupations
+            (following the Aufbau principle and scaled by *scale_factor*)
+            are also returned. [DEFAULT=False]
+
+    Returns:
+        mid_point: Mid‑gap energy (HOMO/LUMO average) for each system.
+        occupations: Fractional occupations with the same shape as
+            ``eigenvalues``.  Only returned when ``return_occupations`` is
+            `True`.
+
+    Notes:
+        The HOMO index is found where the cumulative sum of the maximum state
+        occupancies first meets or exceeds ``n_electrons``.  The LUMO is taken
+        as the succeeding state; if the system is fully occupied the index is
+        clamped to the final *real* state, causing the gap to collapse to zero.
+
+    """
 
     # Shape of Ɛ tensor where k-points & spin-channels have been flattened out.
     # Note that only spin-channels with common fermi energies get flattened.
@@ -438,14 +470,14 @@ def fermi_search(
 
     Calculates the Fermi-energy with or without finite temperature. Finite
     temperature can be enabled by specifying a ``kT`` value. Note that this
-    function will always operate outside of any graph.
+    function will always operate outside the auto-grad graph.
 
     Arguments:
         eigenvalues: Eigen-energies, i.e. orbital-energies. This may have up to
             4 dimensions, 3 of which are optional, so long as the following
             order is satisfied [batch, spin, k-points, eigenvalues].
         n_electrons: Total number of (valence) electrons.
-        kT: Electronic temperature. By default finite temperature is not
+        kT: Electronic temperature. By default, finite temperature is not
             active, i.e. ``kT`` = None. [DEFAULT=None]
         scheme: Finite temperature broadening function to be used, TBMaLT
             natively supports two broadening methods:
@@ -475,7 +507,7 @@ def fermi_search(
         when, a batch of systems is provided. Failing to satisfy this condition
         will cause **spurious and hard to diagnose errors**.
 
-        This function operates outside of the pytorch autograd graph and is
+        This function operates outside the pytorch autograd graph and is
         therefore **not** back-propagatable!
 
     Notes:
@@ -511,16 +543,14 @@ def fermi_search(
 
     Examples:
         >>> from tbmalt.physics.filling import fermi_search
-
-        # An example H2 system
+        >>> # An example H2 system
         >>> e_vals = torch.tensor([-0.3405911944959140,
         ...                        0.2311892808528265])
         >>> kt = torch.tensor(0.0036749324000000)
         >>> n_elec = 2.0
-
-        # Fermi search
+        >>> # Fermi search
         >>> e_fermi = fermi_search(e_vals, n_elec, kt, scheme=fermi_smearing)
-        >>> e_fermi
+        >>> print(e_fermi)
         tensor(-0.0547)
 
     """

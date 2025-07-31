@@ -1,3 +1,10 @@
+# -*- coding: utf-8 -*-
+"""Loss module.
+
+The loss module is intended to house all the components necessary to define
+a loss metric to be used when optimising a model.
+"""
+
 from tbmalt.ml.calculator import Calculator
 import tbmalt.common.maths as tb_math
 from typing import Callable, Optional, Union, Any, Dict, Tuple
@@ -20,7 +27,7 @@ def l1_loss(prediction: Tensor, reference: Tensor, weights: Optional[Tensor] = N
     """
     Calculates the L1 loss (also known as absolute error) between the prediction and the reference.
 
-    Args:
+    Arguments:
     - prediction (torch.Tensor): The predicted values.
     - reference (torch.Tensor): The actual values to compare against.
     - weights (torch.Tensor): weights for each system [Optional].

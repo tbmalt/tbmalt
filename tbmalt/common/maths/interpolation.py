@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Interpolation for general purpose."""
-from typing import Tuple, Union, Optional
+"""General purpose interpolation methods."""
+from typing import Optional
 from numbers import Real
 import warnings
 import torch
@@ -43,8 +43,6 @@ class BicubInterpSpl(Feed):
         >>> plt.plot(x, z.diagonal(), 'ro-', xnew, znew, 'b-')
         >>> plt.show()
 
-    References:
-        .. [wiki] https://en.wikipedia.org/wiki/Bicubic_interpolation
 
     """
 
@@ -213,14 +211,13 @@ class PolyInterpU(Feed):
         x: Grid points for interpolation, 1D Tensor.
         y: Values to be interpolated at each grid point. Note that this must
             be a `torch.nn.Parameter` rather than a standard torch `Tensor`.
-        tail: Distance to smooth the tail.
-        delta_r: Delta distance for 1st, 2nd derivative.
-        n_interp: Number of total interpolation grid points.
-        n_interp_r: Number of right side interpolation grid points.
+        tail: Distance to smooth the tail. [DEFAULT=1.0]
+        delta_r: Delta distance for 1st, 2nd derivative. [DEFAULT=1E-5]
+        n_interp: Number of total interpolation grid points. [DEFAULT=8]
+        n_interp_r: Number of right side interpolation grid points. [DEFAULT=4]
 
     Attributes:
         delta_r: Delta distance for 1st, 2nd derivative.
-        tail: Distance to smooth the tail.
         n_interp: Number of total interpolation grid points.
         n_interp_r: Number of right side interpolation grid points.
 
@@ -241,8 +238,8 @@ class PolyInterpU(Feed):
         >>> poly = PolyInterpU(x, y, n_interp=8, n_interp_r=4)
         >>> new_x = torch.rand(10) * 2. * torch.pi
         >>> new_y = poly(new_x)
-        >>> plt.plot(x, y, 'k-')
-        >>> plt.plot(new_x, new_y, 'rx')
+        >>> plt.plot(x.numpy(), y.detach().numpy(), 'k-')
+        >>> plt.plot(new_x.numpy(), new_y.numpy(), 'rx')
         >>> plt.show()
 
     """
@@ -526,9 +523,6 @@ class CubicSpline(Feed):
 
     Keyword Args:
         coefficients: 0th, 1st, 2nd and 3rd order parameters in cubic spline.
-
-    References:
-        .. [csi_wiki] https://en.wikipedia.org/wiki/Spline_(mathematics)
 
     Examples:
         >>> from tbmalt.common.maths.interpolation import CubicSpline
