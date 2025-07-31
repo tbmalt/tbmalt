@@ -118,6 +118,8 @@ def H2_scc(device):
         'scc_energy': torch.tensor(0.0000000000, device=device),
         'repulsive_energy': torch.tensor(0.0062479252, device=device),
         'total_energy': torch.tensor(-0.7373946003, device=device),
+        'band_free_energy': torch.tensor(-0.7436425254, device=device),
+        'mermin_energy': torch.tensor(-0.7373946003, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -190,7 +192,9 @@ def CH4_scc(device):
         'core_band_energy': torch.tensor(-3.1532140266, device=device),
         'scc_energy': torch.tensor(0.0067918553, device=device),
         'repulsive_energy': torch.tensor(0.0593437885, device=device),
-        'total_energy': torch.tensor(-3.0870783828, device=device)
+        'total_energy': torch.tensor(-3.0870783828, device=device),
+        'band_free_energy': torch.tensor(-3.0733021165, device=device),
+        'mermin_energy': torch.tensor(-3.0870783828, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -258,6 +262,8 @@ def H2O_scc(device):
         'scc_energy': torch.tensor(0.0182313218, device=device),
         'repulsive_energy': torch.tensor(0.0592948663, device=device),
         'total_energy': torch.tensor(-4.0790454652, device=device),
+        'band_free_energy': torch.tensor(-3.6933637908, device=device),
+        'mermin_energy': torch.tensor(-4.0790454652, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -339,9 +345,56 @@ def C2H6_scc(device):
         'scc_energy': torch.tensor(0.0017586419, device=device),
         'repulsive_energy': torch.tensor(0.0305717799, device=device),
         'total_energy': torch.tensor(-5.6995446283, device=device),
+        'band_free_energy': torch.tensor(-5.6277033348, device=device),
+        'mermin_energy': torch.tensor(-5.6995446283, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
+
+    return geometry, orbs, results, kwargs
+
+
+def C2H6_scc_high_T(device):
+
+    cutoff = torch.tensor([25.], device=device)
+
+    geometry = Geometry(
+        torch.tensor([6, 6, 1, 1, 1, 1, 1, 1], device=device),
+        torch.tensor([
+            [0.949, 0.084, 0.020],
+            [2.469, 0.084, 0.020],
+            [0.573, 1.098, 0.268],
+            [0.573, -0.638, 0.775],
+            [0.573, -0.209, -0.982],
+            [2.845, 0.376, 1.023],
+            [2.845, 0.805, -0.735],
+            [2.845, -0.931, -0.227]],
+            device=device),
+        torch.tensor([
+            [5.0, 0.0, 0.0],
+            [0.0, 5.0, 0.0],
+            [0.0, 0.0, 5.0]],
+            device=device), units='a',
+        cutoff = cutoff / length_units['angstrom'])
+
+    orbs = OrbitalInfo(geometry.atomic_numbers, {1: [0], 6: [0, 1]})
+
+    results = {
+        'q_final_atomic': torch.tensor([
+            4.1850786246087663, 4.1851376290149656, 0.93820616382061728,
+            0.93832318968602790, 0.93820014743263203, 0.93854995056751456,
+            0.93785528677958696, 0.93864900808989093],
+            device=device),
+        'band_energy': torch.tensor(-5.3667277707, device=device),
+        'core_band_energy': torch.tensor(-5.4697523622, device=device),
+        'scc_energy': torch.tensor(0.0017213960, device=device),
+        'repulsive_energy': torch.tensor(0.0305717799, device=device),
+        'total_energy': torch.tensor(-5.4374591862, device=device),
+        'band_free_energy': torch.tensor(-5.7117090783, device=device),
+        'mermin_energy': torch.tensor(-5.7824404938, device=device),
+    }
+
+    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.1}
 
     return geometry, orbs, results, kwargs
 
@@ -380,6 +433,8 @@ def Si_cubic_siband(device):
         'scc_energy': torch.tensor(0.0000000000, device=device),
         'repulsive_energy': torch.tensor(0.0000000000, device=device),
         'total_energy': torch.tensor(-10.6927149154, device=device),
+        'band_free_energy': torch.tensor(-10.6927149154, device=device),
+        'mermin_energy': torch.tensor(-10.6927149154, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -416,9 +471,49 @@ def Si_hexagonal_siband(device):
         'scc_energy': torch.tensor(0.0000000000, device=device),
         'repulsive_energy': torch.tensor(0.0000000000, device=device),
         'total_energy': torch.tensor(-4.8045148832, device=device),
+        'band_free_energy': torch.tensor(-4.8045148832, device=device),
+        'mermin_energy': torch.tensor(-4.8045148832, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
+
+    return geometry, orbs, results, kwargs
+
+
+def Si_hexagonal_siband_high_T(device):
+    cutoff = torch.tensor([19.0], device=device)
+
+    geometry = Geometry(
+        torch.tensor([14, 14, 14, 14], device=device),
+        torch.tensor([
+            [1.915658730265745, 1.106006083594385, 0.399015345918572],
+            [1.915658730265745, -1.106006083594385, 3.565326345994521],
+            [1.915658730265745, 1.106006083594385, 2.767295654157378],
+            [1.915658730265745, -1.106006083594385, 5.933606654233333]],
+            device=device),
+        torch.tensor([
+            [1.915658730265747, -3.318018250783157, 0.000000000000000],
+            [1.915658730265747, 3.318018250783157, 0.000000000000000],
+            [0.000000000000000, 0.000000000000000, 6.332622000151911]],
+            device=device), units='a',
+        cutoff = cutoff / length_units['angstrom'])
+
+    orbs = OrbitalInfo(geometry.atomic_numbers, {14: [0, 1, 2]})
+
+    results = {
+        'q_final_atomic': torch.tensor([
+            4.00000000, 4.00000000, 4.00000000, 4.00000000],
+            device=device),
+        'band_energy': torch.tensor(-4.7902240354, device=device),
+        'core_band_energy': torch.tensor(-4.7902240354, device=device),
+        'scc_energy': torch.tensor(0.0000000000, device=device),
+        'repulsive_energy': torch.tensor(0.0000000000, device=device),
+        'total_energy': torch.tensor(-4.7902240354, device=device),
+        'band_free_energy': torch.tensor(-4.8105085863, device=device),
+        'mermin_energy': torch.tensor(-4.8105085863, device=device),
+    }
+
+    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.01}
 
     return geometry, orbs, results, kwargs
 
@@ -457,6 +552,8 @@ def Si_cubic_pbc(device):
         'scc_energy': torch.tensor(0.0000000000, device=device),
         'repulsive_energy': torch.tensor(0.0089857383, device=device),
         'total_energy': torch.tensor(-10.1718153692, device=device),
+        'band_free_energy': torch.tensor(-10.1808011075, device=device),
+        'mermin_energy': torch.tensor(-10.1718153692, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -493,6 +590,8 @@ def Si_hexagonal_pbc(device):
         'scc_energy': torch.tensor(0.0000000000, device=device),
         'repulsive_energy': torch.tensor(0.0046221224, device=device),
         'total_energy': torch.tensor(-4.5852296264, device=device),
+        'band_free_energy': torch.tensor(-4.5898517487, device=device),
+        'mermin_energy': torch.tensor(-4.5852296264, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -534,9 +633,54 @@ def SiC_cubic_pbc(device):
         'scc_energy': torch.tensor(0.0324274967, device=device),
         'repulsive_energy': torch.tensor(0.0393678750, device=device),
         'total_energy': torch.tensor(-11.9404957316, device=device),
+        'band_free_energy': torch.tensor(-7.7733287230, device=device),
+        'mermin_energy': torch.tensor(-11.9404957316, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
+
+    return geometry, orbs, results, kwargs
+
+
+def SiC_cubic_pbc_high_T(device):
+    cutoff = torch.tensor([33.0], device=device)
+
+    geometry = Geometry(
+        torch.tensor([14, 14, 14, 14, 6, 6, 6, 6], device=device),
+        torch.tensor([
+            [3.265494935687146, 1.088498311895715, 3.265494935687146],
+            [3.265494935687145, 3.265494935687146, 1.088498311895716],
+            [1.088498311895715, 1.088498311895715, 1.088498311895715],
+            [1.088498311895715, 3.265494935687146, 3.265494935687146],
+            [0.000000000000000, 0.000000000000000, 0.000000000000000],
+            [0.000000000000000, 2.176996623791430, 2.176996623791430],
+            [2.176996623791430, 0.000000000000000, 2.176996623791430],
+            [2.176996623791430, 2.176996623791430, 0.000000000000000]],
+            device=device),
+        torch.tensor([
+            [4.353993247582861, 0.000000000000000, 0.000000000000000],
+            [0.000000000000000, 4.353993247582861, 0.000000000000000],
+            [0.000000000000000, 0.000000000000000, 4.353993247582861]],
+            device=device), units='a',
+        cutoff = cutoff / length_units['angstrom'])
+
+    orbs = OrbitalInfo(geometry.atomic_numbers, {6: [0, 1], 14: [0, 1]})
+
+    results = {
+        'q_final_atomic': torch.tensor([
+            3.2027337733784278, 3.2027337733784238, 3.2027337733784225, 3.2027337733784211,
+            4.7972662266215869, 4.7972662266215842, 4.7972662266215815, 4.7972662266215771],
+            device=device),
+        'band_energy': torch.tensor(-7.7733824146, device=device),
+        'core_band_energy': torch.tensor(-12.0122668184, device=device),
+        'scc_energy': torch.tensor(0.0324263217, device=device),
+        'repulsive_energy': torch.tensor(0.0393678750, device=device),
+        'total_energy': torch.tensor(-11.9404726217, device=device),
+        'band_free_energy': torch.tensor(-7.7734076333, device=device),
+        'mermin_energy': torch.tensor(-11.9404978405, device=device),
+    }
+
+    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.01}
 
     return geometry, orbs, results, kwargs
 
@@ -612,6 +756,8 @@ def dftb2_helper(calculator, geometry, orbs, results):
     check_allclose('scc_energy')
     check_allclose('repulsive_energy')
     check_allclose('total_energy')
+    check_allclose('band_free_energy')
+    check_allclose('mermin_energy')
 
 
 def test_dftb1_single(device, feeds_nscc):
@@ -645,7 +791,7 @@ def test_dftb1_batch(device, feeds_nscc):
 def test_dftb2_single(device, feeds_scc):
     h_feed, s_feed, o_feed, u_feed, r_feed = feeds_scc
 
-    systems = [H2_scc, H2O_scc, CH4_scc, C2H6_scc]
+    systems = [H2_scc, H2O_scc, CH4_scc, C2H6_scc, C2H6_scc_high_T]
     mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
 
     for system in systems:
@@ -678,7 +824,7 @@ def test_dftb2_batch(device, feeds_scc):
 def test_dftb2_siband_single(device, feeds_scc_siband):
     h_feed, s_feed, o_feed, u_feed, r_feed = feeds_scc_siband
 
-    systems = [Si_cubic_siband, Si_hexagonal_siband]
+    systems = [Si_cubic_siband, Si_hexagonal_siband, Si_hexagonal_siband_high_T]
     mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
 
     for system in systems:
@@ -710,7 +856,7 @@ def test_dftb2_siband_batch(device, feeds_scc_siband):
 def test_dftb2_pbc_single(device, feeds_scc_pbc):
     h_feed, s_feed, o_feed, u_feed, r_feed = feeds_scc_pbc
 
-    systems = [Si_cubic_pbc, Si_hexagonal_pbc, SiC_cubic_pbc]
+    systems = [Si_cubic_pbc, Si_hexagonal_pbc, SiC_cubic_pbc, SiC_cubic_pbc_high_T]
     mix_params = {'mix_param': 0.2, 'init_mix_param': 0.2, 'generations': 3, 'tolerance': 1e-12}
 
     for system in systems:
