@@ -1,4 +1,4 @@
-#Tuple, Union,  This file is part of tbmalt.
+# This file is part of tbmalt.
 # SPDX-Identifier: LGPL-3.0-or-later
 """
 This module defines the parametrization of the extended tight-binding Hamiltonian.
