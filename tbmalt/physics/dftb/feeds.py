@@ -1813,6 +1813,18 @@ class HubbardFeed(Feed):
         # the species and shell number for each orbital.
         z_list, ls = orbs.atomic_numbers, orbs.shell_ls
 
+        # Ensure Hubbard-U parameters exist for all requests species
+        supported = set(map(int, self.hubbard_us.keys()))
+        # The {0,} set is subtracted from the requested set to ensure that
+        # padding values are not mistaken for "real" species.
+        requested = set(orbs.atomic_numbers.unique().tolist()) - {0,}
+        unsupported = requested - supported
+        if len(unsupported) > 0:
+            raise KeyError(
+                "Unknown species — `HubbardFeed` instance contains parameters "
+                f"only for {supported}, but encountered {unsupported}. Ensure "
+                "Hubbard-U values are given for all necessary species.")
+
         if orbs.shell_resolved:
             zs = prepeat_interleave(z_list, orbs.n_shells_on_species(z_list), -1)
 
