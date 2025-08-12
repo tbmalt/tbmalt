@@ -89,9 +89,14 @@ def gamma_exponential(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
                                               (ta * tb) ** 2 / (ta + tb) ** 3)
         gamma_tr[mask_shell] = gamma_shell
 
-    mask_homo = (an1 == an2) * distance_tr.ne(0)
-    mask_hetero = (an1 != an2) * distance_tr.ne(0)
     alpha, beta = U[..., ut[0]] * 3.2, U[..., ut[1]] * 3.2
+
+    same_species = (an1 == an2)
+    same_atom = distance_tr.eq(0.0)
+    same_us = alpha == beta
+    mask_homo = same_species.logical_and(same_us).logical_and(~same_atom)
+    mask_hetero = (~same_species.logical_and(same_us)).logical_and(~same_atom)
+
     r_homo = 1.0 / distance_tr[mask_homo]
     r_hetero = 1.0 / distance_tr[mask_hetero]
 
