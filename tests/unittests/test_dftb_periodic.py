@@ -120,6 +120,9 @@ def H2_scc(device):
         'total_energy': torch.tensor(-0.7373946003, device=device),
         'band_free_energy': torch.tensor(-0.7436425254, device=device),
         'mermin_energy': torch.tensor(-0.7373946003, device=device),
+        'homo_lumo': torch.tensor([-0.371821262724377, 0.298216715146995], device=device),
+        'homo': torch.tensor(-0.371821262724377, device=device),
+        'lumo': torch.tensor(0.298216715146995, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -195,6 +198,9 @@ def CH4_scc(device):
         'total_energy': torch.tensor(-3.0870783828, device=device),
         'band_free_energy': torch.tensor(-3.0733021165, device=device),
         'mermin_energy': torch.tensor(-3.0870783828, device=device),
+        'homo_lumo': torch.tensor([-0.282454144022814, 0.175036976238895], device=device),
+        'homo': torch.tensor(-0.282454144022814, device=device),
+        'lumo': torch.tensor(0.175036976238895, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -264,6 +270,9 @@ def H2O_scc(device):
         'total_energy': torch.tensor(-4.0790454652, device=device),
         'band_free_energy': torch.tensor(-3.6933637908, device=device),
         'mermin_energy': torch.tensor(-4.0790454652, device=device),
+        'homo_lumo': torch.tensor([-0.263586304704567, 0.360160557535839], device=device),
+        'homo': torch.tensor(-0.263586304704567, device=device),
+        'lumo': torch.tensor(0.360160557535839, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -347,6 +356,9 @@ def C2H6_scc(device):
         'total_energy': torch.tensor(-5.6995446283, device=device),
         'band_free_energy': torch.tensor(-5.6277033348, device=device),
         'mermin_energy': torch.tensor(-5.6995446283, device=device),
+        'homo_lumo': torch.tensor([-0.297290458927417, 0.264407212156598], device=device),
+        'homo': torch.tensor(-0.297290458927417, device=device),
+        'lumo': torch.tensor(0.264407212156598, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -392,6 +404,9 @@ def C2H6_scc_high_T(device):
         'total_energy': torch.tensor(-5.4374591862, device=device),
         'band_free_energy': torch.tensor(-5.7117090783, device=device),
         'mermin_energy': torch.tensor(-5.7824404938, device=device),
+        'homo_lumo': torch.tensor([-0.297356129932014, 0.264346193915907], device=device),
+        'homo': torch.tensor(-0.297356129932014, device=device),
+        'lumo': torch.tensor(0.264346193915907, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.1}
@@ -435,6 +450,9 @@ def Si_cubic_siband(device):
         'total_energy': torch.tensor(-10.6927149154, device=device),
         'band_free_energy': torch.tensor(-10.6927149154, device=device),
         'mermin_energy': torch.tensor(-10.6927149154, device=device),
+        'homo_lumo': torch.tensor([-0.154995032034639, -0.105554493772848], device=device),
+        'homo': torch.tensor(-0.154995032034639, device=device),
+        'lumo': torch.tensor(-0.105554493772848, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -473,6 +491,9 @@ def Si_hexagonal_siband(device):
         'total_energy': torch.tensor(-4.8045148832, device=device),
         'band_free_energy': torch.tensor(-4.8045148832, device=device),
         'mermin_energy': torch.tensor(-4.8045148832, device=device),
+        'homo_lumo': torch.tensor([-0.149645940728665, -0.103336191018925], device=device),
+        'homo': torch.tensor(-0.149645940728665, device=device),
+        'lumo': torch.tensor(-0.103336191018925, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -511,6 +532,9 @@ def Si_hexagonal_siband_high_T(device):
         'total_energy': torch.tensor(-4.7902240354, device=device),
         'band_free_energy': torch.tensor(-4.8105085863, device=device),
         'mermin_energy': torch.tensor(-4.8105085863, device=device),
+        'homo_lumo': torch.tensor([-0.149645940728665, -0.103336191018925], device=device),
+        'homo': torch.tensor(-0.149645940728665, device=device),
+        'lumo': torch.tensor(-0.103336191018925, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.01}
@@ -554,6 +578,9 @@ def Si_cubic_pbc(device):
         'total_energy': torch.tensor(-10.1718153692, device=device),
         'band_free_energy': torch.tensor(-10.1808011075, device=device),
         'mermin_energy': torch.tensor(-10.1718153692, device=device),
+        'homo_lumo': torch.tensor([-0.157034829595305, -0.107020402225259], device=device),
+        'homo': torch.tensor(-0.157034829595305, device=device),
+        'lumo': torch.tensor(-0.107020402225259, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -592,6 +619,9 @@ def Si_hexagonal_pbc(device):
         'total_energy': torch.tensor(-4.5852296264, device=device),
         'band_free_energy': torch.tensor(-4.5898517487, device=device),
         'mermin_energy': torch.tensor(-4.5852296264, device=device),
+        'homo_lumo': torch.tensor([-0.155386611728434, -0.105676830355132], device=device),
+        'homo': torch.tensor(-0.155386611728434, device=device),
+        'lumo': torch.tensor(-0.105676830355132, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -635,6 +665,9 @@ def SiC_cubic_pbc(device):
         'total_energy': torch.tensor(-11.9404957316, device=device),
         'band_free_energy': torch.tensor(-7.7733287230, device=device),
         'mermin_energy': torch.tensor(-11.9404957316, device=device),
+        'homo_lumo': torch.tensor([-0.0405318670424151, 0.178474909852851], device=device),
+        'homo': torch.tensor(-0.0405318670424151, device=device),
+        'lumo': torch.tensor(0.178474909852851, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.001}
@@ -678,6 +711,9 @@ def SiC_cubic_pbc_high_T(device):
         'total_energy': torch.tensor(-11.9404726217, device=device),
         'band_free_energy': torch.tensor(-7.7734076333, device=device),
         'mermin_energy': torch.tensor(-11.9404978405, device=device),
+        'homo_lumo': torch.tensor([-0.0405343542036245, 0.178472670361942], device=device),
+        'homo': torch.tensor(-0.0405343542036245, device=device),
+        'lumo': torch.tensor(0.178472670361942, device=device),
     }
 
     kwargs = {'filling_scheme': 'fermi', 'filling_temp': 0.01}
@@ -758,6 +794,9 @@ def dftb2_helper(calculator, geometry, orbs, results):
     check_allclose('total_energy')
     check_allclose('band_free_energy')
     check_allclose('mermin_energy')
+    check_allclose('homo_lumo')
+    check_allclose('homo')
+    check_allclose('lumo')
 
 
 def test_dftb1_single(device, feeds_nscc):
