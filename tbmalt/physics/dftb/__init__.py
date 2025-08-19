@@ -354,11 +354,11 @@ class Dftb1(Calculator):
     @property
     def homo_lumo(self) -> Tensor:
         """Highest occupied and lowest unoccupied energy level in unit hartree"""
-        # Number of occupied states
-        nocc = (~(self.occupancy - 0 < 1E-10)).long().sum(-1)
+        # Number of occupied states, spin-unpolarized case with threshold > 1.0
+        nocc = torch.as_tensor(self.occupancy.gt(1.0),dtype=torch.long).sum(-1)
 
         # Check if HOMO&LUMO well defined
-        if self.occupancy.size(dim=-1) <= nocc.max():
+        if self.occupancy.size(dim=-1) <= nocc.max() or (nocc == 0).any():
             raise ValueError('Warning: HOMO&LUMO are not defined properly!')
         else:
             # Mask of HOMO and LUMO
@@ -370,6 +370,42 @@ class Dftb1(Calculator):
                 self.eig_values[mask].view(self.occupancy.size(0), -1)
 
         return homo_lumo
+
+    @property
+    def homo(self) -> Tensor:
+        """Highest occupied energy level in unit hartree"""
+        # Locate HOMO index, spin-unpolarized case with threshold > 1.0
+        i_homo = torch.as_tensor(self.occupancy.gt(1.0),dtype=torch.long).sum(-1) - 1
+
+        # Check if any system is not occupied at all
+        if (i_homo == -1).any():
+            raise ValueError("HOMO is not defined properly!")
+        homo = self.eig_values[i_homo] if self.occupancy.ndim == 1 else\
+            self.eig_values[torch.arange(self.eig_values.size(0)), i_homo]
+
+        return homo
+
+    @property
+    def lumo(self) -> Tensor:
+        """Lowest unoccupied energy level in unit hartree"""
+        # Locate LUMO index, spin-unpolarized case with threshold > 1.0
+        i_lumo = torch.as_tensor(self.occupancy.gt(1.0), dtype=torch.long).sum(-1)
+
+        # Check if any system is fully occupied
+        if self.occupancy.ndim == 1:
+            if self.occupancy.size(dim=-1) <= i_lumo.max():
+                raise ValueError('System is fully occupied. LUMO is not defined properly!')
+        else:
+            # Number of real states in batch
+            n_real = torch.as_tensor(self.orbs.on_atoms != -1, dtype=torch.long).sum(-1)
+            # Check if the last real state is occupied
+            if self.occupancy[torch.arange(self.occupancy.size(0)), n_real - 1].gt(1.0).any():
+                raise ValueError('System is fully occupied. LUMO is not defined properly!')
+
+        lumo = self.eig_values[i_lumo] if self.occupancy.ndim == 1 else\
+            self.eig_values[torch.arange(self.eig_values.size(0)), i_lumo]
+
+        return lumo
 
     @property
     def dos_energy(self, ext=energy_units['ev'], grid=1000) -> Tensor:
@@ -663,7 +699,7 @@ class Dftb2(Calculator):
                 " Valid options are \"direct\", \"last_step\", \"implicit\"")
 
     @property
-    def overlap(self):
+    def overlap(self) -> Tensor:
         """Overlap matrix as constructed by the supplied `s_feed`"""
 
         # Check to see if the overlap matrix has already been constructed. If
@@ -679,7 +715,7 @@ class Dftb2(Calculator):
         self._overlap = value
 
     @property
-    def hamiltonian(self):
+    def hamiltonian(self) -> Tensor:
         """Second order Hamiltonian matrix as produced via the SCC cycle"""
         return self._hamiltonian
 
@@ -688,7 +724,7 @@ class Dftb2(Calculator):
         self._hamiltonian = value
 
     @property
-    def core_hamiltonian(self):
+    def core_hamiltonian(self) -> Tensor:
         """First order core Hamiltonian matrix as built by the `h_feed` entity"""
         if self._core_hamiltonian is None:
             self._core_hamiltonian = self.h_feed.matrix_from_calculator(self)
@@ -700,7 +736,7 @@ class Dftb2(Calculator):
         self._core_hamiltonian = value
 
     @property
-    def gamma(self):
+    def gamma(self) -> Tensor:
         """Gamma matrix constructed via the specified scheme using the Hubbard-U values produced by the `u_feed`"""
         if self._gamma is None:
             self._gamma = build_gamma_matrix(
@@ -713,22 +749,22 @@ class Dftb2(Calculator):
         self._gamma = value
 
     @property
-    def q_zero(self):
+    def q_zero(self) -> Tensor:
         """Initial orbital populations"""
         return self.o_feed(self.orbs)
 
     @property
-    def q_final(self):
+    def q_final(self) -> Tensor:
         """Final orbital populations"""
         return mulliken(self.rho, self.overlap)
 
     @property
-    def q_delta(self):
+    def q_delta(self) -> Tensor:
         """Delta orbital populations"""
         return self.q_final - self.q_zero
 
     @property
-    def q_zero_shells(self):
+    def q_zero_shells(self) -> Tensor:
         """Initial shell-wise populations"""
         return torch.zeros(
             self.orbs.shell_matrix_shape[:-1],
@@ -736,17 +772,17 @@ class Dftb2(Calculator):
             -1, self.orbs.on_shells.clamp(min=0), self.q_zero)
 
     @property
-    def q_final_shells(self):
+    def q_final_shells(self) -> Tensor:
         """Final shell-wise populations"""
         return mulliken(self.rho, self.overlap, self.orbs, 'shell')
 
     @property
-    def q_delta_shells(self):
+    def q_delta_shells(self) -> Tensor:
         """Delta shell-wise populations"""
         return self.q_final_shells - self.q_zero_shells
 
     @property
-    def q_zero_atomic(self):
+    def q_zero_atomic(self) -> Tensor:
         """Initial atomic populations"""
         return torch.zeros(
             self.orbs.atomic_matrix_shape[:-1],
@@ -754,17 +790,17 @@ class Dftb2(Calculator):
             -1, self.orbs.on_atoms.clamp(min=0), self.q_zero)
 
     @property
-    def q_final_atomic(self):
+    def q_final_atomic(self) -> Tensor:
         """Final atomic populations"""
         return mulliken(self.rho, self.overlap, self.orbs, 'atom')
 
     @property
-    def q_delta_atomic(self):
+    def q_delta_atomic(self) -> Tensor:
         """Delta atomic populations"""
         return self.q_final_atomic - self.q_zero_atomic
 
     @property
-    def q_zero_res(self):
+    def q_zero_res(self) -> Tensor:
         """Initial charges, atom or shell resolved according to `OrbitalInfo`"""
         if self.orbs.shell_resolved:
             return self.q_zero_shells
@@ -779,12 +815,12 @@ class Dftb2(Calculator):
         )
 
     @property
-    def n_electrons(self):
+    def n_electrons(self) -> Tensor:
         """Number of electrons"""
         return self.q_zero.sum(-1)
 
     @property
-    def occupancy(self):
+    def occupancy(self) -> Tensor:
         """Occupancies of each state"""
 
         # Note that this scale factor assumes spin-restricted and will need to
@@ -804,7 +840,7 @@ class Dftb2(Calculator):
                 e_mask=self.orbs if self.is_batch else None) * scale_factor
 
     @property
-    def fermi_energy(self):
+    def fermi_energy(self) -> Tensor:
         """Fermi energy"""
         return fermi_search(
             self.eig_values, self.n_electrons, self.filling_temp,
@@ -813,22 +849,22 @@ class Dftb2(Calculator):
             e_mask=self.orbs if self.is_batch else None)
 
     @property
-    def band_energy(self):
+    def band_energy(self) -> Tensor:
         """Band structure energy, including SCC contributions"""
         return torch.einsum('...i,...i->...', self.eig_values, self.occupancy)
 
     @property
-    def core_band_energy(self):
+    def core_band_energy(self) -> Tensor:
         """Core band structure energy, excluding SCC contributions"""
         return (self.rho * self.core_hamiltonian).sum(-1).sum(-1)
 
     @property
-    def band_free_energy(self):
+    def band_free_energy(self) -> Tensor:
         """Band free energy including SCC contributions; i.e. E_band-TS"""
         return self.band_energy - self._get_entropy_term()
 
     @property
-    def core_band_free_energy(self):
+    def core_band_free_energy(self) -> Tensor:
         """Core band free energy, excluding SCC contributions"""
         return self.core_band_energy - self._get_entropy_term()
 
@@ -845,35 +881,35 @@ class Dftb2(Calculator):
             return 1.0
 
     @property
-    def scc_energy(self):
+    def scc_energy(self) -> Tensor:
         """Energy contribution from charge fluctuation via the SCC cycle"""
         q_delta = mulliken(self.rho, self.overlap, self.orbs) - self.q_zero_res
         shifts = torch.einsum('...i,...ij->...j', q_delta, self.gamma)
         return .5 * (shifts * q_delta).sum(-1)
 
     @property
-    def repulsive_energy(self):
+    def repulsive_energy(self) -> Tensor:
         """Repulsive energy; zero in the absence of a repulsive feed"""
         return 0.0 if self.r_feed is None else self.r_feed(self.geometry)
 
     @property
-    def total_energy(self):
+    def total_energy(self) -> Tensor:
         """Total system energy"""
         return self.core_band_energy + self.scc_energy + self.repulsive_energy
 
     @property
-    def mermin_energy(self):
+    def mermin_energy(self) -> Tensor:
         """Mermin free energy; i.e. E_total-TS"""
         return self.core_band_free_energy + self.scc_energy + self.repulsive_energy
 
     @property
-    def homo_lumo(self):
+    def homo_lumo(self) -> Tensor:
         """Highest occupied and lowest unoccupied energy level in unit hartree"""
-        # Number of occupied states
-        nocc = (~(self.occupancy - 0 < 1E-10)).long().sum(-1)
+        # Number of occupied states, spin-unpolarized case with threshold > 1.0
+        nocc = torch.as_tensor(self.occupancy.gt(1.0),dtype=torch.long).sum(-1)
 
         # Check if HOMO&LUMO well defined
-        if self.occupancy.size(dim=-1) <= nocc.max():
+        if self.occupancy.size(dim=-1) <= nocc.max() or (nocc == 0).any():
             raise ValueError('Warning: HOMO&LUMO are not defined properly!')
         else:
             # Mask of HOMO and LUMO
@@ -887,7 +923,43 @@ class Dftb2(Calculator):
         return homo_lumo
 
     @property
-    def dos_energy(self, ext=energy_units['ev'], grid=1000):
+    def homo(self) -> Tensor:
+        """Highest occupied energy level in unit hartree"""
+        # Locate HOMO index, spin-unpolarized case with threshold > 1.0
+        i_homo = torch.as_tensor(self.occupancy.gt(1.0),dtype=torch.long).sum(-1) - 1
+
+        # Check if any system is not occupied at all
+        if (i_homo == -1).any():
+            raise ValueError("HOMO is not defined properly!")
+        homo = self.eig_values[i_homo] if self.occupancy.ndim == 1 else\
+            self.eig_values[torch.arange(self.eig_values.size(0)), i_homo]
+
+        return homo
+
+    @property
+    def lumo(self) -> Tensor:
+        """Lowest unoccupied energy level in unit hartree"""
+        # Locate LUMO index, spin-unpolarized case with threshold > 1.0
+        i_lumo = torch.as_tensor(self.occupancy.gt(1.0), dtype=torch.long).sum(-1)
+
+        # Check if any system is fully occupied
+        if self.occupancy.ndim == 1:
+            if self.occupancy.size(dim=-1) <= i_lumo.max():
+                raise ValueError('System is fully occupied. LUMO is not defined properly!')
+        else:
+            # Number of real states in batch
+            n_real = torch.as_tensor(self.orbs.on_atoms != -1, dtype=torch.long).sum(-1)
+            # Check if the last real state is occupied
+            if self.occupancy[torch.arange(self.occupancy.size(0)), n_real - 1].gt(1.0).any():
+                raise ValueError('System is fully occupied. LUMO is not defined properly!')
+
+        lumo = self.eig_values[i_lumo] if self.occupancy.ndim == 1 else\
+            self.eig_values[torch.arange(self.eig_values.size(0)), i_lumo]
+
+        return lumo
+
+    @property
+    def dos_energy(self, ext=energy_units['ev'], grid=1000) -> Tensor:
         """Energy distribution of (p)DOS in unit hartree"""
         e_min = torch.min(self.eig_values.detach(), dim=-1).values - ext
         e_max = torch.max(self.eig_values.detach(), dim=-1).values + ext
@@ -900,7 +972,7 @@ class Dftb2(Calculator):
         return dos_energy
 
     @property
-    def dos(self):
+    def dos(self) -> Tensor:
         """Electronic density of states"""
         # Mask to remove padding values.
         mask = torch.where(self.eig_values == 0, False, True)
@@ -908,7 +980,7 @@ class Dftb2(Calculator):
         return dos(self.eig_values, self.dos_energy, sigma=sigma, mask=mask)
 
     @property
-    def invr(self):
+    def invr(self) -> Tensor:
         """1/R matrix"""
         if self._invr is None:
             if self.geometry.is_periodic:
