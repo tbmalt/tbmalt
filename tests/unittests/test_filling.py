@@ -12,6 +12,7 @@ from tbmalt.physics.filling import (
 )
 from tbmalt.common.batch import pack
 from tbmalt import OrbitalInfo
+from tbmalt.data.units import energy_units
 
 torch.set_default_dtype(torch.float64)
 
@@ -114,12 +115,46 @@ def Au13(device):
     return e_vals, kt, e_fermi, entropy, n_elec
 
 
+def C2H2Au2S3(device):
+    e_vals = torch.tensor([
+        -0.987192487846079 , -0.755067500432517 , -0.718740328492237 ,
+        -0.615002824127673 , -0.581609056588108 , -0.551168894786602 ,
+        -0.529499312736946 , -0.498221185677    , -0.468659659430246 ,
+        -0.460254834900181 , -0.398404845316599 , -0.396611535992917 ,
+        -0.380288703224315 , -0.359339260983362 , -0.316470391772965 ,
+        -0.297617537232946 , -0.275143304822724 , -0.251287285122712 ,
+        -0.217496568361147 , -0.204094142255113 , -0.180359869436894 ,
+        -0.161631546828628 , -0.11290699776808  , -0.100694317783899 ,
+        -0.0909404285381068, -0.0569858030498251, -0.0486993961507152,
+        -0.0371694747406817, -0.0150911705773435,  0.034405518726878 ,
+         0.0490606998987154,  0.0612253746830881,  0.121887451219501 ,
+         0.13556710264548  ,  0.166296993694998 ,  0.220926348603225 ,
+         0.263000188682991 ,  0.345222806247716 ,  0.375220296624339 ,
+         0.491209146404379 ,  0.53287130028675  ,  0.549914185283576 ,
+         0.603044960763631 ,  0.777314934660492 ,  0.833476780821698 ,
+         0.945514257912041 ,  1.2536201341771   ,  1.36594987786175  ,
+         1.81927811660793  ,  2.21177136066705  ,  2.54362364176528  ,
+         2.67360086135089  ,  3.24056048535204  ,  4.35217999763239  ,
+         5.4891087495364], device=device)
+
+    kt = torch.tensor(1000.0 * energy_units["k"], device=device)
+
+    e_fermi = {'fermi': torch.tensor(-0.0740053108789851, device=device),
+               'gaussian': torch.tensor(-0.073963115793966, device=device)}
+
+    entropy = {'fermi': torch.tensor(0.0004102230283997699 / 2, device=device),
+               'gaussian': torch.tensor(0.0, device=device)}
+
+    n_elec = 50.0
+
+    return e_vals, kt, e_fermi, entropy, n_elec
+
 def _entropy_single(e_func, device):
     """Helper for testing single system performance of entropy functions."""
     e_func_name = e_func.__name__
     ref_data_name = {'fermi_entropy': 'fermi',
                      'gaussian_entropy': 'gaussian'}[e_func_name]
-    molecules = [H2, H2O, CH4, H2COH, Au13]
+    molecules = [H2, H2O, CH4, H2COH, Au13, C2H2Au2S3]
     for mol in molecules:
         e_vals, kt, e_fermi, entropy, _ = mol(device)
         ts = e_func(e_vals, e_fermi[ref_data_name], kt)
@@ -150,13 +185,13 @@ def _entropy_batch(e_func, device):
     """Helper for testing batch system performance of the entropy functions.
 
     Warnings:
-        This function is dependant on `torch.common.batch.pack`.
+        This function is dependent on `torch.common.batch.pack`.
     """
     e_func_name = e_func.__name__
     ref_data_name = {'fermi_entropy': 'fermi',
                      'gaussian_entropy': 'gaussian'}[e_func_name]
 
-    mols = [i(device) for i in [H2, H2O, CH4, H2COH, Au13]]
+    mols = [i(device) for i in [H2, H2O, CH4, H2COH, Au13, C2H2Au2S3]]
     e_vals, mask = pack([i[0] for i in mols], return_mask=True)
     kt = torch.stack([i[1] for i in mols])
     ef = torch.stack([i[2][ref_data_name] for i in mols])
@@ -182,8 +217,10 @@ def _entropy_batch(e_func, device):
 
     # Check 4: ensure a `orbs` object can be used inplace of an e_mask
     orbs = OrbitalInfo(
-        [torch.tensor(i) for i in [[1, 1], [8, 1, 1], [6, 1, 1, 1, 1], [1, 1, 1, 6, 8], [79] * 13]],
-        {1: [0], 6: [0, 1], 8: [0, 1], 79: [0, 1, 2]})
+        [torch.tensor(i) for i in
+         [[1, 1], [8, 1, 1], [6, 1, 1, 1, 1],
+          [1, 1, 1, 6, 8], [79] * 13, [1, 6, 16, 79, 16, 79, 16, 6, 1]]],
+        {1: [0], 6: [0, 1], 8: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]})
 
     res_a = e_func(e_vals, ef, 0.0036749, e_mask=mask)
     res_b = e_func(e_vals, ef, 0.0036749, e_mask=orbs)
@@ -202,7 +239,7 @@ def _entropy_grad(e_func, device):
     ref_data_name = {'fermi_entropy': 'fermi',
                      'gaussian_entropy': 'gaussian'}[e_func_name]
 
-    molecules = [H2, H2O, CH4, H2COH, Au13]
+    molecules = [H2, H2O, CH4, H2COH, Au13, C2H2Au2S3]
     for mol in molecules:
         e_vals, kt, e_fermi, *_ = mol(device)
         e_vals.requires_grad = True
@@ -346,7 +383,7 @@ def test_fermi_smearing_batch(device):
 @pytest.mark.grad
 def test_fermi_smearing_grad(device):
     """`fermi_smearing` gradient stability test."""
-    molecules = [H2, H2O, CH4, H2COH, Au13]
+    molecules = [H2, H2O, CH4, H2COH, Au13, C2H2Au2S3]
     for mol in molecules:
         e_vals, kt, e_fermi, *_ = mol(device)
         e_vals.requires_grad = True
@@ -488,7 +525,7 @@ def test_gaussian_smearing_batch(device):
 @pytest.mark.grad
 def test_gaussian_smearing_grad(device):
     """`gaussian_smearing` gradient stability test."""
-    molecules = [H2, H2O, CH4, H2COH, Au13]
+    molecules = [H2, H2O, CH4, H2COH, Au13, C2H2Au2S3]
     for mol in molecules:
         e_vals, kt, e_fermi, *_ = mol(device)
         e_vals.requires_grad = True
@@ -566,7 +603,7 @@ def test_fermi_search_general(device):
 
 def test_fermi_search_single(device):
     """Check single system performance of the `fermi_search` function."""
-    molecules = [H2, H2O, CH4, H2COH, Au13]
+    molecules = [H2, H2O, CH4, H2COH, Au13, C2H2Au2S3]
 
     for scheme in [fermi_smearing, gaussian_smearing]:
         # Ensure all test systems converge to the anticipated value. Both
@@ -601,13 +638,13 @@ def test_fermi_search_batch(device):
     """Check batch system performance of the `fermi_search` function.
 
     Warnings:
-        This function is dependant on `torch.common.batch.pack`.
+        This function is dependent on `torch.common.batch.pack`.
     """
 
     # Ensure all test systems converge to the anticipated value. Both
     # fermi & gaussian schemes are tested here. Some molecules converge at the
     # middle-gap approximation while others require a full bisection search.
-    mols = [i(device) for i in [H2, H2O, CH4, H2COH, Au13]]
+    mols = [i(device) for i in [H2, H2O, CH4, H2COH, Au13, C2H2Au2S3]]
     e_vals, mask = pack([i[0] for i in mols], return_mask=True)
     kt = torch.stack([i[1] for i in mols])
     n_elec = torch.tensor([i[4] for i in mols], device=device)
@@ -644,6 +681,29 @@ def test_fermi_search_batch(device):
             e_mask=torch.full_like(e_vals.unsqueeze(0), True, dtype=bool))
         check_4 = torch.allclose(e_fermi, e_fermi_ref['fermi'])
         assert check_4, 'Failed to converge batch of size one'
+
+
+def fermi_search_grad_helper(scheme, device):
+    """Test the gradient stability of the `grad_search` method."""
+
+    args = (1E-10, 200, None, None, 1E-5)
+
+    molecules = [H2, H2O, CH4, H2COH, Au13, C2H2Au2S3]
+    for mol in molecules:
+        e_vals, kt, _, _, n_elec = mol(device)
+        e_vals.requires_grad = True
+        check_1 = gradcheck(
+            fermi_search, (e_vals, n_elec, kt, scheme, *args), raise_exception=False)
+
+        assert check_1, (f'`fermi_search` function gradient check failed on '
+                         f'{mol.__name__} with smearing method {scheme.__name__}')
+
+def test_fermi_search_grad_fermi(device):
+    fermi_search_grad_helper(fermi_smearing, device)
+
+
+def test_fermi_search_grad_gaussian(device):
+    fermi_search_grad_helper(gaussian_smearing, device)
 
 
 #################

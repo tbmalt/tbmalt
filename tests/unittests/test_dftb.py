@@ -6,9 +6,10 @@ from ase.build import molecule
 
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.physics.dftb import Dftb1, Dftb2
-from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed
+from tbmalt.physics.dftb.feeds import SkFeed, SkfOccupationFeed, HubbardFeed, PairwiseRepulsiveEnergyFeed
 from tbmalt.common.maths.interpolation import CubicSpline
 from tbmalt.common.batch import pack
+from tbmalt.data.units import length_units, energy_units
 
 
 torch.set_default_dtype(torch.float64)
@@ -22,35 +23,38 @@ torch.set_default_dtype(torch.float64)
 
 @pytest.fixture(scope="session")
 def shell_resolved_feeds(device, skf_file):
-    species = [1, 6, 8, 79]
+    species = [1, 6, 8, 16, 79]
     h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
     s_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
+    r_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species)
 
-    return h_feed, s_feed, o_feed
+    return h_feed, s_feed, o_feed, r_feed
 
 
 @pytest.fixture(scope="session")
 def shell_resolved_feeds_scc(device, skf_file):
-    species = [1, 6, 8]
+    species = [1, 6, 8, 16, 79]
     h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
     s_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file, species, device=device)
+    r_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species)
 
-    return h_feed, s_feed, o_feed, u_feed
+    return h_feed, s_feed, o_feed, u_feed, r_feed
 
 @pytest.fixture(scope="session")
 def shell_resolved_feeds_scc_spline(device, skf_file):
-    species = [1, 6, 8]
+    species = [1, 6, 8, 16, 79]
     h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian',
                                   interpolation=CubicSpline, device=device)
     s_feed = SkFeed.from_database(skf_file, species, 'overlap',
                                   interpolation=CubicSpline, device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file, species, device=device)
+    r_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species)
 
-    return h_feed, s_feed, o_feed, u_feed
+    return h_feed, s_feed, o_feed, u_feed, r_feed
 
 
 def H2(device):
@@ -363,6 +367,232 @@ def CH3O_scc(device, **kwargs):
     return geometry, orbs, results, kwargs
 
 
+def C2H2Au2S3(device):
+    geometry = Geometry(
+        torch.tensor([1, 6, 16, 79, 16, 79, 16, 6, 1], device=device),
+        torch.tensor([
+            [+0.00, +0.00, +0.00],
+            [-0.03, +0.83, +0.86],
+            [-0.65, +1.30, +1.60],
+            [+0.14, +1.80, +2.15],
+            [-0.55, +0.42, +2.36],
+            [+0.03, +2.41, +3.46],
+            [+1.12, +1.66, +3.23],
+            [+1.10, +0.97, +0.86],
+            [+0.19, +0.93, +4.08]],
+            device=device) * length_units['angstrom'])
+
+    orbs = OrbitalInfo(
+        geometry.atomic_numbers,
+        {1: [0], 6: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}, shell_resolved=False)
+
+    results = {
+        'q_final': torch.tensor([
+            1.20493197229692  , 1.13462271598471  , 0.844332403085989 ,
+            0.796411194899378 , 1.03473386642083  , 1.51668144549913  ,
+            1.09514165783071  , 1.04275884293704  , 1.22891039080861  ,
+            0.6355824824256   , 0.473136042489927 , 0.690761228993347 ,
+            0.436693968940964 , 0.878547177952614 , 0.831412109521615 ,
+            0.086554568835615 , 0.484813914981358 , 0.076708282036185 ,
+            1.06220663525494  , 1.11075857597209  , 1.05809995728788  ,
+            1.02971096378076  , 1.19894434158558  , 1.5830284406461   ,
+            1.20097323265913  , 1.12809232884867  , 1.20058760266199  ,
+            0.261304813384448 , 0.189254608365394 , 0.0682774812169282,
+            0.263388086274139 , 0.325900020324457 , 1.16364993109517  ,
+            0.585593007716899 , 0.388114955140127 , 0.694911711783474 ,
+            1.33763079175392  , 1.24528244638987  , 1.36307125798196  ,
+            1.12025241192984  , 1.2670069225574   , 1.76381853867599  ,
+            1.24329747884424  , 1.27317735588784  , 1.33399602651053  ,
+            0.395586430465433 , 0.337987466610537 , 0.634859101952917 ,
+            0.40158349559581  , 0.462959222300975 , 1.63813383830781  ,
+            1.33092480632022  , 1.5445693946983   , 1.3931412778365   ,
+            0.907190775441183 ],
+            device=device),
+
+        'q_delta_atomic': -torch.tensor([
+            -0.204931972296923, 0.189899819609094, -1.99821323787794,
+            4.06079065074397, -0.220806614381254, 1.83448656365134,
+            -1.84726511684427, -1.90676931716283, 0.0928092245588166],
+            device=device),
+
+        'n_electrons': torch.tensor(50., device=device),
+
+        'occupancy': torch.tensor([
+            2.00000000000000e+00, 2.00000000000000e+00, 2.00000000000000e+00,
+            2.00000000000000e+00, 2.00000000000000e+00, 2.00000000000000e+00,
+            2.00000000000000e+00, 2.00000000000000e+00, 2.00000000000000e+00,
+            2.00000000000000e+00, 2.00000000000000e+00, 2.00000000000000e+00,
+            2.00000000000000e+00, 2.00000000000000e+00, 2.00000000000000e+00,
+            2.00000000000000e+00, 2.00000000000000e+00, 2.00000000000000e+00,
+            2.00000000000000e+00, 2.00000000000000e+00, 1.99999999999999e+00,
+            1.99999999999808e+00, 1.99999075126636e+00, 1.99956265284518e+00,
+            1.99052673371221e+00, 9.22530315369277e-03, 6.76784552943975e-04,
+            1.77578146963361e-05, 1.66568428513316e-08, 2.71429446111203e-15,
+            2.65373363423208e-17, 0.00000000000000e+00, 0.00000000000000e+00,
+            0.00000000000000e+00, 0.00000000000000e+00, 0.00000000000000e+00,
+            0.00000000000000e+00, 0.00000000000000e+00, 0.00000000000000e+00,
+            0.00000000000000e+00, 0.00000000000000e+00, 0.00000000000000e+00,
+            0.00000000000000e+00, 0.00000000000000e+00, 0.00000000000000e+00,
+            0.00000000000000e+00, 0.00000000000000e+00, 0.00000000000000e+00,
+            0.00000000000000e+00, 0.00000000000000e+00, 0.00000000000000e+00,
+            0.00000000000000e+00, 0.00000000000000e+00, 0.00000000000000e+00,
+            0.00000000000000e+00],
+            device=device),
+
+        'eig_values': torch.tensor([
+            -0.98719248784608, -0.755067500432517, -0.718740328492238,
+            -0.615002824127673, -0.581609056588108, -0.551168894786601,
+            -0.529499312736947, -0.498221185677, -0.468659659430246,
+            -0.460254834900181, -0.3984048453166, -0.396611535992917,
+            -0.380288703224315, -0.359339260983362, -0.316470391772965,
+            -0.297617537232946, -0.275143304822724, -0.251287285122712,
+            -0.217496568361147, -0.204094142255113, -0.180359869436895,
+            -0.161631546828628, -0.11290699776808, -0.100694317783899,
+            -0.0909404285381061, -0.0569858030498254, -0.0486993961507148,
+            -0.0371694747406818, -0.0150911705773441, 0.0344055187268782,
+            0.0490606998987161, 0.0612253746830876, 0.121887451219501,
+            0.13556710264548, 0.166296993694998, 0.220926348603225,
+            0.263000188682991, 0.345222806247715, 0.375220296624338,
+            0.491209146404378, 0.53287130028675, 0.549914185283575,
+            0.603044960763631, 0.777314934660493, 0.833476780821698,
+            0.945514257912039, 1.2536201341771, 1.36594987786175,
+            1.81927811660793, 2.21177136066705, 2.54362364176528,
+            2.67360086135088, 3.24056048535203, 4.35217999763239,
+            5.48910874953639],
+            device=device),
+        'band_energy': torch.tensor(-19.8170583860, device=device),
+        'band_free_energy': torch.tensor(-19.8174686090, device=device),
+        'fermi_energy': torch.tensor(-0.07400531086751, device=device),
+        "forces": torch.tensor([
+            [-0.749391582324718E-001, -0.516912418552248E-001, -0.335743591325048E-001],
+            [0.831647280422837E+000, -0.125139212219401E+001, -0.209779264360306E+001],
+            [-0.637073821563001E+001, 0.518800102814776E+000, -0.404302089296334E+001],
+            [0.150620843767531E+002, -0.575680799097071E+002, -0.131291466335776E+003],
+            [-0.486693506249431E+000, -0.389519438878478E+001, 0.253306754778838E+001],
+            [-0.134408795916968E+002, 0.639451719960615E+002, 0.134096701341061E+003],
+            [0.370046722228024E+001, -0.171646555268872E+001, 0.102774668854702E+001],
+            [0.785144228667050E+000, 0.430602325028538E-001, -0.219906073368619E+000],
+            [-0.609263631450042E-002, -0.242091161492522E-001, 0.282447274473613E-001]],
+            device=device)
+    }
+
+    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 1000 * energy_units["k"]}
+
+    return geometry, orbs, results, kwargs
+
+
+def C2H2Au2S3_scc_shell_resolved(device, **kwargs):
+    geometry = Geometry(
+        torch.tensor([1, 6, 16, 79, 16, 79, 16, 6, 1], device=device),
+        torch.tensor([
+            [+0.00, +0.00, +0.00],
+            [-0.03, +0.83, +0.86],
+            [-0.65, +1.30, +1.60],
+            [+0.14, +1.80, +2.15],
+            [-0.55, +0.42, +2.36],
+            [+0.03, +2.41, +3.46],
+            [+1.12, +1.66, +3.23],
+            [+1.10, +0.97, +0.86],
+            [+0.19, +0.93, +4.08]],
+            device=device) * length_units['angstrom'])
+
+    orbs = OrbitalInfo(
+        geometry.atomic_numbers,
+        {1: [0], 6: [0, 1], 16: [0, 1, 2], 79: [0, 1, 2]}, shell_resolved=True)
+
+    results = {
+        "q_final": torch.tensor([
+            0.67654142, 1.08486647, 0.85550498, 0.80565602, 1.0112696,
+            1.50214312, 1.04614218, 1.00795877, 1.19786577, 0.66255138,
+            0.35257707, 0.63006515, 0.42013636, 0.77839266, 0.91537763,
+            0.2213426, 0.59255609, 0.25605547, 1.30956478, 1.3348781,
+            1.27876624, 1.2370813, 1.37424568, 1.52522985, 1.12232327,
+            1.1350371, 1.0782733, 0.21274177, 0.14781465, 0.06291864,
+            0.26805471, 0.25715929, 1.32908481, 0.84377915, 0.83082398,
+            0.88212269, 1.51634944, 1.43162058, 1.56935861, 1.29414482,
+            1.4554588, 1.68750498, 1.13995908, 1.15243078, 1.33245801,
+            0.28696616, 0.22674734, 0.53215371, 0.34565255, 0.39388461,
+            1.55556824, 0.86637218, 0.83199285, 1.31459227, 0.81988295],
+            device=device),
+
+        "q_delta_atomic": torch.tensor([
+            -0.32345858, -0.24270292, 1.59783246, -2.48013212,
+            -0.19044742, 0.15274288, 1.09775721, 0.56852554,
+            -0.18011705], device=device),
+
+        "n_electrons": torch.tensor(50., device=device),
+
+        "occupancy": torch.tensor([
+            2.00000000e+00, 2.00000000e+00, 2.00000000e+00,
+            2.00000000e+00, 2.00000000e+00, 2.00000000e+00,
+            2.00000000e+00, 2.00000000e+00, 2.00000000e+00,
+            2.00000000e+00, 2.00000000e+00, 2.00000000e+00,
+            2.00000000e+00, 2.00000000e+00, 2.00000000e+00,
+            2.00000000e+00, 2.00000000e+00, 2.00000000e+00,
+            2.00000000e+00, 2.00000000e+00, 2.00000000e+00,
+            2.00000000e+00, 1.99999980e+00, 1.99900325e+00,
+            1.99324971e+00, 7.73611183e-03, 1.06707611e-05,
+            4.50682492e-07, 4.05800535e-09, 2.48660154e-15,
+            8.37591592e-17, 0.00000000e+00, 0.00000000e+00,
+            0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
+            0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
+            0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
+            0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
+            0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
+            0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
+            0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
+            0.00000000e+00], device=device),
+
+        "eig_values": torch.tensor([
+            -1.08763546e+00, -9.59184740e-01, -8.96361203e-01,
+            -8.12723674e-01, -7.83820053e-01, -7.62355501e-01,
+            -7.13401358e-01, -6.78036193e-01, -6.70717817e-01,
+            -6.46615216e-01, -5.95275684e-01, -5.61077929e-01,
+            -5.54205142e-01, -5.22526454e-01, -5.05123121e-01,
+            -4.40906591e-01, -4.25309072e-01, -3.85420269e-01,
+            -3.72342200e-01, -3.52133479e-01, -3.21402174e-01,
+            -3.06710895e-01, -2.69461962e-01, -2.42480527e-01,
+            -2.36413797e-01, -2.00821755e-01, -1.79952387e-01,
+            -1.69930985e-01, -1.55015058e-01, -1.09712861e-01,
+            -9.89750560e-02, -7.44223485e-02, -3.12477213e-02,
+            3.97651623e-05, 2.96690675e-02, 6.02784128e-02,
+            1.19193352e-01, 1.81604143e-01, 1.96302560e-01,
+            2.89377300e-01, 3.43717165e-01, 4.05955076e-01,
+            4.34074326e-01, 6.31861408e-01, 6.68596651e-01,
+            7.60848342e-01, 1.06129177e+00, 1.17044580e+00,
+            1.63875300e+00, 2.03534952e+00, 2.37920070e+00,
+            2.58371368e+00, 3.11107786e+00, 4.20065886e+00,
+            5.36695888e+00], device=device),
+
+        "band_energy": torch.tensor(-28.20299899, device=device),
+
+        "band_free_energy": torch.tensor(-28.20333018, device=device),
+
+        "fermi_energy": torch.tensor(-0.21840115, device=device),
+
+        "core_band_energy": torch.tensor(-19.53595114, device=device),
+
+        "scc_energy": torch.tensor(0.38704863, device=device),
+
+        "forces": torch.tensor([
+            [-0.768570565945235E-002, 0.165461755251122E-001, 0.191259812913961E-001],
+            [0.877525179029132E+000, -0.125340265754743E+001, -0.214684422711289E+001],
+            [-0.627530957477631E+001, 0.448177311367216E+000, -0.406489479648862E+001],
+            [0.150363435936628E+002, -0.575803556144893E+002, -0.131566535666305E+003],
+            [-0.519881791466917E+000, -0.392779070164481E+001, 0.251457558440645E+001],
+            [-0.135008161740681E+002, 0.641406845774896E+002, 0.134440407394698E+003],
+            [0.376874377630409E+001, -0.175327221038935E+001, 0.100167850432796E+001],
+            [0.620049488553122E+000, -0.545052740063522E-001, -0.229404114908889E+000],
+            [0.103120842165631E-002, -0.360816063046627E-001, 0.318913400914295E-001]],
+            device=device)
+
+    }
+
+    kwargs = {'filling_scheme': 'fermi', 'filling_temp': 1000 * energy_units["k"]}
+
+    return geometry, orbs, results, kwargs
+
+
 def C_wire_scc(device, **kwargs):
     """This test mainly tests polynomial to zero part."""
     shell_resolved = kwargs.get('shell_resolved', False)
@@ -653,13 +883,14 @@ def merge_systems(device, *systems):
 def merge_systems_shell_resolved(device, *systems):
     """Combine multiple test systems into a batch."""
 
-    geometry, orbs, results, kwargs = systems[0](device, shell_resolved=True)
+    geometry, orbs, results, kwargs = systems[0](
+        device, shell_resolved=True)
 
     results = {k: [v] for k, v in results.items()}
 
     for system in systems[1:]:
-        t_geometry, t_orbs, t_results, t_kwargs = system(device,
-                                                          shell_resolved=True)
+        t_geometry, t_orbs, t_results, t_kwargs = system(
+            device, shell_resolved=True)
 
         assert t_kwargs == kwargs, 'Test systems with different settings ' \
                                    'cannot be used together'
@@ -676,11 +907,11 @@ def merge_systems_shell_resolved(device, *systems):
 
 
 def test_dftb1_general(device, shell_resolved_feeds):
-    h_feed, s_feed, o_feed = shell_resolved_feeds
+    h_feed, s_feed, o_feed, r_feed = shell_resolved_feeds
     geometry, orbs, results, kwargs = CH3O(device)
 
     # Instantiate a blank calculator
-    calculator = Dftb1(h_feed, s_feed, o_feed, **kwargs)
+    calculator = Dftb1(h_feed, s_feed, o_feed, r_feed, **kwargs)
 
     # SECTION 1: Attributes
 
@@ -755,9 +986,12 @@ def dftb1_helper(calculator, geometry, orbs, results):
     # TODO: check hamiltonian matrix
     # TODO: check overlap matrix
 
-    def check_allclose(i):
+    def check_allclose(i, optional=False):
+        if optional and i not in results:
+            return None
+
         predicted = getattr(calculator, i)
-        is_close = torch.allclose(predicted, results[i])
+        is_close = torch.allclose(predicted, results[i], atol=1E-7)
         assert is_close, f'Attribute {i} is in error for system {geometry}'
         if isinstance(predicted, torch.Tensor):
             device_check = predicted.device == calculator.device
@@ -778,6 +1012,8 @@ def dftb1_helper(calculator, geometry, orbs, results):
 
     check_allclose('eig_values')
 
+    check_allclose("forces", True)
+
     # Rho is not tested here as it is used to construct other properties and so
     # any errors should be caught elsewhere.
 
@@ -796,35 +1032,48 @@ def dftb2_helper(calculator, geometry, orbs, results):
     # TODO: check hamiltonian matrix
     # TODO: check overlap matrix
 
-    def check_allclose(i):
+    def check_allclose(i, optional=False):
+        if optional and i not in results:
+            return None
         predicted = getattr(calculator, i)
-        is_close = torch.allclose(predicted, results[i])
+        is_close = torch.allclose(predicted, results[i], atol=1E-7)
+
         assert is_close, f'Attribute {i} is in error for system {geometry}'
         if isinstance(predicted, torch.Tensor):
             device_check = predicted.device == calculator.device
             assert device_check, f'Attribute {i} was returned on the wrong device'
 
-    check_allclose('q_final_atomic')
+    check_allclose('q_final_atomic', True)
     check_allclose('band_energy')
     check_allclose('core_band_energy')
     check_allclose('scc_energy')
 
+    check_allclose("q_final", True)
+    check_allclose("n_electrons", True)
+    check_allclose("occupancy", True)
+    check_allclose("eig_values", True)
+    check_allclose("band_free_energy", True)
+    check_allclose("fermi_energy", True)
+    check_allclose("q_delta_atomic", True)
+    check_allclose("forces", True)
 
 def test_dftb1_single(device, shell_resolved_feeds):
-    h_feed, s_feed, o_feed = shell_resolved_feeds
+    h_feed, s_feed, o_feed, r_feed = shell_resolved_feeds
 
-    systems = [H2, H2O, CH4, CH3O, Au13]
+    systems = [H2, H2O, CH4, CH3O, Au13, C2H2Au2S3]
 
     for system in systems:
         geometry, orbs, results, kwargs = system(device)
+        if "forces" in results:
+            geometry.positions.requires_grad = True
 
-        calculator = Dftb1(h_feed, s_feed, o_feed, **kwargs)
+        calculator = Dftb1(h_feed, s_feed, o_feed, r_feed, **kwargs)
 
         dftb1_helper(calculator, geometry, orbs, results)
 
 
 def test_dftb1_batch(device, shell_resolved_feeds):
-    h_feed, s_feed, o_feed = shell_resolved_feeds
+    h_feed, s_feed, o_feed, r_feed = shell_resolved_feeds
 
     batches = [[H2], [H2, H2O], [H2, Au13], [Au13, H2],
                [H2, H2O, CH4, CH3O, Au13], [Au13, CH3O, CH4, H2, H2O]]
@@ -832,27 +1081,27 @@ def test_dftb1_batch(device, shell_resolved_feeds):
     for batch in batches:
         geometry, orbs, results, kwargs = merge_systems(device, *batch)
 
-        calculator = Dftb1(h_feed, s_feed, o_feed, **kwargs)
+        calculator = Dftb1(h_feed, s_feed, o_feed, r_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
 
         dftb1_helper(calculator, geometry, orbs, results)
 
 
 def test_dftb2_single(device, shell_resolved_feeds_scc):
-    h_feed, s_feed, o_feed, u_feed = shell_resolved_feeds_scc
+    h_feed, s_feed, o_feed, u_feed, r_feed = shell_resolved_feeds_scc
 
     systems = [H2_scc, H2O_scc, CH4_scc, CH3O_scc, C_wire_scc]
 
     for system in systems:
         geometry, orbs, results, kwargs = system(device)
 
-        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
+        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, r_feed, **kwargs)
 
         dftb2_helper(calculator, geometry, orbs, results)
 
 
 def test_dftb2_batch(device, shell_resolved_feeds_scc):
-    h_feed, s_feed, o_feed, u_feed = shell_resolved_feeds_scc
+    h_feed, s_feed, o_feed, u_feed, r_feed = shell_resolved_feeds_scc
 
     batches = [[H2_scc], [H2_scc, CH3O_scc, C_wire_scc],
                [H2_scc, H2O_scc, CH4_scc, CH3O_scc, C_wire_scc]]
@@ -860,43 +1109,45 @@ def test_dftb2_batch(device, shell_resolved_feeds_scc):
     for batch in batches:
         geometry, orbs, results, kwargs = merge_systems(device, *batch)
 
-        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
+        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, r_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
 
         dftb2_helper(calculator, geometry, orbs, results)
 
 
 def test_dftb2_single_shell_resolved(device, shell_resolved_feeds_scc):
-    h_feed, s_feed, o_feed, u_feed = shell_resolved_feeds_scc
+    h_feed, s_feed, o_feed, u_feed, r_feed = shell_resolved_feeds_scc
 
-    systems = [H2_scc, H2O_scc, CH4_scc, CH3O_scc, C_wire_scc]
+    systems = [H2_scc, H2O_scc, CH4_scc, CH3O_scc, C_wire_scc, C2H2Au2S3_scc_shell_resolved]
 
     for system in systems:
         geometry, orbs, results, kwargs = system(device, shell_resolved=True)
+        if "forces" in results:
+            geometry.positions.requires_grad = True
 
-        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
+        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, r_feed, **kwargs)
 
         dftb2_helper(calculator, geometry, orbs, results)
 
 
 def test_dftb2_batch_shell_resolved(device, shell_resolved_feeds_scc):
-    h_feed, s_feed, o_feed, u_feed = shell_resolved_feeds_scc
+    h_feed, s_feed, o_feed, u_feed, r_feed = shell_resolved_feeds_scc
 
     batches = [[H2_scc], [H2_scc, CH3O_scc, C_wire_scc],
                [H2_scc, H2O_scc, CH4_scc, CH3O_scc, C_wire_scc]]
 
     for batch in batches:
-        geometry, orbs, results, kwargs = merge_systems_shell_resolved(device,
-                                                                        *batch)
+        geometry, orbs, results, kwargs = merge_systems_shell_resolved(
+            device,*batch)
 
-        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
+        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, r_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
 
         dftb2_helper(calculator, geometry, orbs, results)
 
 
 def test_dftb2_batch_spl(device, shell_resolved_feeds_scc_spline):
-    h_feed, s_feed, o_feed, u_feed = shell_resolved_feeds_scc_spline
+    h_feed, s_feed, o_feed, u_feed, r_feed = shell_resolved_feeds_scc_spline
 
     batches = [[H2_scc], [H2_scc, CH3O_scc, C_wire_scc],
                [H2_scc, H2O_scc, CH4_scc, CH3O_scc, C_wire_scc]]
@@ -904,7 +1155,7 @@ def test_dftb2_batch_spl(device, shell_resolved_feeds_scc_spline):
     for batch in batches:
         geometry, orbs, results, kwargs = merge_systems(device, *batch)
 
-        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, **kwargs)
+        calculator = Dftb2(h_feed, s_feed, o_feed, u_feed, r_feed, **kwargs)
         assert calculator.device == device, 'Calculator is on the wrong device'
 
         dftb2_helper(calculator, geometry, orbs, results)
