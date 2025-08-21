@@ -25,21 +25,26 @@ def molecules(device) -> List[Geometry]:
     Returns:
         geometries: A list of `Geometry` objects.
     """
-    H2 = Geometry(torch.tensor([1, 1], device=device),
-                  torch.tensor([
-                      [+0.00, +0.00, +0.37],
-                      [+0.00, +0.00, -0.37]],
-                      requires_grad=True,
-                      device=device),
-                  units='angstrom')
+    H2 = Geometry(
+        torch.tensor([1, 1], device=device),
+        torch.tensor([
+            [+0.00, +0.00, +0.37],
+            [+0.00, +0.00, -0.37]],
+            requires_grad=True,
+            device=device),
+            units='angstrom')
 
-    H2O = Geometry(torch.tensor([8, 1, 1], device=device),
-               torch.tensor([[0.0, 0.0, 0.0],
-                             [0.0, 0.8, -0.5],
-                             [0.0, -0.8, -0.5]],
-                            requires_grad=True,
-                            device=device),
-               units='angstrom')
+    H2O = Geometry(
+        torch.tensor([8, 1, 1], device=device),
+        torch.tensor([
+            [0.0, 0.0, 0.0],
+            [0.0, 0.8, -0.5],
+            [0.0, -0.8, -0.5]],
+            requires_grad=True,
+            device=device),
+            units='angstrom')
+
+
     return [H2, H2O]
 
 species = [1, 8]

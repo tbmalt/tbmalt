@@ -305,7 +305,7 @@ class _SymEigB(torch.autograd.Function):
         and eigenvectors were taken.
 
         Arguments:
-            w_bar: Gradients associated with the the eigenvalues.
+            w_bar: Gradients associated with the eigenvalues.
             v_bar: Gradients associated with the eigenvectors.
 
         Returns:
