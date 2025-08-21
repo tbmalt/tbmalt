@@ -12,7 +12,7 @@ tight binding theory....
 
 .. toctree::
    :numbered:
-   :maxdepth: 1
+   :maxdepth: 2
    :caption: Table of Contents
    :name: mastertoc
 

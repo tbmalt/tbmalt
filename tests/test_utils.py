@@ -7,10 +7,10 @@ This module should be imported as:
 This ensures that the default dtype and autograd anomaly detection settings
 are all inherited.
 """
-
 import numpy as np
 import torch
 import functools
+
 
 
 def fix_seed(func):
@@ -50,7 +50,7 @@ def clean_zero_padding(m, sizes):
     small perturbations are induced in the input data. However, problems are
     encountered when these perturbations occur in the padding values. These
     values should always be zero, and so the test is not truly representative.
-    Furthermore, this can even prevent certain tests from running. Thus this
+    Furthermore, this can even prevent certain tests from running. Thus, this
     function serves to remove such perturbations in a gradient safe manner.
 
     Note that this is intended to operate on 3D matrices where. Specifically a

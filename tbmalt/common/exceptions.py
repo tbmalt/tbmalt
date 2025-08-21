@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Custom TBMaLT exceptions."""
+from typing import Optional
 import torch
 from torch import Tensor
 
@@ -19,7 +20,7 @@ class TbmaltError(Exception):
 
 
 class ConvergenceError(TbmaltError):
-    """Raised whenever an failure to converge is encountered.
+    """Raised whenever a failure to converge is encountered.
 
     This is raise wherever a failure to converge is encountered. Most commonly
     during the SCC/SCF cycles or the fermi-level search.
@@ -35,10 +36,13 @@ class ConvergenceError(TbmaltError):
         failed to converge can be identified form the failure mask attribute.
     """
 
-    def __init__(self, msg: str, failure_mask: Tensor):
+    def __init__(self, msg: str, failure_mask: Optional[Tensor] = None):
         self.failure_mask = failure_mask
         super().__init__(msg)
 
     def __str__(self):
-        msk = torch.atleast_1d(self.failure_mask)
-        return self.msg + f' ({msk.count_nonzero()}/{(len(msk))} failed)'
+        if self.failure_mask is not None:
+            msk = torch.atleast_1d(self.failure_mask)
+            return self.msg + f' ({msk.count_nonzero()}/{(len(msk))} failed)'
+        else:
+            return self.msg

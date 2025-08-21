@@ -3,7 +3,7 @@
 Definition of the global core Hamiltonian parameters.
 
 The core Hamiltonian is rescaling the shell-blocks of the overlap integrals
-formed over the basis set by the average of the atomic self-energies and an
+formed over the orbs set by the average of the atomic self-energies and an
 additional distance dependent function formed from the element parametrization.
 """
 

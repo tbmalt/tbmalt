@@ -14,8 +14,8 @@ be abandoned in favor of the other. Thus, all mixing instances require the
 user to explicitly state whether they are operating on a single system or on a
 batch of systems.
 """
-from typing import Union, Optional
-from numbers import Real
+from typing import Union, Optional, List
+from numpy import prod
 from abc import ABC, abstractmethod
 from functools import wraps
 import warnings
@@ -23,7 +23,7 @@ import torch
 from torch import Tensor
 
 
-class _Mixer(ABC):
+class Mixer(ABC):
     """This is the abstract base class upon which all mixers are to be based.
 
     This abstract base class provides the template on which all mixers are to
@@ -35,10 +35,10 @@ class _Mixer(ABC):
             for a system to be considered "converged". [DEFAULT=1E-6]
 
     """
-    def __init__(self, is_batch: bool, tolerance: Real = 1E-6):
+    def __init__(self, is_batch: bool, tolerance: float = 1E-6):
         self.tolerance = tolerance
 
-        self._is_batch = is_batch
+        self.is_batch = is_batch
 
         # Integer tracking the number of mixing iterations performed thus far.
         self._step_number: int = 0
@@ -114,7 +114,7 @@ class _Mixer(ABC):
         return self._step_number
 
     @property
-    def converged(self) -> Union[Tensor, bool]:
+    def converged(self) -> Tensor:
         """Tensor of bools indicating convergence status of the system(s).
 
         A system is considered to have converged if the maximum absolute
@@ -126,7 +126,7 @@ class _Mixer(ABC):
         # Check that mixing has been conducted
         assert self._delta is not None, 'Nothing has been mixed'
 
-        if not self._is_batch:  # If not in batch mode
+        if not self.is_batch:  # If not in batch mode
             return self._delta.abs().max() < self.tolerance
         else:  # If operating in batch mode
             if self._delta.dim() == 1:
@@ -152,7 +152,8 @@ class _Mixer(ABC):
         pass
 
     @abstractmethod
-    def cull(self, cull_list: Tensor):
+    def cull(self, cull_list: Tensor,
+             new_size: Optional[Union[torch.Size, List[int]]] = None):
         """Purge select systems form the mixer.
 
         This is useful when a subset of systems have converged during mixing.
@@ -160,6 +161,10 @@ class _Mixer(ABC):
         Arguments:
             cull_list: Tensor with booleans indicating which systems should be
                 culled (True) and which should remain (False).
+
+            new_size: New anticipated size of future inputs excluding the batch
+                dimension. This is used to allow superfluous padding values to
+                be removed form subsequent inputs.
 
         """
         # This code should carry out all the operations necessary to remove a
@@ -170,7 +175,7 @@ class _Mixer(ABC):
         pass
 
 
-class Simple(_Mixer):
+class Simple(Mixer):
     r"""Simple linear mixer mixing algorithm.
 
     Iteratively mixes pairs of systems via a simple linear combination:
@@ -216,11 +221,11 @@ class Simple(_Mixer):
         >>> for i in range(100):
         >>>     x = mixer(func(x), x)
         >>> print(x)
-        tensor([1., 3.])
+            >>> # tensor([1., 3.])
     """
 
-    def __init__(self, is_batch: bool, mix_param: Real = 0.05,
-                 tolerance: Real = 1E-6):
+    def __init__(self, is_batch: bool, mix_param: float = 0.05,
+                 tolerance: float = 1E-6):
         # Pass required inputs to parent class.
         super().__init__(is_batch, tolerance)
 
@@ -263,11 +268,25 @@ class Simple(_Mixer):
             from all but the first step if desired.
 
         """
+
         # Increment the step number variable
         self._step_number += 1
 
         # Use the previous x_old value if none was specified
         x_old = self._x_old if x_old is None else x_old
+
+        # Safety check
+        if self.is_batch:
+            if self.is_batch and (x_new.shape[0] != x_old.shape[0]):
+                raise RuntimeError(
+                    'Batch dimension of x_new and x_old do not match; ensure '
+                    'calls are made to mixer.cull as needed.')
+            if x_new.shape[1:] != x_old.shape[1:]:
+                raise RuntimeError(
+                    f'Non-batch dimension mismatch encountered - x_new '
+                    f'{x_new.shape}, x_old {x_old.shape}; this may result '
+                    'from a failure provide a "new_size" arg to mixer.cull.'
+                )
 
         # Check all tensor dimensions match
         assert x_old.shape == x_new.shape,\
@@ -280,7 +299,7 @@ class Simple(_Mixer):
         self._x_old = x_mix
 
         # Update the delta
-        self._delta = (x_mix - x_old)
+        self._delta = (x_new - x_old)
 
         # Return the newly mixed system
         return x_mix
@@ -297,29 +316,42 @@ class Simple(_Mixer):
         self._step_number = 0
         self._delta = self._x_old = None
 
-    def cull(self, cull_list: Tensor):
+    def cull(self, cull_list: Tensor,
+             new_size: Optional[Union[torch.Size, List[int]]] = None):
         """Purge select systems form the mixer.
 
-        This is useful when a subset of systems have converged during mixing.
+        This is useful when a subset of systems that have converged during
+        mixing.
 
         Arguments:
             cull_list: Tensor with booleans indicating which systems should be
                 culled (True) and which should remain (False).
+            new_size: New anticipated size of future inputs excluding the batch
+                dimension. This is used to allow superfluous padding values to
+                be removed form subsequent inputs.
 
         """
-        assert self._is_batch, 'Cull only valid for batch mixing'
+        assert self.is_batch, 'Cull only valid for batch mixing'
+
+        # If a new size has been provided then cut the properties down to size
+        # so to remove superfluous padding values.
+        if new_size is not None:
+            slicers = [slice(0, i) for i in new_size]
+        else:
+            slicers = (...,)
+
         # Invert cull_list, gather & reassign x_old and _delta so only those
         # marked False remain.
         cull = ~cull_list
-        self._x_old = self._x_old[cull]
-        self._delta = self._delta[cull]
+        self._x_old = self._x_old[[cull, *slicers]]
+        self._delta = self._delta[[cull, *slicers]]
 
 
-class Anderson(_Mixer):
+class Anderson(Mixer):
     """Accelerated Anderson mixing algorithm.
 
-    Anderson acceleration, also known as Pulay mixing & DIIS, is a method for
-    accelerating convergence. Upon instantiation a callable instance will be
+    Anderson acceleration is a method for accelerating convergence of fixed
+    point iterations. Upon instantiation, a callable instance will be
     returned. Calls to this instance will take, as its arguments, two input
     systems and will return a single mixed system.
 
@@ -335,10 +367,14 @@ class Anderson(_Mixer):
             to `None` then rescaling will be disabled. [DEFAULT=0.01]
         init_mix_param: Mixing parameter to use during the initial simple
             mixing steps. [DEFAULT=0.01]
+        soft_start: If enabled, then simple mixing will be used for the first
+            ``generations`` number of steps, otherwise only for the first.
+            [DEFAULT=False]
 
     Notes:
-        Note that simple mixing will be used for the first ``generations``
-        number of steps
+        Note that simple mixing will always be used for the first step. If
+        ``soft_start`` is enabled then the simple mixer will also be used for
+        the following ``generations``-1 steps.
 
         The Anderson mixing functions primarily follow the equations set out
         by Eyert [Eyert]_. However, this code borrows heavily from the DFTB+
@@ -366,9 +402,10 @@ class Anderson(_Mixer):
            80(1), 135–234.
 
     """
-    def __init__(self, is_batch: bool, mix_param: Real = 0.05,
-                 generations: int = 6, diagonal_offset=0.01,
-                 init_mix_param: Real = 0.01, tolerance: Real = 1E-6):
+    def __init__(self, is_batch: bool, mix_param: float = 0.05,
+                 generations: int = 4, diagonal_offset=0.01,
+                 init_mix_param: float = 0.01, tolerance: float = 1E-6,
+                 soft_start: bool = False):
 
         super().__init__(is_batch, tolerance)
 
@@ -376,6 +413,7 @@ class Anderson(_Mixer):
         self.generations = generations
         self.init_mix_param = init_mix_param
         self.diagonal_offset = diagonal_offset
+        self.soft_start = soft_start
 
         # Holds "x" history and "x" delta history
         self._x_hist: Optional[Tensor] = None
@@ -399,12 +437,13 @@ class Anderson(_Mixer):
         # Tensors are converted to _shape_in when passed in and back to their
         # original shape _shape_out when returned to the user.
         self._shape_out = list(x_new.shape)
-        if self._is_batch:
+        if self.is_batch:
             self._shape_in = list(x_new.reshape(x_new.shape[0], -1).shape)
         else:
             self._shape_in = list(torch.flatten(x_new).shape)
 
         # Instantiate the x history (x_hist) and the delta history 'd_hist'
+        # The current step is also stored hence "self.generations + 1".
         size = (self.generations + 1, *self._shape_in)
         self._x_hist = torch.zeros(size, dtype=dtype, device=device)
         self._f = torch.zeros(size, dtype=dtype, device=device)
@@ -434,8 +473,13 @@ class Anderson(_Mixer):
             number of previous steps to be use in the mixing process.
 
         """
+        # At some point a check should be put in place to give a more useful
+        # error when the user padding values from new inputs without providing
+        # a new_size argument during calls to the cull method.
+
         if self._step_number == 0:  # Call setup hook if this is the 1st cycle
             self._setup_hook(x_new)
+            self._x_hist[0] = x_old.reshape(self._shape_in)
 
         self._step_number += 1  # Increment step_number
 
@@ -454,13 +498,17 @@ class Anderson(_Mixer):
         self._f[0] = x_new - x_old
 
         # If a sufficient history has been built up then use Anderson mixing
-        if self._step_number > self.generations:
+        # if self._step_number > self.generations:
+        if (self._step_number > self.generations
+                or self.step_number > 1 and not self.soft_start):
+
+            n = min(self.step_number-1, self.generations)
             # Setup and solve the linear equation system, as described in
             # equation 4.3 (Eyert), to get the coefficients "thetas":
             #   a(i,j) =  <F(l) - F(l-i)|F(l) - F(l-j)>
             #   b(i)   =  <F(l) - F(l-i)|F(l)>
             # here dF = <F(l) - F(l-i)|
-            df = self._f[0] - self._f[1:]
+            df = self._f[0] - self._f[1:n+1]
             a = torch.einsum('i...v,j...v->...ij', df, df)
             b = torch.einsum('h...v,...v->...h', df, self._f[0])
 
@@ -468,12 +516,15 @@ class Anderson(_Mixer):
             # vectors by adding 1 + offset^2 to the diagonals of "a", see
             # equation 8.2 (Eyert)
             if self.diagonal_offset is not None:
-                a += (torch.eye(a.shape[-1], device=x_new.device)
-                      * (self.diagonal_offset ** 2))
+                a_scaled_diag = (a.diagonal(dim1=-2, dim2=-1)
+                                 * (1 + self.diagonal_offset ** 2))
+
+                a.diagonal(dim1=-2, dim2=-1)[...] = a_scaled_diag
 
             # Solve for the coefficients. As torch.solve cannot solve for 1D
             # tensors a blank dimension must be added
-            thetas = torch.squeeze(torch.solve(torch.unsqueeze(b, -1), a)[0])
+            thetas = torch.atleast_1d(
+                torch.squeeze(torch.linalg.solve(a, torch.unsqueeze(b, -1))))
 
             # Construct the 2'nd terms of eq 4.1 & 4.2 (Eyert). These are
             # the "averaged" histories of x and F respectively:
@@ -482,20 +533,10 @@ class Anderson(_Mixer):
             # These are not the x_bar & F_var values of eq. 4.1 & 4.2 (Eyert)
             # yet as they are still missing the 1st terms.
             x_bar = torch.einsum('...h,h...v->...v', thetas,
-                                 (self._x_hist[1:] - self._x_hist[0]))
+                                   (self._x_hist[1:n+1] - self._x_hist[0]))
             f_bar = torch.einsum('...h,h...v->...v', thetas, -df)
 
-            # The first terms of equations 4.1 & 4.2 (Eyert):
-            #   4.1: |x(l)> and & 4.2: |F(l)>
-            # Have been replaced by:
-            #   ϑ_0(l) * |x(j)> and ϑ_0(l) * |x(j)>
-            # respectively, where "ϑ_0(l)" is the coefficient for the current
-            # step and is defined as (Anderson):
-            #   ϑ_0(l) = 1 - sum(j=1 -> m) ϑ_j(l)
-            # Code deviates from DFTB+ here to prevent "stability issues"
-            # theta_0 = 1 - torch.sum(thetas)
-            # x_bar += theta_0 * self._x_hist[0]  # <- DFTB+
-            # f_bar += theta_0 * self._f[0]  # <- DFTB+
+            # Add in the first term
             x_bar += self._x_hist[0]
             f_bar += self._f[0]
 
@@ -507,7 +548,6 @@ class Anderson(_Mixer):
         # If there is insufficient history for Anderson; use simple mixing
         else:
             x_mix = self._x_hist[0] + (self._f[0] * self.init_mix_param)
-            return x_mix.reshape(self._shape_out)
 
         # Shift f & x_hist over; a roll follow by a reassignment is
         # necessary to avoid an inplace error. (gradients remain intact)
@@ -522,7 +562,9 @@ class Anderson(_Mixer):
         # Reshape the mixed system back into the expected shape and return it
         return x_mix.reshape(self._shape_out)
 
-    def cull(self, cull_list: bool):
+    def cull(
+            self, cull_list: bool,
+            new_size: Optional[Union[torch.Size, List[int]]] = None):
         """Purge select systems form the mixer.
 
         This is useful when a subset of systems have converged during mixing.
@@ -530,20 +572,32 @@ class Anderson(_Mixer):
         Arguments:
             cull_list: Tensor with booleans indicating which systems should be
                 culled (True) and which should remain (False).
+            new_size: New anticipated size of future inputs excluding the batch
+                dimension. This is used to allow superfluous padding values to
+                be removed form subsequent inputs.
+
+        Warning:
+            The current size only works for 2D batch system.
 
         """
-        assert self._is_batch, 'Cull only valid for batch mixing'
+        assert self.is_batch, 'Cull only valid for batch mixing'
+
+        shape = new_size if new_size is not None else self._shape_out[1:]
+
+        # Length of flattened arrays after factoring in the new
+        l = prod(shape)
+
         # Invert the cull_list, gather & reassign self._delta self._x_hist &
         # self._f so only those marked False remain.
         cull = ~cull_list
-        self._delta = self._delta[cull]
-        self._f = self._f[:, cull]
-        self._x_hist = self._x_hist[:, cull]
+        self._delta = self._delta[cull, :l]
+        self._f = self._f[:, cull, :l]
+        self._x_hist = self._x_hist[:, cull, :l]
 
         # Adjust the the shapes accordingly
-        n = list(cull_list).count(True)
-        self._shape_in[0] -= n
-        self._shape_out[0] -= n
+        self._shape_in[0] -= list(cull_list).count(True)
+        self._shape_in[-1] = l
+        self._shape_out = [self._shape_in[0], *shape]
 
     def reset(self):
         """Reset mixer to its initial state."""

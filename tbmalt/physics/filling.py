@@ -1,31 +1,47 @@
 # -*- coding: utf-8 -*-
 """Code associated with electronic/finite temperature."""
-from typing import Union, Tuple, Optional, Callable
+from typing import Union, Tuple, Optional, Callable, Protocol
 from numbers import Real
 from numpy import sqrt, pi
 import torch
+from torch.autograd import Function
 from torch import Tensor
 
 from tbmalt import ConvergenceError
-from tbmalt import Basis
+from tbmalt import OrbitalInfo
 from tbmalt.common import float_like
-from tbmalt.common.batch import psort
+from tbmalt.common.batch import psort, bT
 
-_Scheme = Callable[[Tensor, Tensor, float_like], Tensor]
+
+class Scheme(Protocol):
+    def __call__(
+            self, eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
+            e_mask: Optional[Union[Tensor, OrbitalInfo]] = None) -> Tensor:
+        pass
+
+
+def entropy_term(func, eigenvalues: Tensor, fermi_energy: Tensor,
+                 kT: float_like, e_mask: Optional[Union[Tensor, OrbitalInfo]] = None,
+                 ) -> Tensor:
+    if func == fermi_smearing:
+        return fermi_entropy(eigenvalues, fermi_energy, kT, e_mask)
+    elif func == gaussian_smearing:
+        return gaussian_entropy(eigenvalues, fermi_energy, kT, e_mask)
+    else:
+        NotImplementedError(
+            'Can\'t identify associate entropy function for the broadening '
+            f'method {func}')
 
 
 def fermi_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
-                  e_mask: Optional[Union[Tensor, Basis]] = None) -> Tensor:
+                  e_mask: Optional[Union[Tensor, OrbitalInfo]] = None
+                  ) -> Tensor:
     r"""Calculates the electronic entropy term for Fermi-Dirac smearing.
 
-        Calculate a system's electronic entropy term. The entropy term is required
-        when calculating various properties, most notably the Mermin free energy;
-        which is used in place of the total system energy when finite temperature
-        (electronic broadening) is active.
-
-        .. math::
-
-            TS = -k_B\sum_{i}f_i \; ln(f_i) + (1 - f_i)\; ln(1 - f_i))
+        Calculate a system's electronic entropy term. The entropy term is
+        required when calculating various properties, most notably the Mermin
+        free energy; which is used in place of the total system energy when
+        finite temperature (electronic broadening) is active.
 
         Arguments:
             eigenvalues: Eigen-energies, i.e. orbital-energies.
@@ -37,9 +53,29 @@ def fermi_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
         Returns:
             ts: The entropy term(s).
 
+        Notes:
+            The entropy term is computed as:
+
+            .. math::
+
+                TS = -k_B\sum_{i}[f_i \; ln(f_i) + (1 - f_i)\; ln(1 - f_i)]
+
+        Examples:
+            >>> from tbmalt.physics.filling import fermi_entropy
+            >>>
+            >>> # An example H2 system
+            >>> e_vals = torch.tensor([-0.3405911944959140,
+            ...                        0.2311892808528265])
+            >>> kt = torch.tensor(0.0036749324000000)
+            >>> e_fermi = torch.tensor(-0.0547009568215437)
+            >>> # Calculate the entropy term
+            >>> ts = fermi_entropy(e_vals, e_fermi, kt)
+            >>> print(ts)
+            tensor(0.)
+
         """
-    # If a Basis instance was given as a mask then convert it to a tensor
-    if isinstance(e_mask, Basis):
+    # If a OrbitalInfo instance was given as a mask then convert it to a tensor
+    if isinstance(e_mask, OrbitalInfo):
         e_mask = e_mask.on_atoms != -1
 
     # Shape of eigenvalue tensor in which k-points & spin-channels (with
@@ -62,13 +98,9 @@ def fermi_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
 
 
 def gaussian_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
-                     e_mask: Optional[Union[Tensor, Basis]] = None) -> Tensor:
+                     e_mask: Optional[Union[Tensor, OrbitalInfo]] = None
+                     ) -> Tensor:
     r"""Calculates the electronic entropy term for Gaussian bases smearing.
-
-        .. math::
-
-            TS = \frac{k_B}{2 \sqrt{\pi}} \sum_{i} exp \left(- \left(
-                    \frac{\epsilon_i E_f}{kT} \right)^2 \right)
 
         Arguments:
             eigenvalues: Eigen-energies, i.e. orbital-energies.
@@ -80,9 +112,30 @@ def gaussian_entropy(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
         Returns:
             ts: The entropy term(s).
 
+        Notes:
+            The entropy term is computed as:
+
+            .. math::
+
+                TS = \frac{k_B}{2 \sqrt{\pi}} \sum_{i} exp \left(- \left(
+                        \frac{\epsilon_i E_f}{kT} \right)^2 \right)
+
+        Examples:
+            >>> from tbmalt.physics.filling import gaussian_entropy
+            >>>
+            >>> # An example H2 system
+            >>> e_vals = torch.tensor([-0.3405911944959140,
+            ...                        0.2311892808528265])
+            >>> kt = torch.tensor(0.0036749324000000)
+            >>> e_fermi = torch.tensor(-0.0547009568215437)
+            >>> # Calculate the entropy term
+            >>> ts = gaussian_entropy(e_vals, e_fermi, kt)
+            >>> print(ts)
+            tensor(0.)
+
         """
-    # If a Basis instance was given as a mask then convert it to a tensor
-    if isinstance(e_mask, Basis):
+    # If a OrbitalInfo instance was given as a mask then convert it to a tensor
+    if isinstance(e_mask, OrbitalInfo):
         e_mask = e_mask.on_atoms != -1
 
     # Shape of eigenvalue tensor in which k-points & spin-channels (with
@@ -148,8 +201,40 @@ def _smearing_preprocessing(
     return fermi_energy, kT
 
 
-def fermi_smearing(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like
-                   ) -> Tensor:
+def _smearing_postprocessing(
+        occupancy, e_mask: Optional[Union[Tensor, OrbitalInfo]] = None
+        ) -> Tensor:
+    """Zero out ghost states due to padding
+
+    Arguments:
+        occupancy: Occupancies of the orbitals
+        e_mask: Provides info required to distinguish "real" ``eigenvalues``
+            from "fake" ones. This is Mandatory when using smearing on batched
+            systems. This may be a `Tensor` that is `True` for real states or
+            a `OrbitalInfo` object. [DEFAULT=None]
+
+    Returns:
+        occupancies: Occupancies with any ghost states zeroed out.
+    """
+    # If a mask is provided
+    if e_mask is not None:
+
+        # If a OrbitalInfo instance was given as a mask then convert it to a tensor
+        if isinstance(e_mask, OrbitalInfo):
+            e_mask = e_mask.on_atoms != -1
+        elif isinstance(e_mask, Tensor):
+            e_mask = e_mask != -1
+
+        # Zero out the occupant of all "ghost" states
+        occupancy[~e_mask] = 0.0
+
+    # Return the now possibly masked occupancy tensor
+    return occupancy
+
+
+def fermi_smearing(
+        eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
+        e_mask: Optional[Union[Tensor, OrbitalInfo]] = None) -> Tensor:
     r"""Fractional orbital occupancies due to Fermi-Dirac smearing.
 
     Using Fermi-Dirac smearing, orbital occupancies are calculated via:
@@ -165,10 +250,13 @@ def fermi_smearing(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like
         eigenvalues: Eigen-energies, i.e. orbital-energies.
         fermi_energy: The Fermi energy.
         kT: Electronic temperature.
+        e_mask: Provides info required to distinguish "real" ``eigenvalues``
+            from "fake" ones. This is Mandatory when using smearing on batched
+            systems. This may be a `Tensor` that is `True` for real states or
+            a `OrbitalInfo` object. [DEFAULT=None]
 
     Returns:
-        occupancies: Occupancies of the orbitals, or total electron count if
-            total=True.
+        occupancies: Occupancies of the orbitals.
 
     Notes:
         ``eigenvalues`` may be a single value, an array of values or a tensor.
@@ -179,18 +267,44 @@ def fermi_smearing(eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like
         values present, irrespective of whether they are real or fake (caused
         by packing).
 
-    Warnings:
-        Gradients resulting from this function can be ill defined, i.e. nan.
+    Examples:
+        >>> from tbmalt.physics.filling import fermi_smearing
+        >>>
+        >>> # An example H2 system
+        >>> e_vals = torch.tensor([-0.3405911944959140,
+        ...                        0.2311892808528265])
+        >>> kt = torch.tensor(0.0036749324000000)
+        >>> e_fermi = torch.tensor(-0.0547009568215437)
+        >>> # Fermi smearing
+        >>> occ = fermi_smearing(e_vals, e_fermi, kt)
+        >>> print(occ)
+        tensor([1.0000e+00, 1.6375e-34])
+
     """
     # Developers Notes: it might be worth trying to resolve the gradient
     # stability issue associated with this function.
     fermi_energy, kT = _smearing_preprocessing(eigenvalues, fermi_energy, kT)
-    # Calculate and return the occupancies values via the Fermi-Dirac method
-    return 1.0 / (1.0 + torch.exp((eigenvalues - fermi_energy) / kT))
+
+    # Calculate the occupancies values via the Fermi-Dirac method. Note that
+    # the occupancy calculation is segmented so that the exponential is not
+    # applied to values greater than 40, thereby preventing the production of
+    # infinities & ill-defined gradients. For values below this threshold, the
+    # standard Fermi–Dirac expression is applied, otherwise the occupancy is
+    # set to zero.
+    occupancies = (eigenvalues - fermi_energy) / kT
+    mask = occupancies < 40
+    occupancies[mask] = 1.0 / (1.0 + torch.exp(occupancies[mask]))
+    occupancies[~mask] = 0.0
+
+    # Mask out ghost states as and when required
+    occupancies = _smearing_postprocessing(occupancies, e_mask)
+
+    return occupancies
 
 
-def gaussian_smearing(eigenvalues: Tensor, fermi_energy: Tensor,
-                      kT: float_like) -> Tensor:
+def gaussian_smearing(
+        eigenvalues: Tensor, fermi_energy: Tensor, kT: float_like,
+        e_mask: Optional[Union[Tensor, OrbitalInfo]] = None) -> Tensor:
     r"""Fractional orbital occupancies due to Gaussian smearing.
 
     Using Gaussian smearing, orbital occupancies are calculated via:
@@ -206,6 +320,10 @@ def gaussian_smearing(eigenvalues: Tensor, fermi_energy: Tensor,
         eigenvalues: Eigen-energies, i.e. orbital-energies.
         fermi_energy: The Fermi energy.
         kT: Electronic temperature.
+        e_mask: Provides info required to distinguish "real" ``eigenvalues``
+            from "fake" ones. This is Mandatory when using smearing on batched
+            systems. This may be a `Tensor` that is `True` for real states or
+            a `OrbitalInfo` object. [DEFAULT=None]
 
     Returns:
         occupancies: Occupancies of the orbitals.
@@ -222,31 +340,632 @@ def gaussian_smearing(eigenvalues: Tensor, fermi_energy: Tensor,
     Warnings:
         Gradients will become unstable if a `kT` value of zero is used.
 
+    Examples:
+        >>> from tbmalt.physics.filling import gaussian_smearing
+        >>>
+        >>> # An example H2 system
+        >>> e_vals = torch.tensor([-0.3405911944959140,
+        ...                        0.2311892808528265])
+        >>> kt = torch.tensor(0.0036749324000000)
+        >>> e_fermi = torch.tensor(-0.0547009568215437)
+        >>> # Gaussian smearing
+        >>> occ = gaussian_smearing(e_vals, e_fermi, kt)
+        >>> print(occ)
+        tensor([1., 0.])
+
     """
     fermi_energy, kT = _smearing_preprocessing(eigenvalues, fermi_energy, kT)
+
     # Calculate and return the occupancies values via the Gaussian method
-    return torch.erfc((eigenvalues - fermi_energy) / kT) / 2
+    occupancies = torch.erfc((eigenvalues - fermi_energy) / kT) / 2
+
+    # Mask out ghost states as and when required
+    occupancies = _smearing_postprocessing(occupancies, e_mask)
+
+    return occupancies
 
 
-@torch.no_grad()
+def _middle_gap_approximation(
+        eigenvalues: Tensor, n_electrons: Tensor, scale_factor: Tensor,
+        e_mask: Optional[Tensor] = None, return_occupations: bool = False
+        ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
+    """Returns the midpoint between the HOMO and LUMO.
+
+    Determines the middle of the fundamental gap for each system/batch by
+    locating the highest occupied molecular orbital (HOMO) and the lowest
+    unoccupied molecular orbital (LUMO) in the sorted eigen‑energy spectrum.
+    The procedure is agnostic to padding states, honours per‑state occupation
+    scaling (e.g. spin multiplicity and k‑point weights) and can optionally
+    supply the Aufbau‑filled occupation tensor required by other routines.
+
+    Arguments:
+        eigenvalues: Eigen‑energies, i.e. orbital‑energies. May have up to
+            four dimensions in the order
+            ``[batch, spin, k‑points, eigenvalues]``.
+        n_electrons: Total number of (valence) electrons per system.
+        scale_factor: Maximum occupancy of each eigenstate; equals 2 or 1 for
+            restricted and unrestricted molecular systems respectively and is
+            additionally scaled by any k‑point weights for periodic systems.
+        e_mask: Boolean mask that distinguishes *real* eigenstates from
+            *ghost* padding states. **Must** be supplied when, and only when,
+            batched systems are processed. [DEFAULT=None]
+        return_occupations: If `True` the fractional orbital occupations
+            (following the Aufbau principle and scaled by *scale_factor*)
+            are also returned. [DEFAULT=False]
+
+    Returns:
+        mid_point: Mid‑gap energy (HOMO/LUMO average) for each system.
+        occupations: Fractional occupations with the same shape as
+            ``eigenvalues``.  Only returned when ``return_occupations`` is
+            `True`.
+
+    Notes:
+        The HOMO index is found where the cumulative sum of the maximum state
+        occupancies first meets or exceeds ``n_electrons``.  The LUMO is taken
+        as the succeeding state; if the system is fully occupied the index is
+        clamped to the final *real* state, causing the gap to collapse to zero.
+
+    """
+
+    # Shape of Ɛ tensor where k-points & spin-channels have been flattened out.
+    # Note that only spin-channels with common fermi energies get flattened.
+    shape = torch.Size([*n_electrons.shape, -1])
+
+    # Flatten & sort the eigenvalues so there's 1 row per-system; the
+    # spin dimension is only flattened when the spin channels share a
+    # common fermi-energy.
+    eigenvalues_flat, srt = psort(
+        eigenvalues.view(shape),
+        None if e_mask is None else e_mask.view(shape))
+
+    # Maximum occupation of each eigenstate, sorted and flattened.
+    occupations = (torch.ones_like(eigenvalues_flat) * scale_factor
+                   ).gather(-1, srt)
+
+    # Locate HOMO index, via the transition between under/over filled.
+    # An indirect method is used here as direct calls to ">" & "<" result in
+    # spurious behaviour when any noise is present in `n_electrons`.
+    occupations_cs = bT(occupations.cumsum(-1)) - n_electrons
+    r = torch.finfo(n_electrons.dtype).resolution * 5
+    i_homo = torch.argmax(
+        torch.as_tensor(bT(occupations_cs.ge(-r)), dtype=torch.long),
+        dim=-1).view(shape)
+
+    # Identify the index of the LUMO. Care must be taken to catch the case
+    # where i_lumo is out of bounds due to the LUMO state not being present in
+    # the eigenvalues. This is encountered when all states are fully occupied.
+    if e_mask is not None:
+        n_states = e_mask.view(shape).sum(dim=-1).view(i_homo.shape)
+    else:
+        n_states = torch.tensor(eigenvalues_flat.shape[-1])
+
+    i_lumo = torch.minimum(i_homo + 1, n_states - 1)
+
+    mid_point = eigenvalues_flat.gather(
+        -1, torch.cat((i_homo, i_lumo), -1)).mean(-1)
+
+    # Return the mid-point
+    if not return_occupations:
+        return mid_point
+    # Unless also instructed to also return the occupations
+    else:
+        # Set the occupancies of all states above the HOMO equal to zero
+        for n, i in enumerate(i_homo.flatten()):
+            torch.atleast_2d(occupations)[n, i + 1:] = 0.0
+
+        # Re-order and un-flatten the occupancy array to match its original form
+        occupations = occupations.gather(
+            -1, torch.argsort(srt, -1)).view(eigenvalues.shape)
+
+        return mid_point, occupations
+
+
+class _FermiSearch(Function):
+
+    # noinspection PyMethodOverriding
+    @staticmethod
+    def forward(
+            ctx, eigenvalues: Tensor, n_electrons: Tensor, kT: Tensor,
+            scale_factor: Tensor, scheme: Scheme, tolerance: float,
+            max_iter: int, e_mask: Optional[Tensor],
+            degeneracy_tolerance: float):
+        r"""Determines the Fermi-energy of a system or batch thereof.
+
+        Calculates the Fermi-energy with finite temperature.
+
+        Arguments:
+            eigenvalues: Eigen-energies, i.e. orbital-energies. This may have up to
+                4 dimensions, 3 of which are optional, so long as the following
+                order is satisfied [batch, spin, k-points, eigenvalues].
+            n_electrons: Total number of (valence) electrons.
+            kT: Electronic temperature.
+            scheme: Finite temperature broadening function to be used, TBMaLT
+                natively supports two broadening methods:
+
+                    - Fermi-Dirac broadening :func:`fermi_smearing`
+                    - Gaussian broadening :func:`gaussian_smearing`
+
+            tolerance: Tolerance to which e⁻ count is converged during the
+                search.
+            max_iter: Maximum permitted number of fermi search cycles.
+            e_mask: Provides info required to distinguish "real" ``eigenvalues``
+                from "fake" ones. This is required when operating on batched
+                systems. In other cases, `None` should be provided.
+            degeneracy_tolerance: Specifies an absolute energy tolerance used
+                to identify degenerate frontier states when the Fermi level is
+                determined via the middle-gap approximation. Degeneracies at
+                the HOMO or LUMO may lead to numerical inconsistencies in the
+                computed gradients, as the exact selection of a single state is
+                not well-defined. When a non-zero tolerance is given, all
+                occupied states within this energy window of the HOMO or LUMO
+                edge are treated as degenerate and contribute equally (or in
+                proportion to their weights) to the derivative of the Fermi
+                level. This option may be employed when systems containing
+                near-degenerate frontier states are studied, in order to ensure
+                stable and physically meaningful gradients. [DEFAULT=0.0]
+
+        Returns:
+            fermi_energy: Fermi energy value(s).
+
+        """
+
+        ctx.scale_factor = scale_factor
+        ctx.scheme = scheme
+        ctx.e_mask = e_mask
+        ctx.n_electrons = n_electrons
+        ctx.degeneracy_tolerance = degeneracy_tolerance
+
+        shp = torch.Size([*n_electrons.shape, -1])
+
+        # e_fermi holds results & c_mask tracks which systems have converged.
+        e_fermi = torch.zeros_like(n_electrons)
+        c_mask = torch.full_like(n_electrons, False, dtype=torch.bool)
+
+        # __Finite Temperature Disabled__
+        # Set the fermi energy to the mid-point between the HOMO and LUMO.
+        if kT is None:
+            c_mask[...] = True
+            e_fermi[...] = _FermiSearch._middle_gap_approximation(
+                eigenvalues, n_electrons, scale_factor, e_mask,
+                degeneracy_tolerance)
+
+            ctx.save_for_backward(eigenvalues, e_fermi, kT)
+
+            return e_fermi
+
+        # __Finite Temperature Enabled__
+        def elec_count(f, m=...):
+            """Makes a call to the smearing function & returns the sum.
+
+            This limits the messy masking operations needed by the smearing
+            function to one place. kT's mask are treated differently as 0d &
+            1d are both valid shapes of kT in both batch & single system mode.
+            """
+            res = scheme(eigenvalues[m], f[m], kT[m if kT.ndim != 0 else ...])
+            if e_mask is not None:  # Cull "fake" states caused by padding
+                res[~e_mask[m]] = 0.0
+
+            # Sum up over all axes apart from the batch dimension
+            return bT(res * scale_factor).sum_to_size(n_electrons[m].shape)
+
+        # If there's an even, integer number of e⁻; try setting e_fermi to the
+        # middle gap, i.e. fill according to the Aufbau principle. The modulus
+        # can't be used here as any noise in `n_electrons` will cause an error.
+        if (mask := (n_electrons/2 - torch.round(n_electrons/2)) <= tolerance).any():
+            # Store fermi value, recalculate № of e⁻ & identity of convergence
+            e_fermi[mask] = _FermiSearch._middle_gap_approximation(
+                eigenvalues, n_electrons, scale_factor, e_mask,
+                degeneracy_tolerance)[mask]
+
+            c_mask[mask] = abs(
+                elec_count(e_fermi)[mask] - n_electrons[mask]) < tolerance
+
+        # Mask indicating which systems will undergo a bisection search
+        b_mask = ~c_mask
+        ctx.b_mask = b_mask
+
+        # If all systems converged then just return the results now
+        if c_mask.all():
+            e_fermi = e_fermi.view_as(n_electrons)
+            ctx.save_for_backward(eigenvalues, e_fermi, kT)
+            return e_fermi
+
+        # __Setup Bounds for Bisection Search__
+        # Identify upper (e_up) & lower (e_lo) search bounds; fermi level should
+        # be between the highest & lowest eigenvalues, so start there.
+        e_lo = eigenvalues.view(shp).min(-1).values
+        e_up = eigenvalues.view(shp).max(-1).values
+
+        ne_lo, ne_up = elec_count(e_lo), elec_count(e_up)
+
+        # Bounds may fail on large kT or full band structures; if too many e⁻
+        # are present at the e_lo then decrease it & recalculate. If too few e⁻
+        # present at the e_up, then it's too low so increase it & recalculate
+        # the number of elections there.
+        counter = 0
+        while (mask := ne_lo > n_electrons).any():
+            counter += 1
+            if counter > max_iter:
+                raise RuntimeError(
+                    "Failed to locate an initial lower bound for fermi-search "
+                    f"bisection after {counter} iterations.")
+            e_lo[mask] += 2.0 * (e_lo[mask] - e_up[mask])
+            ne_lo[mask] = elec_count(e_lo, mask)
+
+        counter = 0
+        while (mask := ne_up < n_electrons).any():
+            counter += 1
+            if counter > max_iter:
+                raise RuntimeError(
+                    "Failed to locate an initial upper bound for fermi-search "
+                    f"bisection after {counter} iterations.")
+            e_up[mask] += 2.0 * (e_up[mask] - e_lo[mask])
+            ne_up[mask] = elec_count(e_up, mask)
+
+        # Set the fermi energy to the mid-point between the two bounds.
+        e_fermi[~c_mask] = (0.5 * (e_up + e_lo))[~c_mask]
+        ne_fermi = elec_count(e_fermi)
+
+        # __Perform the Bisection Search__
+        n_steps = 0
+        # Continue squeezing e_up & e_lo together until the delta between the
+        # actual & predicted number of e⁻ is less than "tolerance".
+        while (mask := ~c_mask).any():
+            n_steps += 1
+
+            # Move e_lo to mid-point if `e_lo & e_up haven't crossed` ≡ `mid-point
+            # is below the fermi level`; otherwise move e_up up to the mid-point.
+            if (m_up := ((ne_up > ne_lo) == (n_electrons > ne_fermi)) & mask).any():
+                e_lo[m_up], ne_lo[m_up] = e_fermi[m_up], ne_fermi[m_up]
+            if (m_down := mask & ~m_up).any():
+                e_up[m_down], ne_up[m_down] = e_fermi[m_down], ne_fermi[m_down]
+
+            # Recompute mid-point & its electron count then update the c_mask
+            e_fermi[mask] = 0.5 * (e_up + e_lo)[mask]
+            ne_fermi[mask] = elec_count(e_fermi, mask)
+            c_mask[mask] = abs(ne_fermi - n_electrons)[mask] <= tolerance
+
+            # If maximum allowed number of iterations reached: raise and error.
+            if n_steps > max_iter:
+                raise ConvergenceError('Fermi search failed to converge',
+                                       ~c_mask)
+
+        # Perform a single Newton step on the systems that underwent a
+        # bisection search. The implicit function method used to compute
+        # the gradients for systems that have undergone a bisection search
+        # is **highly** sensitive to convergence. This is most pronounced
+        # at high filling temperatures where not even a tolerance of 1E-10
+        # is not necessarily sufficent.
+        #
+        # It is critical that neither this newton step, nor any of the
+        # bisection steps, are performed on systems that have converged
+        # peacefully via the middle gap approximation. Doing so will likely
+        # cause instabilities. Note that auto-grad is being used to compute
+        # the gradients here. While this is more complex and expensive than
+        # a manual implementation, it is compatible with any smearing function.
+        e_fermi[b_mask] = _FermiSearch._newton(
+            eigenvalues[b_mask], n_electrons[b_mask], e_fermi[b_mask],
+            scale_factor, kT[b_mask if kT.ndim != 0 else ...], scheme,
+            e_mask=e_mask if e_mask is None else e_mask[b_mask])
+
+        ctx.save_for_backward(eigenvalues, e_fermi, kT)
+
+        # Return the fermi energy
+        return e_fermi
+
+    @staticmethod
+    def _newton(
+            eigenvalues: Tensor, n_electrons: Tensor, e_fermi: Tensor,
+            scale_factor: Tensor, kT: Tensor, scheme: Scheme, e_mask=None):
+        """Perform a single Newton-Raphson optimisation step."""
+
+        finfo = torch.finfo(eigenvalues.dtype)
+
+        with torch.no_grad():
+            df_dmu, _ = _FermiSearch._smearing_gradients(
+                eigenvalues, e_fermi, scale_factor, kT, scheme,
+                e_mask=e_mask)
+
+            # occupations and slope wrt mu (same scheme as backward)
+            p = scheme(eigenvalues, e_fermi, kT if kT.ndim != 0 else kT)
+            n_residual = bT(p * scale_factor).sum_to_size(n_electrons.shape) - n_electrons
+            e_fermi = e_fermi - n_residual / df_dmu.clamp_min(finfo.tiny)
+
+        return e_fermi
+
+    @staticmethod
+    def _aufbau_filling(
+            eigenvalues: Tensor, n_electrons: Tensor,
+            scale_factor: Tensor, e_mask: Optional[Tensor] = None) -> Tensor:
+        """Fractional orbital occupancies due to the Aufbau principle.
+
+        Returns the fractional occupancy of each orbital according the Aufbau
+        principle in which states are filled from lowest to highest energy until
+        the specified electron count is reached. Any given state will only be
+        occupied if all states of lower energy are also occupied.
+
+        Arguments:
+            eigenvalues: Eigen-energies, i.e. orbital-energies. This may have
+                up to 4 dimensions, 3 of which are optional, so long as the
+                following order is satisfied [batch, spin, k-points,
+                eigenvalues].
+            n_electrons: Total number of (valence) electrons.
+            e_mask: Provides info required to distinguish "real" ``eigenvalues``
+                from "fake" ones. This is Mandatory when using smearing on
+                batched systems and must be a `Tensor` that is `True` for real
+                states. [DEFAULT=False]
+
+        Returns:
+            occupancies: Fractional occupancies of the orbitals according to
+                Aufbau filling.
+
+        """
+        if scale_factor.ndim != 0:
+            raise NotImplementedError(
+                "Autograd support has not yet been added to the `fermi_search` "
+                "function for systems with multiple spin-channels or k-points "
+                "that pass through the midpoint approximation.")
+
+        finfo = torch.finfo(eigenvalues.dtype)
+        shape = torch.Size([*n_electrons.shape, -1])
+        eigenvalues_flat, srt = psort(
+            eigenvalues.view(shape),
+            None if e_mask is None else e_mask.view(shape))
+
+        if e_mask is None:
+            is_real = torch.ones_like(eigenvalues_flat, dtype=torch.bool)
+        else:
+            is_real = e_mask.view(shape).gather(-1, srt)
+
+        occupancy_cap = torch.where(is_real, scale_factor, 0.0)
+        filled = bT(bT(occupancy_cap.cumsum(-1))
+                    <= (n_electrons + finfo.resolution * 5))
+
+        occupancy_cap[~is_real | ~filled] = 0.0
+        occupations = occupancy_cap.gather(-1, torch.argsort(srt, -1)).view(
+            eigenvalues.shape)
+
+        return occupations
+
+    @staticmethod
+    def _middle_gap_approximation_precompute(
+            eigenvalues: Tensor, n_electrons: Tensor,
+            scale_factor: Tensor, e_mask: Optional[Tensor] = None,
+            degeneracy_tolerance: float = 0.0):
+
+        finfo = torch.finfo(eigenvalues.dtype)
+
+        if scale_factor.ndim != 0:
+            raise NotImplementedError(
+                "Autograd support has not yet been added to the `fermi_search` "
+                "function for systems with multiple spin-channels or k-points "
+                "that pass through the midpoint approximation.")
+
+        shape = torch.Size([*n_electrons.shape, -1])
+
+        eigenvalues_flat, srt = psort(
+            eigenvalues.view(shape),
+            None if e_mask is None else e_mask.view(shape))
+
+        # Build per-state weights in sorted order. When support for multiple
+        # spin-channels or k-point heights is required, the following block can
+        # be enabled and `scale_factor_flat` used in place of `scale_factor`.
+        # if scale_factor.numel() == 1:
+        #     scale_factor_flat = scale_factor
+        # else:
+        #     scale_factor_flat = torch.full_like(eigenvalues_flat, scale_factor)
+
+        if e_mask is None:
+            is_real = torch.ones_like(eigenvalues_flat, dtype=torch.bool)
+        else:
+            is_real = e_mask.view(shape).gather(-1, srt)
+
+        occupancy_cap = torch.where(is_real, scale_factor, 0.0)
+        cumulative_occupancy_cap = bT(occupancy_cap.cumsum(-1))
+
+        r = finfo.resolution * 5
+        filled = bT(cumulative_occupancy_cap <= (n_electrons + r))
+
+        # Get the eigenvalues of the highest occupied and lowest unoccupied
+        # states. The `torch.where` function is used rather than standard
+        # masking to guard against situations where there are not occupied
+        # or unoccupied states.
+        e_homo = torch.where(is_real & filled, eigenvalues_flat, -1e30).max(-1, keepdim=True).values
+        e_lumo = torch.where(is_real & ~filled, eigenvalues_flat, 1e30).min(-1, keepdim=True).values
+
+        # Identify which states have energies matching the first identified
+        # homo/lumo.
+        dr = r + degeneracy_tolerance
+        mask_homo = is_real & filled & ((eigenvalues_flat - e_homo).abs() <= dr)
+        mask_lumo = is_real & (~filled) & ((eigenvalues_flat - e_lumo).abs() <= dr)
+
+        # Get the weight specifying the amount to which each state contributes.
+        # Realistically this could be hardcoded to `scale_factor` as this
+        # version does not support multiple spin-channels or k-points. However,
+        # in the future this can be used to add such support, along with an
+        # array storing the scale factor for each state sorted to match the
+        # `eigenvalues_flat` tensor.
+        weights_homo = torch.where(mask_homo, scale_factor, 0.0)
+        weights_lumo = torch.where(mask_lumo, scale_factor, 0.0)
+
+        tiny = finfo.tiny
+        normed_weights_homo = weights_homo / weights_homo.sum(
+            -1, keepdim=True).clamp_min(tiny)
+        normed_weights_lumo = weights_lumo / weights_lumo.sum(
+            -1, keepdim=True).clamp_min(tiny)
+
+        return eigenvalues_flat, normed_weights_homo, normed_weights_lumo
+
+    @staticmethod
+    def _middle_gap_approximation(
+            eigenvalues: Tensor, n_electrons: Tensor,
+            scale_factor: Tensor, e_mask: Optional[Tensor] = None,
+            degeneracy_tolerance: float = 0.0
+        ) -> Tensor:
+        """Returns the midpoint between the HOMO and LUMO.
+
+        Determines the middle of the fundamental gap for each system/batch by
+        locating the highest occupied molecular orbital (HOMO) and the lowest
+        unoccupied molecular orbital (LUMO) in the sorted eigen‑energy spectrum.
+        The procedure is agnostic to padding states and honours per‑state
+        occupation scaling (e.g. spin multiplicity and k‑point weights).
+
+        Arguments:
+            eigenvalues: Eigen‑energies, i.e. orbital‑energies. May have up to
+                four dimensions in the order
+                ``[batch, spin, k‑points, eigenvalues]``.
+            n_electrons: Total number of (valence) electrons per system.
+            scale_factor: Maximum occupancy of each eigenstate; equals 2 or 1 for
+                restricted and unrestricted molecular systems respectively and is
+                additionally scaled by any k‑point weights for periodic systems.
+            e_mask: Boolean mask that distinguishes *real* eigenstates from
+                *ghost* padding states. **Must** be supplied when, and only when,
+                batched systems are processed. [DEFAULT=None]
+            degeneracy_tolerance: Specifies an absolute energy tolerance used
+                to identify degenerate frontier states when the Fermi level is
+                determined via the middle-gap approximation. Degeneracies at
+                the HOMO or LUMO may lead to numerical inconsistencies in the
+                computed gradients, as the exact selection of a single state is
+                not well-defined. When a non-zero tolerance is given, all
+                occupied states within this energy window of the HOMO or LUMO
+                edge are treated as degenerate and contribute equally (or in
+                proportion to their weights) to the derivative of the Fermi
+                level. This option may be employed when systems containing
+                near-degenerate frontier states are studied, in order to ensure
+                stable and physically meaningful gradients. [DEFAULT=0.0]
+
+        Returns:
+            mid_point: Mid‑gap energy (HOMO/LUMO average) for each system.
+
+
+        Notes:
+            The HOMO index is found where the cumulative sum of the maximum state
+            occupancies first meets or exceeds ``n_electrons``.  The LUMO is taken
+            as the succeeding state; if the system is fully occupied the index is
+            clamped to the final *real* state, causing the gap to collapse to zero.
+
+        """
+        (eigenvalues_flat, normed_weights_homo, normed_weights_lumo,
+         ) = _FermiSearch._middle_gap_approximation_precompute(
+            eigenvalues, n_electrons, scale_factor, e_mask, degeneracy_tolerance)
+
+        weighted_homo = (normed_weights_homo * eigenvalues_flat).sum(-1)
+        weighted_lumo = (normed_weights_lumo * eigenvalues_flat).sum(-1)
+
+        return 0.5 * (weighted_homo + weighted_lumo)
+
+    @staticmethod
+    def _smearing_gradients(
+            eigenvalues: Tensor, fermi_energy: Tensor, scale_factor: Tensor,
+            kT: Tensor, scheme: Scheme, e_mask=None) -> Tuple[Tensor, Tensor]:
+
+        with torch.enable_grad():
+            eigenvalues = eigenvalues.detach().requires_grad_(True)
+            fermi_energy = fermi_energy.detach().requires_grad_(True)
+
+            df_dmu, df_de, = torch.autograd.grad(
+                scheme(eigenvalues, fermi_energy, kT, e_mask=e_mask),
+                (fermi_energy, eigenvalues),
+                grad_outputs=scale_factor.expand_as(eigenvalues),
+                retain_graph=False, create_graph=False)
+
+        return df_dmu, df_de
+
+    # noinspection PyMethodOverriding
+    @staticmethod
+    def backward(ctx, mu_grad: Tensor):
+        """Evaluate gradients of the fermi-energy search operation.
+
+        The backwards pass computes the gradients of the fermi-energy with
+        respect to the eigenvalues. Without such manual intervention, the
+        autograd engine would not be able to pass through the fermi search
+        function.
+
+        Args:
+            mu_grad: Gradients associated with the fermi-energy.
+
+        Returns:
+            eigenvalues_grad: Gradients associated with the `eigenvalues`.
+
+        """
+
+        # The approach that should be used to compute the gradients depends on
+        # the method by which the fermi-energy was calculated. Cases involving
+        # partial occupancy would have undergone a bisection search to find the
+        # fermi-energy. In such instances the gradients must be computed via
+        # the implicit function theorem method. In the remaining cases, where
+        # fermi-energy will have been determined via the middle-gap
+        # approximation, the eigenvalue gradients are 0.5 for the HOMO & LUMO.
+
+        shp = torch.Size([*ctx.n_electrons.shape, -1])
+        eigenvalues, mu, kT = ctx.saved_tensors
+
+        # Compute gradients via the middle gap approximation approach
+        (eigenvalues_flat, normed_weights_homo, normed_weights_lumo
+         ) = _FermiSearch._middle_gap_approximation_precompute(
+            eigenvalues, ctx.n_electrons, ctx.scale_factor, ctx.e_mask,
+            ctx.degeneracy_tolerance)
+
+        dfermi_de_midpoint = 0.5 * (normed_weights_homo + normed_weights_lumo)
+
+        # If a kT value was specified then some systems may have undergone a
+        # bisection search. Thus, the gradients must also be computed via the
+        # implicit function theorem method as well.
+        if kT is not None:
+            # `smearing_gradients` uses the PyTorch autograd engine with an
+            # independent graph to compute the partial derivatives of the implicit
+            # function "f" with respect to the fermi-energy and the eigenvalues.
+            # This approach is more complex, verbose, and likely more costly, than
+            # manually implementing the derivatives. However, the advantages is
+            # that no explicit smearing scheme dependent handling is required.
+            df_dmu, df_de = _FermiSearch._smearing_gradients(
+                eigenvalues, mu, ctx.scale_factor, kT, ctx.scheme,
+                e_mask=ctx.e_mask)
+
+            # Clap the denominator to prevent decision by zeros
+            dfermi_de_implicit = - df_de / df_dmu.view(
+                shp).clamp_min(torch.finfo(eigenvalues.dtype).tiny)
+
+            # Select which gradient should be used for which system. The boolean
+            # mask `b_mask` is true for systems that underwent a bisection search
+            # and false for those that were computed via the middle-gap
+            # approximation.
+            dfermi_de = torch.where(
+                ctx.b_mask.view(shp), dfermi_de_implicit, dfermi_de_midpoint)
+
+        # If no kT value was specified then the midpoint method is the only
+        # possible gradient source.
+        else:
+            dfermi_de = dfermi_de_midpoint
+
+        # Chain to the loss value
+        eigenvalues_grad = mu_grad.view(shp) * dfermi_de
+
+        # PyTorch expects the `backward` method to return as many results as
+        # there were inputs to the `forward` method. However, a dummy `None`
+        # value can be returned for everything but the eigenvalues, as they are
+        # the only value TBMaLT currently requires.
+        return eigenvalues_grad, None, None, None, None, None, None, None, None
+
+
 def fermi_search(
         eigenvalues: Tensor, n_electrons: float_like,
-        kT: Optional[float_like] = None, scheme: _Scheme = fermi_smearing,
+        kT: Optional[float_like] = None, scheme: Scheme = fermi_smearing,
         tolerance: Optional[Real] = None, max_iter: int = 200,
-        e_mask: Optional[Union[Tensor, Basis]] = None,
-        k_weights: Optional[Tensor] = None) -> Tensor:
+        e_mask: Optional[Union[Tensor, OrbitalInfo]] = None,
+        k_weights: Optional[Tensor] = None,
+        degeneracy_tolerance: float = 0.0) -> Tensor:
     r"""Determines the Fermi-energy of a system or batch thereof.
 
     Calculates the Fermi-energy with or without finite temperature. Finite
-    temperature can be enabled by specifying a ``kT`` value. Note that this
-    function will always operate outside of any graph.
+    temperature can be enabled by specifying a ``kT`` value.
 
     Arguments:
         eigenvalues: Eigen-energies, i.e. orbital-energies. This may have up to
             4 dimensions, 3 of which are optional, so long as the following
             order is satisfied [batch, spin, k-points, eigenvalues].
         n_electrons: Total number of (valence) electrons.
-        kT: Electronic temperature. By default finite temperature is not
+        kT: Electronic temperature. By default, finite temperature is not
             active, i.e. ``kT`` = None. [DEFAULT=None]
         scheme: Finite temperature broadening function to be used, TBMaLT
             natively supports two broadening methods:
@@ -264,9 +983,21 @@ def fermi_search(
         e_mask: Provides info required to distinguish "real" ``eigenvalues``
             from "fake" ones. This is Mandatory when using smearing on batched
             systems. This may be a `Tensor` that is `True` for real states or
-            a `Basis` object. [DEFAULT=None]
+            a `OrbitalInfo` object. [DEFAULT=None]
         k_weights: If periodic systems are supplied then k-point wights can be
             given via this argument.
+        degeneracy_tolerance: Specifies an absolute energy tolerance used to
+            identify degenerate frontier states when the Fermi level is
+            determined via the middle-gap approximation. Degeneracies at the
+            HOMO or LUMO may lead to numerical inconsistencies in the computed
+            gradients, as the exact selection of a single state is not well
+            defined. When a non-zero tolerance is given, all occupied states
+            within this energy window of the HOMO or LUMO edge are treated as
+            degenerate and contribute equally (or in proportion to their
+            weights) to the derivative of the Fermi level. This option may be
+            employed when systems containing near-degenerate frontier states
+            are studied, in order to ensure stable and physically meaningful
+            gradients. [DEFAULT=0.0]
 
     Returns:
         fermi_energy: Fermi energy value(s).
@@ -275,9 +1006,6 @@ def fermi_search(
         It is imperative to ensure that ``e_mask`` is specified when, and only
         when, a batch of systems is provided. Failing to satisfy this condition
         will cause **spurious and hard to diagnose errors**.
-
-        This function operates outside of the pytorch autograd graph and is
-        therefore **not** back-propagatable!
 
     Notes:
         The eigenvalues should be ordered from lowest to highest, with padding
@@ -289,10 +1017,6 @@ def fermi_search(
         basis or a single value can be provided which is used by all. However,
         smearing cannot be applied selectively; i.e. finite temperature can be
         enabled for some systems but not others during a single call.
-
-        This function will run outside of any torch graph & is therefore not
-        back-propagatable. This avoids introducing unnecessary and expensive
-        clutter into the graph.
 
         This code is based on the DFTB+ etemp module. [1]_ However, unlike the
         DFTB+ implementation, no final Newton-Raphson step is performed.
@@ -309,158 +1033,140 @@ def fermi_search(
                (2020). DFTB+, a software package for efficient approximate
                density functional theory based atomistic simulations. The
                Journal of Chemical Physics, 152(12), 124101.
+
+    Examples:
+        >>> from tbmalt.physics.filling import fermi_search
+        >>> # An example H2 system
+        >>> e_vals = torch.tensor([-0.3405911944959140,
+        ...                        0.2311892808528265])
+        >>> kt = torch.tensor(0.0036749324000000)
+        >>> n_elec = 2.0
+        >>> # Fermi search
+        >>> e_fermi = fermi_search(e_vals, n_elec, kt, scheme=fermi_smearing)
+        >>> print(e_fermi)
+        tensor(-0.0547)
+
     """
-    def middle_gap_approximation():
-        """Returns the midpoint between the HOMO and LUMO."""
-        # Flatten & sort the eigenvalues so there's 1 row per-system; the
-        # spin dimension is only flattened when the spin channels share a
-        # common fermi-energy.
-        ev_flat, srt = psort(
-            e_vals.view(shp),
-            None if e_mask is None else e_mask.view(shp))
-
-        # Maximum occupation of each eigenstate, sorted and flattened.
-        occ = (torch.ones_like(ev_flat) * scale_factor).gather(-1, srt)
-        # Locate HOMO index, via the transition between under/over filled.
-        # A indirect method is used here as direct calls to ">" & "<" result in
-        # spurious behaviour when any noise is present in `n_elec`.
-        occ_cs = occ.cumsum(-1).T - n_elec
-        r = torch.finfo(n_elec.dtype).resolution * 5
-        i_homo = torch.argmax(
-            torch.as_tensor(occ_cs.ge(-r).T, dtype=torch.long),
-            dim=-1).view(shp)
-
-        # Return the Fermi value
-        return ev_flat.gather(-1, torch.cat((i_homo, i_homo + 1), -1)).mean(-1)
 
     # __Setup__
-    # Arguments, tolerance, eigenvalues, n_electrons aliased here for brevity.
-    e_vals, n_elec, tol = eigenvalues, n_electrons, tolerance
-    dtype, dev = e_vals.dtype, e_vals.device
+    dtype, dev = eigenvalues.dtype, eigenvalues.device
 
-    # Convert n_elec & kT into tensors to make them easier to work with.
-    if not isinstance(n_elec, Tensor) or not torch.is_floating_point(n_elec):
-        n_elec = torch.as_tensor(n_elec, dtype=dtype, device=dev)
+    # Convert n_electrons & kT into tensors to make them easier to work with.
+    if not isinstance(n_electrons, Tensor) \
+            or not torch.is_floating_point(n_electrons):
+        n_electrons = torch.as_tensor(n_electrons, dtype=dtype, device=dev)
     if kT is not None and not isinstance(kT, Tensor):
         kT = torch.tensor(kT, dtype=dtype, device=dev)
 
-    # If a Basis instance was given as a mask then convert it to a tensor
-    if isinstance(e_mask, Basis):
+    # If a OrbitalInfo instance was given as a mask then convert it to a tensor
+    if isinstance(e_mask, OrbitalInfo):
         e_mask = e_mask.on_atoms != -1
+    elif isinstance(e_mask, Tensor):
+        if e_mask.dtype is not torch.bool:
+            e_mask = e_mask != -1
 
     # Scaling factor is the max № of electrons that can occupancy each state;
     # 2/1 for restricted/unrestricted molecular systems. For periodic systems
     # this is then multiplied by the k-point weights.
-    pf = 5 - e_vals.ndim - [k_weights, e_mask].count(None)
+    pf = 5 - eigenvalues.ndim - [k_weights, e_mask].count(None)
     scale_factor = pf if k_weights is None else pf * k_weights
+
+    if not isinstance(scale_factor, Tensor):
+        scale_factor = torch.as_tensor(scale_factor, dtype=dtype, device=dev)
 
     # Shape of Ɛ tensor where k-points & spin-channels have been flattened out.
     # Note that only spin-channels with common fermi energies get flattened.
-    shp = torch.Size([*n_elec.shape, -1])
+    shp = torch.Size([*n_electrons.shape, -1])
 
     # __Error Checking__
     eps = torch.finfo(dtype).eps
-    if tol is None:  # auto-assign if no tolerance was given
-        tol = {torch.float64: 1E-10, torch.float32: 1E-5,
+    if tolerance is None:  # auto-assign if no tolerance was given
+        tolerance = {torch.float64: 1E-10, torch.float32: 1E-5,
                torch.float16: 1E-2}[dtype]
-    elif tol < eps:  # Ensure tolerance value is viable
-        raise ValueError(f'Tolerance {tol:7.1E} too tight for "{dtype}", '
+
+    elif tolerance < eps:  # Ensure tolerance value is viable
+        raise ValueError(f'Tolerance {tolerance:7.1E} too tight for "{dtype}", '
                          f'the minimum permitted value is: {eps:7.1E}.')
 
     if kT is not None and (kT < 0.0).any():  # Negative kT catch
         raise ValueError(f'kT must be positive or None ({kT})')
 
-    if torch.lt(n_elec.abs(), eps).any():  # A system has no electrons
+    if torch.lt(n_electrons.abs(), eps).any():  # A system has no electrons
         raise ValueError('Number of elections cannot be zero.')
 
     # A system has too many electrons
-    if torch.any((n_elec / pf).gt(e_vals.view(shp).shape[-1] if e_mask is None
+    if torch.any((n_electrons / pf).gt(eigenvalues.view(shp).shape[-1] if e_mask is None
                                else e_mask.view(shp).count_nonzero(-1))):
         raise ValueError('Number of electrons cannot exceed 2 * n states')
 
-    # __Finite Temperature Disabled__
-    # Set the fermi energy to the mid point between the HOMO and LUMO.
-    if kT is None:
-        return middle_gap_approximation()
+    e_fermi = _FermiSearch.apply(
+        eigenvalues, n_electrons, kT, scale_factor, scheme, tolerance,
+        max_iter, e_mask, degeneracy_tolerance)
 
-    # __Finite Temperature Enabled__
-    # Perform a fermi level search via the bisection method
-    else:
-        # e_fermi holds results & c_mask tracks which systems have converged.
-        e_fermi = torch.zeros_like(n_elec, device=dev, dtype=dtype)
-        c_mask = torch.full_like(n_elec, False, dtype=torch.bool, device=dev)
+    return e_fermi
 
-        def elec_count(f, m=...):
-            """Makes a call to the smearing function & returns the sum.
 
-            This limits the messy masking operations needed by the smearing
-            function to one place. kT's mask are treated differently as 0d &
-            1d are both valid shapes of kT in both batch & single system mode.
-            """
-            res = scheme(e_vals[m], f[m], kT[m if kT.ndim != 0 else ...])
-            if e_mask is not None:  # Cull "fake" states caused by padding
-                res[~e_mask[m]] = 0.0
+def aufbau_filling(
+        eigenvalues: Tensor, n_electrons: float_like,
+        e_mask: Optional[Union[Tensor, OrbitalInfo]] = None,
+        k_weights: Optional[Tensor] = None) -> Tensor:
+    """Fractional orbital occupancies due to the Aufbau principle.
 
-            # Sum up over all axes apart from the batch dimension
-            return (res * scale_factor).T.sum_to_size(n_elec[m].shape)
+    Returns the fractional occupancy of each orbital according the Aufbau
+    principle in which states are filled from lowest to highest energy until
+    the specified electron count is reached. Any given state will only be
+    occupied if all states of lower energy are also occupied.
 
-        # If there's an even, integer number of e⁻; try setting e_fermi to
-        # the middle gap, i.e. fill according to the Aufbau principle.
-        if (mask := abs((n_elec / 2) - (n_elec / 2).round()) <= tol).any():
-            # Store fermi value, recalculate № of e⁻ & identity of convergence
-            e_fermi[mask] = middle_gap_approximation()[mask]
-            c_mask[mask] = abs(elec_count(e_fermi)[mask] - n_elec[mask]) < tol
+    Arguments:
+        eigenvalues: Eigen-energies, i.e. orbital-energies. This may have up to
+            4 dimensions, 3 of which are optional, so long as the following
+            order is satisfied [batch, spin, k-points, eigenvalues].
+        n_electrons: Total number of (valence) electrons.
+        e_mask: Provides info required to distinguish "real" ``eigenvalues``
+            from "fake" ones. This is Mandatory when using smearing on batched
+            systems. This may be a `Tensor` that is `True` for real states or
+            a `OrbitalInfo` object. [DEFAULT=None]
+        k_weights: If periodic systems are supplied then k-point wights can be
+            given via this argument.
 
-        # If all systems converged then just return the results now
-        if c_mask.all():
-            return e_fermi.view_as(n_elec)
+    Returns:
+        occupancies: Fractional occupancies of the orbitals according to Aufbau
+            filling.
 
-        # __Setup Bounds for Bisection Search__
-        # Identify upper (e_up) & lower (e_lo) search bounds; fermi level should
-        # be between the highest & lowest eigenvalues, so start there.
-        e_lo = e_vals.view(shp).min(-1).values
-        e_up = e_vals.view(shp).max(-1).values
-        ne_lo, ne_up = elec_count(e_lo), elec_count(e_up)
+    """
 
-        # Bounds may fail on large kT or full band structures; if too many e⁻
-        # are present at the e_lo then decrease it & recalculate. If too few e⁻
-        # present at the e_up, then it's too low so increase it & recalculate
-        # the number of elections there.
-        while (mask := ne_lo > n_elec).any():
-            e_lo[mask] += 2.0 * (e_lo[mask] - e_up[mask])
-            ne_lo[mask] = elec_count(e_lo, mask)
+    # No comments are provided for the code here as all the code present is
+    # functionally identical to that in `fermi_search`; albeit a much cut down
+    # version.
 
-        while (mask := ne_up < n_elec).any():
-            e_up[mask] += 2.0 * (e_up[mask] - e_lo[mask])
-            ne_up[mask] = elec_count(e_up, mask)
+    if not isinstance(n_electrons, Tensor) \
+            or not torch.is_floating_point(n_electrons):
+        n_electrons = torch.as_tensor(
+            n_electrons, dtype=eigenvalues.dtype, device=eigenvalues.device)
 
-        # Set the fermi energy to the mid point between the two bounds.
-        e_fermi[~c_mask] = (0.5 * (e_up + e_lo))[~c_mask]
-        ne_fermi = elec_count(e_fermi)
+    if isinstance(e_mask, OrbitalInfo):
+        e_mask = e_mask.on_atoms != -1
 
-        # __Perform the Bisection Search__
-        n_steps = 0
-        # Continue squeezing e_up & e_lo together until the delta between the
-        # actual & predicted number of e⁻ is less than "tolerance".
-        while (mask := ~c_mask).any():
-            n_steps += 1
+    pf = 5 - eigenvalues.ndim - [k_weights, e_mask].count(None)
+    scale_factor = pf if k_weights is None else pf * k_weights
 
-            # Move e_lo to mid-point if `e_lo & e_up haven't crossed` ≡ `mid-point is
-            # below the fermi level`; otherwise move e_up up to the mid-point.
-            if (m_up := ((ne_up > ne_lo) == (n_elec > ne_fermi)) & mask).any():
-                e_lo[m_up], ne_lo[m_up] = e_fermi[m_up], ne_fermi[m_up]
-            if (m_down := mask & ~m_up).any():
-                e_up[m_down], ne_up[m_down] = e_fermi[m_down], ne_fermi[m_down]
+    if not isinstance(scale_factor, Tensor):
+        scale_factor = torch.as_tensor(scale_factor, dtype=eigenvalues.dtype,
+                                       device=eigenvalues.device)
 
-            # Recompute mid-point & its electron count then update the c_mask
-            e_fermi[mask] = 0.5 * (e_up + e_lo)[mask]
-            ne_fermi[mask] = elec_count(e_fermi, mask)
-            c_mask[mask] = abs(ne_fermi - n_elec)[mask] <= tol
+    shp = torch.Size([*n_electrons.shape, -1])
 
-            # If maximum allowed number of iterations reached: raise and error.
-            if n_steps > max_iter:
-                raise ConvergenceError('Fermi search failed to converge',
-                                       ~c_mask)
+    if torch.lt(n_electrons.abs(), torch.finfo(eigenvalues.dtype).eps).any():
+        raise ValueError('Number of elections cannot be zero.')
 
-        # Return the fermi energy
-        return e_fermi
+    if torch.any((n_electrons / pf).gt(
+            eigenvalues.view(shp).shape[-1] if e_mask is None
+            else e_mask.view(shp).count_nonzero(-1))):
+
+        raise ValueError('Number of electrons cannot exceed 2 * n states')
+
+    # Divide by the pre-factor to get back to fractional values. This is a bit
+    # wasteful and thus the occupancy scaling situation should be refactored
+    # at some point in the future.
+    return _FermiSearch._aufbau_filling(
+        eigenvalues, n_electrons, scale_factor, e_mask) / pf

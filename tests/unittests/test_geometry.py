@@ -8,10 +8,9 @@ import torch
 from ase.build import molecule
 from tests.test_utils import fix_seed
 from tbmalt.structures.geometry import Geometry, unique_atom_pairs
-from tbmalt.common.batch import pack
+from tbmalt.common.batch import pack, deflate
 from tbmalt.data.units import length_units
 from tbmalt.data import chemical_symbols
-
 
 ######################
 # Geometry Test Data #
@@ -114,7 +113,9 @@ def geometry_basic_helper(device, positions, atomic_numbers):
         for slc in [slice(None, 2), slice(-2, None), slice(None, None, 2)]:
             # Create sliced and reference geometry objects
             geom_slc = geom_1[slc]
-            geom_ref = Geometry(atomic_numbers_ref[slc], positions_ref[slc])
+            atomic_numbers_slice = deflate(atomic_numbers_ref[slc])
+            positions_slice = positions_ref[slc][..., :atomic_numbers_slice.shape[-1], :]
+            geom_ref = Geometry(atomic_numbers_slice, positions_slice)
 
 
             # Loop over and ensure the attributes are the same
@@ -132,7 +133,7 @@ def geometry_basic_helper(device, positions, atomic_numbers):
     # Check 8: Error should be raised if the number of systems in the positions
     # & atomic_numbers arguments disagree with one another
     if batch:
-        with pytest.raises(AssertionError, match=r'`atomic_numbers` & `pos*'):
+        with pytest.raises(AssertionError, match=r'`positions` & `atomic_numbers`*'):
             _ = Geometry(atomic_numbers[slice(None, None, 2)], positions)
 
 
@@ -377,8 +378,16 @@ def test_unique_atom_pairs(device):
     """Tests the 'unique_atom_pairs' helper function."""
     geom = Geometry(atomic_numbers_data(device, True),
                     positions_data(device, True))
-    ref = torch.tensor(
-        [[1, 1], [6, 1], [8, 1], [1, 6], [6, 6],
-         [8, 6], [1, 8], [6, 8], [8, 8]], device=device)
-    check = (unique_atom_pairs(geom) == ref).all()
-    assert check, "unique_atom_pairs returned an unexpected result"
+
+    ref_1 = torch.tensor(
+        [[1, 1], [1, 6], [1, 8], [6, 6], [6, 8], [8, 8]], device=device)
+    check_1 = (unique_atom_pairs(geom, ) == ref_1).all()
+
+    assert check_1, "unique_atom_pairs returned an unexpected result"
+
+    ref_2 = torch.tensor(
+        [[1, 1], [1, 6], [1, 8], [6, 1], [6, 6],
+         [6, 8], [8, 1], [8, 6], [8, 8]], device=device)
+    check_2 = (unique_atom_pairs(geom, True) == ref_2).all()
+
+    assert check_2, "unique_atom_pairs (ordered) returned an unexpected result"

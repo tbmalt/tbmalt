@@ -41,6 +41,8 @@ def skf_files():
 @contextmanager
 def file_cleanup(path_in, path_out):
     """Context manager for cleaning up temporary files once no longer needed."""
+    # Manually managing temporary files is not exactly in line with best
+    # practice.
     # Loads the file located at `path_in` and saves it to `path_out`
     Skf.read(path_in).write(path_out)
     try:
@@ -54,24 +56,26 @@ def file_cleanup(path_in, path_out):
 def _ref_interaction(l1, l2, i_type, device=None):
     """Random looking data for testing electronic integrals with.
 
-    For a given electronic integral, as defined by its azimuthal pair an its
+    For a given electronic integral, as defined by its azimuthal pair and its
     integral type (i.e. H/S), this function will return some random looking
     data that is unique to that interaction. This prevents having to hard
     code in the expected results.
     """
+    # This, could do with a rewrite to make it less ...esoteric.
     l_min = min(l1, l2) + 1
     # Unique noise lookup table
     noise_lut = torch.tensor([97 / 13, 71 / 47, 31 / 89, 11 / 17], device=device)
     c = (noise_lut[l1] + noise_lut[l2]) % 1  # Constant noise offset
     b = (noise_lut[:l_min] % 1)  # Bond order specific noise
-    # Generate 3 lines worth of data
+    # Generate 2 lines worth of data
     data = (torch.linspace(0, 1, 3 * l_min, device=device) + c
-            ).view(3, l_min) + b
+            ).view(3, l_min)[0:2, ...] + b
     # Invert the sign if this is an overlap matrix
     if i_type.lower() == 's': data = data * -1
     elif i_type.lower() != 'h': raise ValueError('`type` must be "h" or "s".')
     # Append 3 lines worth of 0 to the start of the data & return
-    return torch.cat((torch.zeros_like(data, device=device), data), 0).T.squeeze()
+    return torch.cat((torch.zeros(3, data.shape[1], device=device),
+                      data), 0).T.squeeze()
 
 
 def _check_skf_contents(skf, has_atomic, has_r_poly, has_r_spline, device):
@@ -81,7 +85,7 @@ def _check_skf_contents(skf, has_atomic, has_r_poly, has_r_spline, device):
         has_atomic: True if the file contains parsable atomic data.
         has_r_poly: True if the file contains a valid repulsive polynomial.
         has_r_spline: True if the file contains a repulsive spline.
-        device: Device on on which the `Skf` object should be created.
+        device: Device on which the `Skf` object should be created.
     """
     d = {'device': device}
 
@@ -97,7 +101,7 @@ def _check_skf_contents(skf, has_atomic, has_r_poly, has_r_spline, device):
                 assert dev_check, f'`{n}` is on the wrong device'
 
     # Check integral grid integrity
-    check_grid = torch.allclose(skf.grid, torch.arange(6., **d) + 1.)
+    check_grid = torch.allclose(skf.grid, torch.arange(5., **d) + 1.)
     assert check_grid, '`Skf.grid` is in error'
 
     # Ensure atomic data was parsed
@@ -217,7 +221,7 @@ def test_write():
     """Simple test of the `Skf.write` method's general operation."""
     skf, args = next(skf_files())
     with file_cleanup(skf, 'X-X.skf'), file_cleanup(skf, 'skfdb.hdf5'):
-        # Check 1: exception raised when overwriting an skf-file or HDF5-group
+        # Check 1: exception raised when overwriting and skf-file or HDF5-group
         # without the `overwrite` argument set to True
         with pytest.raises(FileExistsError):
             Skf.read(skf).write('X-X.skf')

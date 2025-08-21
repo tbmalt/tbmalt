@@ -59,7 +59,8 @@ def gaussian(x: Union[Tensor, float], mean: Union[Tensor, float],
         Evaluating points on a pair of distributions with differing means:
 
         >>> x_vals = torch.linspace(0, 1, 100)
-        >>> y1, y2 = tb_maths.gaussian(x_vals, torch.tensor([0.25, 0.75]), 0.5)
+        >>> y1, y2 = tb_maths.gaussian(x_vals, torch.tensor([[0.25], [0.75]]),
+                                       0.5)
         >>> plt.plot(x_vals, y1, '-r')
         >>> plt.plot(x_vals, y2, '-b')
         >>> plt.show()
@@ -102,6 +103,17 @@ def hellinger(p: Tensor, q: Tensor) -> Tensor:
         As `p` and `q` ar probability distributions they must be positive. If
         not, a terminal error will be encountered during backpropagation.
 
+    Examples:
+        Calculating the Hellinger distance.
+
+         >>> import tbmalt.common.maths as tb_maths
+         >>> x_vals = torch.linspace(0, 1, 100)
+         >>> y1, y2 = tb_maths.gaussian(x_vals,
+                                        torch.tensor([[0.45], [0.55]]), 0.5)
+         >>> hel_dis = tb_maths.hellinger(y1, y2)
+         >>> print(hel_dis)
+         tensor(0.3168)
+
     """
     # Raise a ValueError if negative values are encountered. Negative values
     # will throw an error during backpropagation of the sqrt function.
@@ -122,7 +134,8 @@ def estimate_minmax(
     amat: Tensor,
 ) -> Tuple[Tensor, Tensor]:
     """
-    Estimate maximum and minimum eigenvalue of a matrix using the Gershgorin circle theorem.
+    Estimate maximum and minimum eigenvalue of a matrix using the Gershgorin
+    circle theorem.
 
     Arguments:
         amat : Tensor
@@ -144,8 +157,9 @@ def estimate_minmax(
         >>> estimate_minmax(amat)
         (tensor([-1.4178, -1.0958]), tensor([0.9272, 3.1334]))
         >>> evals = torch.linalg.eigh(amat)[0]
-        >>> evals.min(-1)[0], evals.max(-1)[0],
+        >>> evals.min(-1)[0], evals.max(-1)[0]
         (tensor([-1.1543, -0.5760]), tensor([0.7007, 2.4032]))
+
     """
 
     center = amat.diagonal(dim1=-2, dim2=-1)
@@ -177,7 +191,7 @@ class _SymEigB(torch.autograd.Function):
         increasing the extent of  broadening will help to improve stability
         it will also increase the error in the gradients.
 
-        Two different broadening methods have been  implemented within this
+        Two different broadening methods have been implemented within this
         class. Conditional broadening as described by Seeger [MS2019]_, and
         Lorentzian as detailed by Liao [LH2019]_. During the forward pass the
         `torch.symeig` function is used to calculate both the eigenvalues &
@@ -186,9 +200,9 @@ class _SymEigB(torch.autograd.Function):
 
         .. math:: \bar{A} = U (\bar{\Lambda} + sym(F \circ (U^t \bar{U}))) U^T
 
-        Where bar indicates a value's gradient passed in from  the previous
+        Where bar indicates a value's gradient passed in from the previous
         layer, :math:`\Lambda` is the diagonal matrix associated with the
-        :math:`\bar{\lambda}` values,  :math:`\circ`  is the so  called
+        :math:`\bar{\lambda}` values,  :math:`\circ`  is the so called
         Hadamard product, sym is the symmetrisation operator and F is:
 
         .. math:: F_{i, j} = \frac{I_{i \ne j}}{h(\lambda_i - \lambda_j)}
@@ -201,8 +215,8 @@ class _SymEigB(torch.autograd.Function):
 
         .. math:: h(t) = \frac{t^2 + \epsilon}{t}
 
-        The advantage of conditional broadening is that is is only applied
-        when it is needed, thus the errors induced in the gradients will be
+        The advantage of conditional broadening is that it is only applied
+        when needed, thus the errors induced in the gradients will be
         restricted to systems whose gradients would be nan's otherwise.
         The Lorentzian method, on the other hand, will apply broadening to
         all systems, irrespective of whether or not it is necessary. Note
@@ -221,7 +235,7 @@ class _SymEigB(torch.autograd.Function):
         .. [LH2019] Liao, H.-J., Liu, J.-G., Wang, L., & Xiang, T. (2019).
                     Differentiable Programming Tensor Networks. Physical
                     Review X, 9(3).
-        .. [Lapack] www.netlib.org/lapack/lug/node54.html (Accessed 10/08/2020)
+        .. [Lapack] www.netlib.org/lapack/lug/node54.html (Accessed 21/04/2023)
 
         """
 
@@ -291,7 +305,7 @@ class _SymEigB(torch.autograd.Function):
         and eigenvectors were taken.
 
         Arguments:
-            w_bar: Gradients associated with the the eigenvalues.
+            w_bar: Gradients associated with the eigenvalues.
             v_bar: Gradients associated with the eigenvectors.
 
         Returns:
@@ -435,7 +449,7 @@ def eighb(a: Tensor,
           **kwargs) -> Tuple[Tensor, Tensor]:
     r"""Solves general & standard eigen-problems, with optional broadening.
 
-    Solves standard and generalised eigenvalue problems of the from Az = λBz
+    Solves standard and generalised eigenvalue problems of the form Az = λBz
     for a real symmetric matrix ``a`` and can apply conditional or Lorentzian
     broadening to the eigenvalues during the backwards pass to increase
     gradient stability. Multiple  matrices may be passed in batch major form,
@@ -463,7 +477,7 @@ def eighb(a: Tensor,
         sort_out: If True; eigen-vector/value tensors are reordered so that
             any "ghost" entries are moved to the end. "Ghost" are values which
             emerge as a result of zero-padding. [DEFAULT=True]
-        aux: Converts zero-padding to identity-padding. This this can improve
+        aux: Converts zero-padding to identity-padding. This can improve
             the stability of backwards propagation. [DEFAULT=True]
 
     Keyword Args:
@@ -486,7 +500,7 @@ def eighb(a: Tensor,
         increasing the extent of  broadening will help to improve stability
         it will also increase the error in the gradients.
 
-        Two different broadening methods have been  implemented within this
+        Two different broadening methods have been implemented within this
         class. Conditional broadening as described by Seeger [MS2019]_, and
         Lorentzian as detailed by Liao [LH2019]_. During the forward pass the
         `torch.symeig` function is used to calculate both the eigenvalues &
@@ -510,8 +524,8 @@ def eighb(a: Tensor,
 
         .. math:: h(t) = \frac{t^2 + \epsilon}{t}
 
-        The advantage of conditional broadening is that is is only  applied
-        when it is needed, thus the errors induced in the gradients will be
+        The advantage of conditional broadening is that it is only applied
+        when needed, thus the errors induced in the gradients will be
         restricted to systems whose gradients would be nan's otherwise. The
         Lorentzian method, on the other hand, will apply broadening to all
         systems, irrespective of whether or not it is necessary. Note that if
@@ -532,7 +546,7 @@ def eighb(a: Tensor,
                return nan values or some raise an error.
 
     Warnings:
-        If operating upon zero-padded packed tensors then degenerate and  zero
+        If operating upon zero-padded packed tensors then degenerate and zero
         valued eigen values will be encountered. This will **always** cause an
         error during the backwards pass unless broadening is enacted.
 
@@ -553,7 +567,7 @@ def eighb(a: Tensor,
         .. [LH2019] Liao, H.-J., Liu, J.-G., Wang, L., & Xiang, T. (2019).
                     Differentiable Programming Tensor Networks. Physical
                     Review X, 9(3).
-        .. [Lapack] www.netlib.org/lapack/lug/node54.html (Accessed 10/08/2020)
+        .. [Lapack] www.netlib.org/lapack/lug/node54.html (Accessed 21/04/2023)
 
         """
 
@@ -691,7 +705,8 @@ def triangular_number(n: Union[Tensor, Real]) -> Union[Tensor, Real]:
         n: Value whose triangular number is to be calculated.
 
     Returns:
-        t: Triangular number of ``n``
+        t: Triangular number of ``n``.
+
     """
     return (n * (n + 1)) / 2
 
@@ -707,7 +722,8 @@ def tetrahedral_number(n: Union[Tensor, Real]) -> Union[Tensor, Real]:
         n: Value whose tetrahedral number is to be calculated.
 
     Returns:
-        te: Tetrahedral number of ``n``
+        te: Tetrahedral number of ``n``.
+
     """
     return (n * (n + 1) * (n + 2)) / 6
 
@@ -717,13 +733,14 @@ def triangular_root(x: Union[Tensor, Real]) -> Union[Tensor, Real]:
 
     Calculates the triangular root of a given input:
 
-    .. math:: n = \frac{\sqrt(8x + 1) - 1)}{2}
+    .. math:: n = \frac{\sqrt{(8x + 1)} - 1)}{2}
 
     Arguments:
         x: Value whose triangular root is to be calculated.
 
     Returns:
         n: Triangular root of ``x``.
+
     """
     return ((8 * x + 1) ** 0.5 - 1) / 2
 
@@ -740,6 +757,7 @@ def tetrahedral_root(x: Union[Tensor, Real]) -> Union[Tensor, Real]:
 
     Returns:
         n: Tetrahedral root of ``x``.
+
     """
     a = (9 * x ** 2 - (1 / 27)) ** 0.5
     return (3 * x + a)**(1/3) + (3 * x - a)**(1/3) - 1

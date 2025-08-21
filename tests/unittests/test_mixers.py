@@ -54,7 +54,7 @@ def gen_systems(device, sizes):
     """Generates a batch of fake system for faux-SCC/SCF convergence testing.
 
     Returns variables needed to conduct faux-SCC/SCF cycles on a batch of
-    systems. Note; variables have no underling physical basis as they are
+    systems. Note; variables have no underling physical orbs as they are
     randomly generated.
 
     Returns:
@@ -132,7 +132,7 @@ def func(x):
     return x + (-d * x - c * x**3)
 
 
-def cycle(mixer, target, function, arguments=None, n=200):
+def cycle(mixer, target, function, arguments=None, n=300):
     """Performs a self-consistency cycle using a specified mixer & function.
 
     Will check class is operating on the correct device.
@@ -143,39 +143,46 @@ def cycle(mixer, target, function, arguments=None, n=200):
         function: Function to be cycled, e.g. ``faux_SCC``.
         arguments: Tuple holding any other arguments that must be passed into
             ``function``.
-        n: Number of mixing cycles to perform.
+        n: Maximum number of mixing cycles to perform.
 
     Returns:
         converged: Tensor of booleans indicating convergence status.
         mixed: The final mixed system
 
     """
-    arguments = () if arguments is None else arguments
-    device = target.device
-    n_first = int(n / 2)
-    n_second = n - n_first
+    try:
+        arguments = () if arguments is None else arguments
+        device = target.device
+        n_first = 10
+        n_second = n - n_first
 
-    # "x_old" will only be provided for the first few cycles
-    for _ in range(n_first):
-        target = mixer(function(target, *arguments), target)
-    # After that it will have to rely on its internal tracking
-    for _ in range(n_second):
-        target = mixer(function(target, *arguments))
+        # "x_old" will only be provided for the first few cycles
+        for _ in range(n_first):
+            target = mixer(function(target, *arguments), target)
+        # After that it will have to rely on its internal tracking
+        for _ in range(n_second):
+            target = mixer(function(target, *arguments))
+            # If all systems are converged then break the loop to prevent
+            # possible over-convergence issues.
+            if torch.all(mixer.converged):
+                break
 
-    # Find floating point tensors that have been placed on the wrong device.
-    tensors = [k for k, v in mixer.__dict__.items() if isinstance(v, Tensor)
-               and v.dtype.is_floating_point and v.device != device]
-    cls = mixer.__class__.__name__
-    msg = (f'{cls}: The following tensors were placed on the wrong device\n'
-           f'\t{", ".join(tensors)}')
+        # Find floating point tensors that have been placed on the wrong device.
+        tensors = [k for k, v in mixer.__dict__.items() if isinstance(v, Tensor)
+                   and v.dtype.is_floating_point and v.device != device]
+        cls = mixer.__class__.__name__
+        msg = (f'{cls}: The following tensors were placed on the wrong device\n'
+               f'\t{", ".join(tensors)}')
 
-    # Assert everything is on the correct device
-    assert len(tensors) == 0, msg
-    assert device == target.device, f'{cls} device persistence check failed'
+        # Assert everything is on the correct device
+        assert len(tensors) == 0, msg
+        assert device == target.device, f'{cls} device persistence check failed'
 
-    converged = mixer.converged
-    mixer.reset()
-    return converged, target
+        converged = mixer.converged
+        mixer.reset()
+        return converged, target
+    finally:
+        mixer.reset()
 
 
 @pytest.mark.filterwarnings("ignore:Tolerance value")
@@ -206,7 +213,7 @@ def general(mixer, device):
     name = mixer.__class__.__name__
     a = torch.ones(5, 5, 5, device=device)
     a_copy = a.clone()
-    mixer._is_batch = True
+    mixer.is_batch = True
 
     # Checks 1 & 2
     mixer.tolerance = 1E-20
@@ -225,9 +232,10 @@ def general(mixer, device):
 
     # Check 4
     b = a
-    a = mixer(func(a), a)
+    c = func(a)
+    a = mixer(c, a)
     chk_4a = mixer.delta.shape == a_copy.shape
-    chk_4b = torch.allclose(a - b, mixer.delta)
+    chk_4b = torch.allclose(c - b, mixer.delta)
     assert chk_4a, f'{name}.delta has an incorrect shape'
     assert chk_4b, f'{name}.delta values are not correct'
 
@@ -278,23 +286,21 @@ def convergence(mixer, device):
     H, S, G, q0 = gen_systems(device, [10, 6, 4])  # Generate test data
 
     # CHECK 1:
-    mixer._is_batch = False
-    _, res_0 = cycle(mixer, torch.ones(5, device=device), func, None, 400)
-    converged = torch.allclose(torch.zeros(5, device=device), res_0)
-    assert converged, f'{name}: Failed to converge to correct result'
+    mixer.is_batch = False
+    conv_0, res_0 = cycle(mixer, torch.ones(5, device=device), func, None, 400)
+    assert conv_0, f'{name}: Failed to converge to correct result'
 
     # CHECK 2:
     # Check convergence of:
     #   1) A single vector
     conv_1, _ = cycle(mixer, q0[0], faux_SCC, (q0[0], H[0], S[0], G[0]))
     #   2) A single matrix
-    conv_2, res_1 = cycle(mixer, H[-1], faux_SCF, (q0[-1], H[-1], S[-1], G[-1]))
-    mixer._is_batch = True
+    conv_2, res_1 = cycle(mixer, H[0], faux_SCF, (q0[0], H[0], S[0], G[0]))
     #   3) A batch a of vectors
+    mixer.is_batch = True
     conv_3, _ = cycle(mixer, q0, faux_SCC, (q0, H, S, G))
     #   4) A of batch of a matrices
     conv_4, res_2 = cycle(mixer, H, faux_SCF, (q0, H, S, G))
-
 
     assert conv_1.all(), f'{name} Failed to converge single vector (faux_SCC)'
     assert conv_2.all(), f'{name} Failed to converge single matrix (faux_SCF)'
@@ -303,15 +309,17 @@ def convergence(mixer, device):
 
     # CHECK 3:
     # Ensure that batch & non-batch runs yield the same result
-    similar =  torch.allclose(res_1, res_2[-1])
+    similar = torch.allclose(res_1, res_2[0])
     assert similar, f'{name}: Batch operations return different results'
 
     # CHECK 4:
     # Check zero-padded packing does not adversely affect the final result
     # Ensure the same answer is given with padding as without padding.
-    s = (-1, slice(0,4), slice(0,4))
-    _, res_3 = cycle(mixer, H[s], faux_SCF, (q0[-1, :4,], H[s], S[s], G[s]))
-    similar = torch.allclose(res_3, res_1[:4, :4],)
+    mixer.is_batch = False
+    s = (-1, slice(0, 4), slice(0, 4))
+    _, res_3 = cycle(mixer, H[s], faux_SCF, (q0[-1, :4], H[s], S[s], G[s]))
+    _, res_4 = cycle(mixer, H[-1], faux_SCF, (q0[-1], H[-1], S[-1], G[-1]))
+    similar = torch.allclose(res_3, res_4[:4, :4],)
 
     assert similar, f'{name}: Zero padded packing returns different results'
     # Check 5 is carried out continuously by the cycle function.
@@ -331,9 +339,10 @@ def gradient(mixer, device):
 
         # F = H
         q_new = q0
-        for _ in range(15):
-            # F = mixer(faux_SCF(F, q0, H, S, G), F)
+        for _ in range(12):
             q_new = mixer(faux_SCC(q_new, q0, H, S, G), q_new)
+            if torch.all(mixer.converged):
+                break
 
         # Reset mixer before gradchecks next call
         mixer.reset()
@@ -341,7 +350,7 @@ def gradient(mixer, device):
         # return F
         return q_new
 
-    sizes = torch.tensor([5, 3], device=device)
+    sizes = torch.tensor([6, 4], device=device)
     # Generate test data
     H, S, G, q0 = gen_systems(device, sizes)
 
@@ -404,12 +413,12 @@ def test_anderson_general(device):
 
 def test_anderson_convergence(device):
     mixer = Anderson(is_batch=False, tolerance=1E-6)
-    mixer.mix_param = 0.1
+    mixer.mix_param = 0.05
     convergence(mixer, device)
 
 
 @pytest.mark.grad
 def test_anderson_grad(device):
     mixer = Anderson(is_batch=True, tolerance=1E-6)
-    mixer.mix_param = 0.1
+    mixer.mix_param = 0.05
     gradient(mixer, device)

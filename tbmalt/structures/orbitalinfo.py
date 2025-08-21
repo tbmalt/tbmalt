@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """A container to hold data associated with a chemical system's bases.
 
-This module provides the `Basis` data structure class and its associated code.
-The `Basis` class is intended to hold data needed to describe the number and
+This module provides the `OrbitalInfo` data structure class and its associated code.
+The `OrbitalInfo` class is intended to hold data needed to describe the number and
 identities of a chemical systems bases.
 """
 from typing import Dict, List, Union, Literal, Optional, Any
@@ -12,16 +12,16 @@ import torch
 from torch import Tensor, Size, arange
 from tbmalt.common.batch import pack, merge, deflate
 from tbmalt.common import split_by_size
-from tbmalt.common.constants import MAX_ATOMIC_NUMBER
+from tbmalt.data.elements import MAX_ATOMIC_NUMBER
 
 
 Form = Literal['full', 'shell', 'atomic']
 
 
-class Basis:
-    """Data container for all information relating to a system's basis set.
+class OrbitalInfo:
+    """Data container for all information relating to a system's orbs set.
 
-    This class collects all information about a system's basis set and its
+    This class collects all information about a system's orbs set and its
     orbitals into one place. This also permits calculations to
 
     Arguments:
@@ -49,15 +49,28 @@ class Basis:
         shell_ns (Tensor): The number of each shell, as defined by the order
             in which they were specified for relevant species.
 
+
+    Examples:
+        >>> from tbmalt import Geometry, OrbitalInfo
+        >>> from ase.build.molecule import molecule
+        >>> geometry = Geometry.from_ase_atoms(molecule('CH4'))
+        # Shell dictionary informing the `OrbitalInfo` entity that hydrogen
+        # atoms have a single s shell and carbon atoms an s and p shell.
+        >>> shell_dict = {1: [0], 6: [0, 1]}
+        >>> orbs = OrbitalInfo(geometry.atomic_numbers, shell_dict)
+
+
     Warnings:
         The order that each element's shell is specified in ``shell_dict`` is
         taken as the order in which integrals are yielded by `SkFeed` objects;
         i.e. `SkFeed.off_site(..., [atom_1_shell, atom_2_shell], ...)` will
         return the integral associated with the atom_1_shell'th shell on atom
         1 and the atom_2_shell'th shell on atom 2.
+
+
     """
     # Developers Notes:
-    # Basis instances only ever yield tensors used for masking or indexing
+    # OrbitalInfo instances only ever yield tensors used for masking or indexing
     # operations. As such the device on which they return results is somewhat
     # irrelevant. However, results are placed on the anticipated device anyway
     # to maintain expected behaviour.
@@ -98,7 +111,7 @@ class Basis:
             [sum([l * 2 + 1 for l in v]) for v in shell_dict.values()])
 
         self.shell_ns, self.shell_ls = torch.tensor(
-            [(i, l) for n in self.atomic_numbers.view(-1) if n != 0
+            [(i, l) for n in self.atomic_numbers.reshape(-1) if n != 0
              for i, l in enumerate(shell_dict[int(n)])], **kwargs).T
 
         if batch:
@@ -126,20 +139,32 @@ class Basis:
         self.orbital_matrix_shape: Size = n + Size([m3, m3])
 
     @property
+    def res_matrix_shape(self):
+        """``shell_matrix_shape`` if shell resolved else ``shell_resolved``"""
+        return (self.shell_matrix_shape if self.shell_resolved
+                else self.atomic_matrix_shape)
+
+    @property
+    def n_res(self):
+        """``n_shells`` if shell resolved else ``n_atoms``"""
+        return (self.n_shells if self.shell_resolved
+                else self.n_atoms)
+
+    @property
     def device(self) -> torch.device:
-        """The device on which the `Basis` object resides."""
+        """The device on which the `OrbitalInfo` object resides."""
         return self.__device
 
     @device.setter
     def device(self, *args):
         # Instruct users to use the ".to" method if wanting to change device.
-        raise AttributeError('Basis object\'s dtype can only be modified '
+        raise AttributeError('OrbitalInfo object\'s dtype can only be modified '
                              'via the ".to" method.')
 
     @property
     def orbs_per_atom(self) -> Tensor:
         """Number of orbitals associated with each atom."""
-        return self._orbitals_per_species[self.atomic_numbers.view(-1)
+        return self._orbitals_per_species[self.atomic_numbers.reshape(-1)
                                           ].view_as(self.atomic_numbers)
 
     @property
@@ -186,39 +211,45 @@ class Basis:
         """Returns the number of shells on a given species."""
         return self._shells_per_species[species]
 
-    def to(self, device: device) -> 'Basis':
-        """Returns a copy of the `Basis` instance on the specified device.
+    @property
+    def shells_per_atom(self) -> Tensor:
+        """Returns the number of shells associated with each atom."""
+        return self._shells_per_species[self.atomic_numbers.view(-1)
+                                        ].view_as(self.atomic_numbers)
 
-        This method creates and returns a new copy of the `Basis` instance
+    def to(self, device: device) -> 'OrbitalInfo':
+        """Returns a copy of the `OrbitalInfo` instance on the specified device.
+
+        This method creates and returns a new copy of the `OrbitalInfo` instance
         on the specified device "``device``".
 
         Arguments:
             device: Device to which all associated tensors should be moved.
 
         Returns:
-            basis: Copy of the instance placed on the specified device.
+            orbs: Copy of the instance placed on the specified device.
 
         Notes:
-            If the `Basis` instance is already on the desired device then
+            If the `OrbitalInfo` instance is already on the desired device then
             `self` will be returned.
 
         """
         return self.__class__(self.atomic_numbers.to(device=device),
                               self.shell_dict, self.shell_resolved)
 
-    def __getitem__(self, selector) -> 'Basis':
-        """Permits batched Basis instances to be sliced as needed."""
+    def __getitem__(self, selector) -> 'OrbitalInfo':
+        """Permits batched OrbitalInfo instances to be sliced as needed."""
         # Block this if the instance has only a single system
         if self.atomic_numbers.ndim != 2:
             raise IndexError(
-                'Basis slicing is only applicable to batches of systems.')
+                'OrbitalInfo slicing is only applicable to batches of systems.')
 
-        return self.__class__(deflate(self.atomic_numbers[selector]),
+        return self.__class__(deflate(self.atomic_numbers[selector, ...]),
                               self.shell_dict,
                               self.shell_resolved)
 
-    def __eq__(self, other: 'Basis') -> bool:
-        """Check if two `Basis` objects are equivalent."""
+    def __eq__(self, other: 'OrbitalInfo') -> bool:
+        """Check if two `OrbitalInfo` objects are equivalent."""
         # Note that batches with identical systems but a different order will
         # return False, not True.
 
@@ -235,35 +266,37 @@ class Basis:
             self.shell_resolved == other.shell_resolved
         ])
 
-    def __add__(self, other: 'Basis') -> 'Basis':
-        """Combine two `Basis` objects together."""
+    def __add__(self, other: 'OrbitalInfo') -> 'OrbitalInfo':
+        """Combine two `OrbitalInfo` objects together."""
         if self.__class__ != other.__class__:
             raise TypeError(
-                'Addition can only take place between two Basis objects.')
+                'Addition can only take place between two OrbitalInfo objects.')
 
         # Ensure that they both have the same resolution
         if self.shell_resolved != other.shell_resolved:
             raise AttributeError(
-                'Cannot add Basis with differing `shell_resolved` values.')
+                'Cannot add OrbitalInfo with differing `shell_resolved` values.')
 
         atomic_numbers = merge([
             torch.atleast_2d(self.atomic_numbers),
             torch.atleast_2d(other.atomic_numbers)])
 
-        return self.__class__(atomic_numbers, self.shell_dict,
+        shell_dict = {**self.shell_dict, **other.shell_dict}
+
+        return self.__class__(atomic_numbers, shell_dict,
                               self.shell_resolved)
 
     @classmethod
     def from_hdf5(cls, source: Group, device: Optional[torch.device] = None
-                  ) -> 'Basis':
-        """Instantiate a `Basis` instances from an HDF5 group.
+                  ) -> 'OrbitalInfo':
+        """Instantiate a `OrbitalInfo` instances from an HDF5 group.
 
         Arguments:
-            source: An HDF5 group(s) containing `Basis` instance.
+            source: An HDF5 group(s) containing `OrbitalInfo` instance.
             device: Device on which to place tensors. [DEFAULT=None]
 
         Returns:
-            basis: The resulting `Basis` object.
+            orbs: The resulting `OrbitalInfo` object.
         """
         shell_dict = {int(k): v[()].tolist() for k, v in
                       source['shell_dict'].items()}
@@ -273,10 +306,10 @@ class Basis:
         return cls(atomic_numbers, shell_dict, shell_resolved)
 
     def to_hdf5(self, target: Group):
-        """Saves `Basis` instance into a target HDF5 Group.
+        """Saves `OrbitalInfo` instance into a target HDF5 Group.
 
         Arguments:
-            target: The hdf5 group to which the `Basis` should be saved.
+            target: The hdf5 group to which the `OrbitalInfo` should be saved.
 
         Notes:
             This function does not create its own group as it expects that
@@ -322,7 +355,7 @@ class Basis:
     def azimuthal_matrix(self, form: Form = 'full', sort: bool = False,
                          mask_on_site: bool = False, mask_diag: bool = False,
                          mask_lower: bool = False) -> Tensor:
-        r"""Azimuthal quantum numbers for each basis-basis interaction.
+        r"""Azimuthal quantum numbers for each orbs-orbs interaction.
 
         Tensor defining the azimuthal quantum numbers (ℓ) associated with each
         orbital-orbital interaction element.  Alternately, a shell form of
@@ -417,15 +450,15 @@ class Basis:
         if form == 'full':
             counts = self.shell_ls * 2 + 1
             counts[counts == -1] = 0
-            basis_list = self.shell_ls.repeat_interleave(counts.view(-1))
+            orbs_list = self.shell_ls.repeat_interleave(counts.view(-1))
             if batch:
-                basis_list = pack(split_by_size(basis_list, self.n_orbitals)
-                                  , value=-1)
+                orbs_list = pack(split_by_size(orbs_list, self.n_orbitals),
+                                 value=-1)
         else:
-            basis_list = self.shell_ls
+            orbs_list = self.shell_ls
 
         # Repeat and expand the vectors to get the final NxNx2 matrix tensor.
-        l_mat = _rows_to_NxNx2(basis_list, shape, -1)
+        l_mat = _rows_to_NxNx2(orbs_list, shape, -1)
 
         # If masking out parts of the matrix
         if mask_on_site | mask_lower | mask_diag:
@@ -458,7 +491,7 @@ class Basis:
         This is analogous to the ``azimuthal_matrix`` tensor but with shell
         numbers rather than azimuthal quantum numbers. The shell number for
         each species are taken from the order in which they are defined in
-        the `Basis.shell_dict`.
+        the `OrbitalInfo.shell_dict`.
 
         Arguments:
             form: Specifies the form of the shell number matrix:
@@ -466,7 +499,7 @@ class Basis:
                 - "full": 1 matrix-element per orbital-orbital interaction.
                 - "shell": 1 matrix-element per shell-shell interaction block.
 
-                A more in-depth description of the this argument's effects is
+                A more in-depth description of this argument's effects is
                 given in :meth:`.azimuthal_matrix`. [DEFAULT="full"]
 
         Returns:
@@ -507,7 +540,7 @@ class Basis:
                 - "shell": 1 matrix-element per shell-shell interaction block.
                 - "atomic": 1 matrix-element per atom-atom interaction block.
 
-                A more in-depth description of the this argument's effects is
+                A more in-depth description of this argument's effects is
                 given in :meth:`.azimuthal_matrix`. [DEFAULT="full"]
 
         Returns:
@@ -556,7 +589,7 @@ class Basis:
                 - "shell": 1 matrix-element per shell-shell interaction block.
                 - "atomic": 1 matrix-element per atom-atom interaction block.
 
-                A more in-depth description of the this argument's effects is
+                A more in-depth description of this argument's effects is
                 given in :meth:`.azimuthal_matrix`. [DEFAULT="full"]
 
         Returns:

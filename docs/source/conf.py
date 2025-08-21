@@ -48,9 +48,9 @@ extensions = [
 
 add_module_names = False
 
-set_type_checking_flag = False
+set_type_checking_flag = True
 typehints_fully_qualified = False
-always_document_param_types = False
+always_document_param_types = True
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -58,39 +58,28 @@ templates_path = ['_templates']
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
-exclude_patterns = ['source/_autosummary/*test*']
+exclude_patterns = ['source/_autosummary/*test*', 'source/_autosummary/*xtb*']
 
 autodoc_mock_imports = [
-    'tbmalt.tests'
+    'tbmalt.tests',
+    'torch',
+    'pydantic',
+    'tbmalt.io.xtb',
+    'tbmalt.physics.xtb',
 ]
 
 autosummary_mock_imports = [
     'tbmalt.tests',
+    'torch',
+    'pydantic',
+    'tbmalt.io.xtb',
+    'tbmalt.physics.xtb',
 ]
 
 # ----------- Autosummary Setup ----------- #
 # Create documentation automatically for all modules
 autosummary_generate = True
 
-
-
-# Autosummary ignores requests to not document the class __init__ method. Thus
-# it must be done manually via a autodoc-skip-member hook. However this results
-# in it ignoring requests to not document special & private methods. Hence, an
-# ugly hack is needed.
-
-permitted_specials = ['__call__']
-
-
-def skip(app, what, name, obj, would_skip, options):
-    if name.startswith(('__', '_')) and name not in permitted_specials:
-        return True
-    else:
-        return would_skip
-
-
-def setup(app):
-    app.connect("autodoc-skip-member", skip)
 
 # -- Napoleon configuration settings -----------------------------------------
 
@@ -114,6 +103,11 @@ napoleon_custom_sections = None
 # a list of builtin themes.
 #
 html_theme = 'sphinx_rtd_theme'
+
+html_theme_options = {
+    'collapse_navigation': True,
+    'navigation_depth': 4
+}
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
