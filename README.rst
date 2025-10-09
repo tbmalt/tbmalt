@@ -15,6 +15,25 @@ associated with the development of new models; and its modular nature reduces th
 of interfacing with existing models/codes.
 
 
+Documentation
+=============
+
+Consult following resources for documentation:
+
+* `TBMaLT related documentation
+  <https://github.com/tbmalt/tbmalt-docs>`_
+
+
+Citing
+======
+
+When publishing results obtained with TBMaLT, please cite the following work:
+
+* `TBMaLT, a flexible toolkit for combining tight-binding and machine learning;
+  J. Chem. Phys. 158, 034801 (2023)
+  <https://doi.org/10.1063/5.0132892>`_
+
+
 License
 =======
 
