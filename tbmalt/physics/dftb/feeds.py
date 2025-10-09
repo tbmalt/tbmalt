@@ -516,9 +516,15 @@ class SkFeed(IntegralFeed):
     in line with the traditional DFTB method.
 
     Arguments:
-        on_sites: A torch `ParameterDict` where keys represent atomic numbers
-            as strings, and values are torch parameters specifying the on-site
-            energies for each orbital.
+            on_sites: A `SkfOnSiteFeed` (preferred) representing the on-site
+            terms. Any `Feed` instance may be provided so long as its `forward`
+            method accepts an atomic number (e.g. int or str) and returns
+            magnetically resolved on-site energies.
+            Legacy (deprecated): torch `ParameterDict` where keys are atomic
+            numbers as strings and values are torch parameters encoding the
+            on-site energies for each magnetically resolved orbital. Support
+            for `ParameterDict` is retained for backwards compatibility but is
+            discouraged and will be removed in a future release.
         off_sites: A torch `ModuleDict` containing the off-site integrals
             required for constructing Hamiltonian and/or overlap matrices.
             The keys are strings representing tuples in the format
@@ -552,21 +558,36 @@ class SkFeed(IntegralFeed):
         instances will identify and set all NaNs to zero.
 
     """
-    def __init__(self, on_sites: ParameterDict[str, Parameter],
-                 off_sites: ModuleDict[str, Module],
-                 dtype: Optional[torch.dtype] = None,
-                 device: Optional[torch.device] = None):
+    def __init__(
+            self,
+            on_sites: SkfOnSiteFeed | Feed | ParameterDict[str, Parameter],
+            off_sites: ModuleDict[str, Module],
+            dtype: Optional[torch.dtype] = None,
+            device: Optional[torch.device] = None):
+
+        if isinstance(on_sites, ParameterDict):
+            warnings.warn(
+                "Deprecated: `on_sites` as `torch.nn.ParameterDict` is "
+                "retained for backwards compatibility only and is slated for "
+                "removal in a future release. Please use `SkfOnSiteFeed` "
+                "or another `Feed` whose `forward(z)` method returns "
+                "magnetically resolved on-site energies.",
+                PendingDeprecationWarning)
+
 
         # Pass the dtype and device to the ABC, if none are given the default
-        temp = next(iter(on_sites.values()))
+        if isinstance(on_sites, ParameterDict):
+            temp = next(iter(on_sites.values()))
+        else:
+            temp = on_sites
         super().__init__(temp.dtype if dtype is None else dtype,
                          temp.device if device is None else device)
 
         if isinstance(on_sites, dict):
             raise TypeError(
-                "An instance of `torch.nn.ParameterDict` was expected for the "
-                "attribute `on_sites`, but a standard Python `dict` was "
-                "received.")
+                "An instance of `Feed` or `torch.nn.ParameterDict` was "
+                "expected for the attribute `on_sites`, but a standard Python "
+                "`dict` was received.")
 
         if not isinstance(off_sites, ModuleDict):
             raise TypeError(
@@ -577,7 +598,7 @@ class SkFeed(IntegralFeed):
         for key in off_sites.keys():
             self.__validate_key(key)
 
-        self._on_sites: ParameterDict[str, Parameter] = on_sites
+        self._on_sites: Feed | ParameterDict[str, Parameter] = on_sites
         self._off_sites = off_sites
 
     @property
@@ -593,9 +614,9 @@ class SkFeed(IntegralFeed):
         # the behaviour of the feed in unexpected ways.
         if isinstance(value, dict):
             raise TypeError(
-                "An instance of `torch.nn.ParameterDict` was expected for the "
-                "attribute `on_sites`, but a standard Python `dict` was "
-                "received.")
+                "An instance of `Feed` or `torch.nn.ParameterDict` was "
+                "expected for the attribute `on_sites`, but a standard Python "
+                "`dict` was received.")
 
         self._on_sites = value
 
@@ -866,7 +887,17 @@ class SkFeed(IntegralFeed):
 
         # Construct the on-site blocks (if any are present)
         if any(on_site):
-            blks[on_site] = torch.diag(self.on_sites[str(z_1.item())][mask_shell])
+            # Check for legacy on-site type. Previously, on-sites were
+            # provided by way of a `ParameterDict`. This has since been
+            # replaced by a `Feed` object, namely `SkfOnSiteFeed`. Support
+            # for `ParameterDict` style on-sites will be removed in a future
+            # update.
+            if isinstance(self.on_sites, ParameterDict):
+                on_site_values = self.on_sites[str(z_1.item())]
+            else:
+                on_site_values = self.on_sites(str(z_1.item()))
+
+            blks[on_site] = torch.diag(on_site_values[mask_shell])
 
             # Interactions between images need to be considered for on-site
             # blocks with pbc.
@@ -999,7 +1030,6 @@ class SkFeed(IntegralFeed):
             ValueError('Invalid target selected; '
                        'options are "hamiltonian" or "overlap"')
 
-        on_sites = ParameterDict()
         off_sites = ModuleDict()
         params = {'extrapolate': False} if interpolation is ScipyCubicSpline else {}
 
@@ -1026,29 +1056,17 @@ class SkFeed(IntegralFeed):
                             skf_2.grid, value, interpolation, requires_grad_offsite,
                             **params)
 
-            else:  # Construct the onsite interactions
-                # Repeated so there's 1 value per orbital not just per shell.
-                on_sites_vals = Parameter(
-                    skf.on_sites.repeat_interleave(
-                        torch.arange(len(skf.on_sites), device=device) * 2 + 1),
-                    requires_grad=requires_grad_onsite)
-
-                if target == 'overlap':  # use an identity matrix for S
-                    # Auto-grad tracking is always disabled as the values can
-                    # never be anything other than one.
-                    on_sites_vals = Parameter(
-                        torch.ones_like(on_sites_vals, dtype=dtype, device=device),
-                        requires_grad=False)
-
-                on_sites[str(pair[0])] = on_sites_vals
+        # Construct on-site feed instance
+        on_sites = SkfOnSiteFeed.from_database(
+            path, species, target, device=device, dtype=dtype,
+            requires_grad=requires_grad_onsite)
 
         return cls(on_sites, off_sites, dtype, device)
 
     def __str__(self):
-        elements = ', '.join([
-            chemical_symbols[i] for i in
-            sorted([int(j) for j in self.on_sites.keys()])
-        ])
+        elements = {int(g) for k in self.off_sites for g in re.match(
+            r'^(\d+), (\d+), (\d+), (\d+)$', k[1:-1]).groups()[:2]}
+        elements = ', '.join([chemical_symbols[i] for i in sorted(elements)])
         return f'{self.__class__.__name__}({elements})'
 
     def __repr__(self):
@@ -1549,6 +1567,235 @@ class VcrSkFeed(IntegralFeed):
                 f"represent a tuple converted to a string, like '(1, 6, 0, 0)'.")
 
             raise ValueError('\n'.join(errors))
+
+
+class SkfOnSiteFeed(Feed):
+
+    r"""On-site term feed backed by shell-resolved SKF data.
+
+    This feed provides access to azimuthally (shell-)resolved on-site terms
+    read from Slater–Koster parameter files and exposes them in a form suitable
+    for DFTB matrix construction. A single optimisable value is stored per
+    subshell (e.g. one value for s, one for p, one for d), and it is expanded
+    on demand to one value per magnetic orbital within :meth:`forward` by
+    repeating according to the multiplicity :math:`(2\ell + 1)`.
+
+
+    Arguments:
+        on_sites: A :class:`torch.nn.ParameterDict` whose keys are atomic
+            numbers represented as strings (e.g. `"1"`, `"6"`) and whose values
+            are :class:`torch.nn.Parameter` objects containing the azimuthally
+            resolved on-site terms for the corresponding species. One scalar
+            parameter per subshell is expected (e.g. `[s]`, `[s, p]`,
+            `[s, p, d]`).
+        azimuthal_numbers: A dictionary in which keys are atomic numbers (as
+            strings) and values are 1-D integer tensors giving the azimuthal
+            quantum number `l` for each azimuthally resolved on-site term in
+            ``on_sites``. When this argument is omitted, a minimal, valence-
+            -only shell ordering is assumed and `l` is inferred as
+            `torch.arange(len(on_site))` for the corresponding species. The
+            `l` values are used solely to expand each azimuthal on-site term
+            into its magnetic-orbital multiplicity `(2l + 1)` within `forward`.
+            In this way a single subshell parameter (e.g. one d value) is
+            repeated to yield the required number of magnetic entries (five
+            for d), avoiding their separate optimisation. [DEFAULT=`None`]
+
+    Examples:
+        >>> from torch import tensor
+        >>> from torch.nn import Parameter, ParameterDict
+        >>> from tbmalt.physics.dftb.feeds import SkfOnSiteFeed
+        >>> on = ParameterDict({
+        ...     "1": Parameter(tensor([-0.5])),          # H: [s]
+        ...     "6": Parameter(tensor([-0.3, -0.2]))     # C: [s, p]
+        ... })
+        >>> feed = SkfOnSiteFeed(on)       # azimuthal_numbers inferred
+        >>> feed("1")                      # s → (2*0+1)=1 value
+        tensor([-0.5000])
+        >>> feed("6")                      # s, p → 1 + 3 values
+        tensor([-0.3000, -0.2000, -0.2000, -0.2000])
+    """
+
+    def __init__(
+            self, on_sites: ParameterDict[str, Parameter],
+            azimuthal_numbers: Optional[Dict[str, Tensor]] = None):
+        super().__init__()
+
+        # Ensure that the on-site terms are supplied via a `ParameterDict`.
+        if not isinstance(on_sites, ParameterDict):
+            raise TypeError(
+                "Expected argument `on_sites` to be of type `ParameterDict` "
+                f"but encountered type `{type(on_sites).__name__}` instead.")
+
+        # If no azimuthal numbers are provided then the on-site terms are
+        # assumed to correspond to a minimal, valence-only ordered "basis".
+        if azimuthal_numbers is None:
+            azimuthal_numbers = {
+                species: torch.arange(len(on_site), device=on_site.device)
+                for species, on_site in on_sites.items()}
+
+        # If an azimuthal number dictionary has been provided then ensure the
+        # corresponding tensors in the two dictionaries are on the same device
+        # for each species and that types are as expected.
+        else:
+
+            for key, value_1 in on_sites.items():
+                value_2 = azimuthal_numbers[key]
+
+                if not isinstance(value_2, Tensor):
+                    raise TypeError(
+                        f"A value of invalid type has been encountered in the "
+                        f"`azimuthal_numbers` dictionary: expected type "
+                        f"`Tensor`, but encountered `{type(value_2).__name__}` "
+                        f"instead (key:{key}).")
+
+                if value_1.device != value_2.device:
+                    raise RuntimeError(
+                        f"Inconsistent device placement detected for atomic "
+                        f"species {key}: `on_sites` tensor resides on "
+                        f"{value_1.device}, but `azimuthal_numbers` tensor "
+                        f"resides on {value_2.device}.")
+
+        self.on_sites = on_sites
+        self.azimuthal_numbers = azimuthal_numbers
+
+    @property
+    def dtype(self):
+        return next(iter(self.on_sites.values())).dtype
+
+    @property
+    def device(self):
+        return next(iter(self.on_sites.values())).device
+
+    def forward(self, species: str | int):
+        r"""Return per-orbital on-site terms for a given species.
+
+        The azimuthally resolved on-site values stored in `on_sites` are
+        expanded to one value per magnetic orbital by repeating each subshell
+        term according to its magnetic multiplicity :math:`(2\ell + 1)`. The
+        species identifier is normalised to a string before lookup.
+
+        Arguments:
+            species: Atomic number of the species for which on-site terms are
+                requested. May be provided as an `int` (e.g. `6`) or a
+                string (e.g. `"6"`).
+
+        Returns:
+            on_site: A 1-D :class:`torch.Tensor` containing one on-site value
+                for each magnetic orbital of the requested species. Its length
+                equals `sum(2*l + 1 for l in azimuthal_numbers[species])`.
+        """
+
+        # Ensure the species key is a string.
+        species = str(species) if isinstance(species, int) else species
+
+        # Fetch the azimuthally resolved on-site terms from the `on_sites`
+        # parameter dictionary and repeat each term so that there is one value
+        # for each subshell. For example a term corresponding to a p-shell
+        # would be repeated three times, once for each of the associated
+        # magnetic moments p_x, p_y, and p_z.
+        return self.on_sites[species].repeat_interleave(
+            self.azimuthal_numbers[species] * 2 + 1)
+
+    @classmethod
+    def from_database(
+            cls, path: str, species: List[int],
+            target: Literal['hamiltonian', 'overlap'],
+            requires_grad: bool = False,
+            dtype: Optional[torch.dtype] = None,
+            device: Optional[torch.device] = None):
+
+        """Instantiate instance from an HDF5 Slater–Koster database.
+
+        On-site terms are read for the requested species from an HDF5 SKF
+        database and stored as azimuthally (subshell) resolved parameters.
+        A single value per subshell is retained (e.g. one for s, one for p),
+        and expansion to one value per magnetic orbital is performed on demand
+        in :meth:`forward`. When the overlap target is selected, all on-site
+        terms are set to unity so that identity blocks are emitted.
+
+        Arguments:
+            path: Path to the HDF5 file from which on-sites should be taken.
+            species: On-sites will only be loaded for the requested species.
+            target: Specifies which set of on-site terms is to be loaded.
+                Options are `"hamiltonian"` and `"overlap"`. For overlap,
+                the on-site terms are set to ones (identity) and are never
+                differentiable.
+            requires_grad: If `True`, gradient tracking is enabled for the
+                Hamiltonian on-site parameters. This flag is ignored when
+                ``target`` is set to `"overlap"` since those terms are always
+                unity. [DEFAULT=`False`]
+            device: Device on which the feed object and its contents reside.
+            dtype: dtype used by feed object.
+
+        Returns:
+            on_sites: A `SkfOnSiteFeed` instance containing the requested
+                on-site terms for the specified species.
+
+        Examples:
+            >>> from torch import tensor
+            >>> from tbmalt.physics.dftb.feeds import SkfOnSiteFeed
+            >>> from tbmalt.tools.downloaders import download_dftb_parameter_set
+            >>> url = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
+            >>> path = "auorg.h5"
+            >>> download_dftb_parameter_set(url, path)
+            >>> feed = SkfOnSiteFeed.from_database(path, [1, 6, 79], "hamiltonian")
+            >>> feed("1")
+            tensor([-0.2386])
+            >>> feed("6")
+            tensor([-0.5049, -0.1944, -0.1944, -0.1944])
+            >>> feed("79")
+            tensor([-0.2108, -0.0279, -0.0279, -0.0279,
+                    -0.2532, -0.2532, -0.2532, -0.2532,
+                    -0.2532])
+        """
+
+        # Ensure a valid target is selected
+        if target not in ['hamiltonian', 'overlap']:
+            ValueError('Invalid target selected; '
+                       'options are "hamiltonian" or "overlap"')
+
+        # Loop over each species, load the corresponding on-site terms from the
+        # skf file, and add it to the `on_sites` dictionary.
+        on_sites = {}
+        for i in species:
+
+            # Read the on-site Hamiltonian terms from the relevant skf file.
+            on_site = Parameter(
+                Skf.read(path, (i, i), device=device, dtype=dtype).on_sites,
+                requires_grad=requires_grad)
+
+            # On-site terms for the overlap matrix are all set one as they
+            # should just emit the identity matrix. Auto-grad tracking is
+            # always disabled for overlap elements as the value can never
+            # be anything other than one.
+            if target == 'overlap':
+                on_site.requires_grad = False
+                on_site.fill_(1.0)
+
+            on_sites[str(i)] = on_site
+
+        # Convert the on_sites dictionary into a parameter dictionary and
+        # use it to instantiate a new SkfOnSiteFeed.
+        return cls(ParameterDict(on_sites))
+
+    def to(self, device: torch.device) -> SkfOnSiteFeed:
+        r"""Return a copy of the feed placed on the specified device.
+
+
+        Args:
+            device: Device to which all associated tensor should be moved.
+
+        Returns:
+            on_site_feed: A copy of the `SkfOnSiteFeed` instance placed on
+                the specified device.
+        """
+        on_sites = ParameterDict(
+            {k: v.to(device) for k, v in self.on_sites.items()})
+
+        azimuthal_numbers = {
+            k: v.to(device) for k, v in self.azimuthal_numbers.items()}
+
+        return type(self)(on_sites, azimuthal_numbers)
 
 
 class SkfOccupationFeed(Feed):
