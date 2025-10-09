@@ -110,7 +110,7 @@ class Skf:
             the :ref:`Notes` section for more details.
 
     .. _Format of the v1.0 Slater-Koster Files:
-        https://dftb.org/fileadmin/DFTB/public/misc/slakoformat.pdf
+        https://dftb.org/_downloads/85b02a0893bd3402438aec77de5bc1df/slakoformat.pdf
 
     """
 
