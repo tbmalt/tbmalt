@@ -27,7 +27,7 @@ def shell_resolved_feeds(device, skf_file):
     h_feed = SkFeed.from_database(skf_file, species, 'hamiltonian', device=device)
     s_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
-    r_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species)
+    r_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species, device=device)
 
     return h_feed, s_feed, o_feed, r_feed
 
@@ -39,7 +39,7 @@ def shell_resolved_feeds_scc(device, skf_file):
     s_feed = SkFeed.from_database(skf_file, species, 'overlap', device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file, species, device=device)
-    r_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species)
+    r_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species, device=device)
 
     return h_feed, s_feed, o_feed, u_feed, r_feed
 
@@ -52,7 +52,7 @@ def shell_resolved_feeds_scc_spline(device, skf_file):
                                   interpolation=CubicSpline, device=device)
     o_feed = SkfOccupationFeed.from_database(skf_file, species, device=device)
     u_feed = HubbardFeed.from_database(skf_file, species, device=device)
-    r_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species)
+    r_feed = PairwiseRepulsiveEnergyFeed.from_database(skf_file, species, device=device)
 
     return h_feed, s_feed, o_feed, u_feed, r_feed
 

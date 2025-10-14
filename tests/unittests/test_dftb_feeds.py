@@ -9,7 +9,7 @@ from ase.build import molecule
 
 from tbmalt.physics.dftb.feeds import (
     ScipySkFeed, SkFeed, SkfOccupationFeed, HubbardFeed, VcrSkFeed,
-    PairwiseRepulsiveEnergyFeed)
+    PairwiseRepulsiveEnergyFeed, SkfOnSiteFeed)
 
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.common.batch import pack
@@ -672,9 +672,9 @@ def test_hubbardfeed_batch(device, skf_file):
     assert check_2, 'Predicted hubbard value errors exceed allowed tolerance'
 
 
-#################################################
+#########################################################
 # tbmalt.physics.dftb.feeds.PairwiseRepulsiveEnergyFeed #
-#################################################
+#########################################################
 def test_repulsive_feed_single(device, skf_file: str):
     repulsive_feed = PairwiseRepulsiveEnergyFeed.from_database(
         skf_file, species=[1, 6, 16, 79], device=device)
@@ -704,3 +704,128 @@ def test_repulsive_feed_batch(device, skf_file: str):
 
     assert check_1, 'Results were places on the wrong device'
     assert check_2, 'Repulsive energies outside of tolerance (batch)'
+
+
+###########################################
+# tbmalt.physics.dftb.feeds.SkfOnsiteFeed #
+###########################################
+
+def test_skf_on_site_feed(device, skf_file: str):
+    """Check that the `SkfOnSiteFeed` class functions as intended."""
+
+    on_sites = SkfOnSiteFeed(
+        ParameterDict({
+            "1": Parameter(torch.tensor(
+                [1.0], requires_grad=False, device=device)),
+            "6": Parameter(torch.tensor(
+                [2.0, 3.0], requires_grad=False, device=device))}))
+
+    # Check that when azimuthal numbers are not provided the SkfOnSiteFeed
+    # class assumes an ordered minimal, valence only set, and that the tensors
+    # are placed on the correct device.
+    check_1 = (on_sites.azimuthal_numbers["1"].to("cpu").tolist() == [0]
+               and on_sites.azimuthal_numbers["6"].to("cpu").tolist() == [0, 1])
+    check_2 = on_sites.azimuthal_numbers["1"].device == device
+
+    assert check_1, '`azimuthal_numbers` guess incorrect'
+    assert check_2, '`azimuthal_numbers` guess placed on the wrong device'
+
+    # Ensure the correct magnetic-orbital resolved on-site terms are returned
+    # and that they are on the anticipated device.
+    check_3 = (on_sites(1).to("cpu").equal(torch.tensor([1.0])) and
+               on_sites(6).to("cpu").equal(torch.tensor([2.0, 3.0, 3.0, 3.0])))
+    check_4 = on_sites(1).device == device
+
+    assert check_3, 'On-site terms incorrect'
+    assert check_4, 'On-site terms placed on the wrong device'
+
+    # Check 5 is just a repeat of check 3 but for a custom non-standard
+    # azimuthal_numbers definition to help catch possible edge cases.
+    on_sites = SkfOnSiteFeed(
+        ParameterDict({"1": Parameter(
+            torch.tensor([1.0, 2.0, 3.0, 4.0], requires_grad=False, device=device))}),
+        azimuthal_numbers={"1": torch.tensor([1, 0, 0, 2], device=device)})
+
+    check_5 = on_sites(1).to("cpu").equal(
+        torch.tensor([1.0, 1.0, 1.0, 2.0, 3.0, 4.0, 4.0, 4.0, 4.0, 4.0]))
+
+    assert check_5, 'On-sites incorrect for non-trivial `azimuthal_numbers` case'
+
+    # Confirm that the from_database method loads the correct on-site values
+    # and places them on the requested device. Finally, make sure that gradient
+    # tracking is not enabled when not explicitly requested. There is no need
+    # to check if the forward method produces the correct result as this should
+    # always hold true if checks 3, 5, and 6 pass.
+    on_sites = SkfOnSiteFeed.from_database(
+        skf_file, [1, 6, 79], "hamiltonian", device=device)
+
+    check_6 = (
+        on_sites.on_sites["1"].detach().to("cpu").equal(torch.tensor(
+            [-2.386005440482E-01]))
+        and on_sites.on_sites["6"].detach().to("cpu").equal(torch.tensor(
+            [-5.048917654780E-01, -1.943551799163E-01]))
+        and on_sites.on_sites["79"].detach().to("cpu").equal(torch.tensor(
+            [-2.107700668744E-01, -2.785941987392E-02, -2.531805351853E-01])))
+    check_7 = on_sites.on_sites["1"].device == device
+    check_8 = on_sites.on_sites["1"].requires_grad is False
+
+    assert check_6, (
+        'On-site Hamiltonian values loaded by the `from_database` method '
+        'did not match those expected.')
+    assert check_7, (
+        'The `from_database` method did not place the data on the '
+        'requested device.')
+    assert check_8, (
+        'The `from_database` method enabled gradient for the on-site terms '
+        'even though it was not explicitly requested.')
+
+    # Varify that overlap values are always set to unity.
+    on_sites = SkfOnSiteFeed.from_database(
+        skf_file, [1, 6, 79], "overlap", device=device)
+
+    check_9 = all([all(i.eq(1.0)) for i in on_sites.on_sites.values()])
+
+    assert check_9, (
+        'The `from_database` method did not generate unity values when '
+        'instructed to load on-site terms for the overlap matix as would be '
+        'expected.')
+
+    # Affirm gradient tracking is enabled when loading Hamiltonian on-site
+    # elements when `requires_grad=True`.
+    on_sites = SkfOnSiteFeed.from_database(
+        skf_file, [1, 6, 79], "hamiltonian", device=device, requires_grad=True)
+
+    check_10 = all([i.requires_grad for i in on_sites.on_sites.values()])
+
+    assert check_10, (
+        'The `from_database` method ignored the `requires_grad=True` option '
+        'and did not enable gradient tracking of the Hamiltonian on-site '
+        'terms.')
+
+    # The `requires_grad=True` option should be ignored for on-site terms of the
+    # overlap as they will always be unity and thus are not optimisable
+    # parameters.
+    on_sites = SkfOnSiteFeed.from_database(
+        skf_file, [1, 6, 79], "overlap", device=device, requires_grad=True)
+
+    check_11 = all([i.requires_grad is False for i in on_sites.on_sites.values()])
+
+    assert check_11, (
+        "The `from_database` method enabled gradient tracking for overlap "
+        "on-site terms despite it not being permitted. The on-site terms of "
+        "the  overlap matrix will always be set to unity, and are thus not "
+        "optimisable parameters. The `from_database` method should never "
+        "enable gradient tracking of on-site terms when `target=overlap`, "
+        "even when `requires_grad=True`")
+
+    # Confirm the `to` method correctly moves the feed to the requested device
+    if torch.cuda.device_count():
+        # Select a device to move to
+        new_device = torch.device('cpu') if device.type == "cuda" else torch.device('cuda:0')
+
+        on_sites_copy = on_sites.to(new_device)
+
+        check_12 = ((on_sites_copy.on_sites["1"].device == new_device)
+                   and new_device != device)
+
+        assert check_12, '".to" method failed to set the correct device'
