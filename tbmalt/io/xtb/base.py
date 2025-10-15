@@ -14,7 +14,11 @@ while a deserialized model in `tblite`_ is already verified at this stage.
 """
 
 from typing import Dict, Optional
-from pydantic import BaseModel
+
+try:
+    from pydantic.v1 import BaseModel
+except ImportError:
+    from pydantic import BaseModel
 
 from .element import Element
 from .hamiltonian import Hamiltonian

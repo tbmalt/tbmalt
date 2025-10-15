@@ -5,7 +5,10 @@ This is primarily used for data format identification.
 """
 
 from typing import Optional
-from pydantic import BaseModel
+try:
+    from pydantic.v1 import BaseModel
+except ImportError:
+    from pydantic import BaseModel
 
 
 class Meta(BaseModel):
