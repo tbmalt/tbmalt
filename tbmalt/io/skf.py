@@ -832,14 +832,15 @@ class VCRSkf(Skf):
             map_files = {tuple(ele.group(0).split('_')): i for i in all_files
                          if (ele := re_s1(i))}
         else:
-            re_s1 = re.compile(fr'(?<=\/){e}?-{e}?-\d+.\d+-\d+.\d+').search
+            re_s1 = re.compile(fr'{e}?-{e}?-\d+.\d+-\d+.\d+').search
             map_files = {tuple(ele.group(0).split('-')): i for i in all_files
-                         if (ele := re_s1(i))}
+                         if (ele := re_s1(basename(i)))}
             map_keys = np.array(list(map_files.keys()))
             atom_pair_names = np.unique(map_keys[..., :2], axis=0)
-            re_ho = re.compile(fr'(?<=\/){e}?-{e}?.skf').search
+            re_ho = re.compile(fr'{e}?-{e}?.skf').search
             homo_files = {tuple(ele.group(0)[:-4].split('-')):
-                              i for i in all_files if (ele := re_ho(i))}
+                              i for i in all_files if (
+                ele := re_ho(basename(i)))}
 
         # Report systems found to the user [print header]
         print(f'Map files found for {len(map_files)} system(s):\n'
@@ -852,10 +853,20 @@ class VCRSkf(Skf):
                 if pair in current:  # Skip it if it has been parsed before
                     print('SKIPPING (previously parsed)')
                     continue
+                else:
+                    print('PARSING')
 
                 VCRSkf.single_csv(path, pair, all_files, target)
         else:
             for pair in atom_pair_names:
+
+                print(f'\t{pair[0]:6}\t{pair[1]:6}\t', end='')
+                if pair in current:
+                    print('SKIPPING (previously parsed)')
+                    continue
+                else:
+                    print('PARSING')
+
                 this_mask = (map_keys[..., :2] == pair).all(-1)
                 this_file_keys = sorted(map_keys[this_mask].tolist())
                 this_list = []
