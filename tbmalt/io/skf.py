@@ -54,14 +54,14 @@ class Skf:
     Examples:
         Examples of reading and writing.
 
-        >>> import urllib, tarfile
+        >>> import urllib.request, tarfile
         >>> from os.path import join
         >>> from tbmalt.io.skf import Skf
         >>> link = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
-        >>> taraug = urllib.request.urlretrieve(link, path := join('./auorg-1-1.tar.xz'))
-        >>> tartmp = tarfile.open(path)
-        >>> tartmp.extractall('./')
-        >>> cc = Skf.from_skf('./auorg-1-1/C-C.skf')
+        >>> urllib.request.urlretrieve(link, 'auorg-1-1.tar.xz')
+        >>> tartmp = tarfile.open('auorg-1-1.tar.xz')
+        >>> tartmp.extractall()
+        >>> cc = Skf.from_skf(join('auorg-1-1', 'C-C.skf'))
         >>> print(cc.hamiltonian.keys())
         dict_keys([(0, 0), (0, 1), (1, 1)])
 
@@ -644,12 +644,12 @@ class VCRSkf(Skf):
         Examples of reading the h5 file with VCR. Generation data set with VCR
         can be seen in `examples/example_01/example_02_setup.py`.
 
-        >>> import urllib, torch
+        >>> import urllib.request, torch
         >>> from os.path import join
-        >>> from tbmalt.io.skf import Skf
+        >>> from tbmalt.io.skf import VCRSkf
         >>> link = 'https://zenodo.org/record/8109578/files/example_dftb_vcr.h5?download=1'
-        >>> h5file = urllib.request.urlretrieve(link, path := join('./example_dftb_vcr.h5'))
-        >>> skfh5 = Skf.read('./example_dftb_vcr.h5', torch.tensor([6, 6]))
+        >>> h5file = urllib.request.urlretrieve(link, 'example_dftb_vcr.h5')
+        >>> skfh5 = VCRSkf.read('example_dftb_vcr.h5', torch.tensor([6, 6]))
         >>> print(skfh5.hamiltonian.keys())
         dict_keys([(0, 0), (0, 1), (1, 1)])
 

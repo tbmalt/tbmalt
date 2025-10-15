@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Containers to hold data associated the training and testing process."""
 
-from os.path import join
+import posixpath
 from functools import reduce
 import operator
 from typing import Union, Dict, Any, Optional, List
@@ -197,8 +197,8 @@ class DataSetIM(DataSet):
             # Load and pack the requested target datasets from each system.
             data = {
                 target_name: pack([
-                    torch.tensor(np.array(database[join(source, target)]),
-                                 device=device)
+                    torch.tensor(np.array(database[posixpath.join(
+                        source, target)]), device=device)
                     for source in sources]
                 ) for target_name, target in targets.items()}
 
@@ -263,7 +263,8 @@ class DataSetIM(DataSet):
             # add it to the `data` dictionary.
             data = {
                 target_name: torch.tensor(
-                    database[join(source, target_path)][()], device=device)
+                    database[posixpath.join(
+                        source, target_path)][()], device=device)
                 for target_name, target_path in targets.items()}
 
             # If a `labels` attribute exists, load it, if not then check for

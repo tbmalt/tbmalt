@@ -122,7 +122,7 @@ def systems(device) -> List[Geometry]:
 
 def hamiltonians(device):
     matrices = []
-    path = join(dirname(__file__), 'data/skfeed')
+    path = join(dirname(__file__), 'data', 'skfeed')
     for system in ['H2', 'CH4', 'H2O', 'C2H6', 'C2H2Au2S3']:
         matrices.append(torch.tensor(np.loadtxt(
             join(path, f'{system}_pbc_H.csv'), delimiter=','),
@@ -132,7 +132,7 @@ def hamiltonians(device):
 
 def overlaps(device):
     matrices = []
-    path = join(dirname(__file__), 'data/skfeed')
+    path = join(dirname(__file__), 'data', 'skfeed')
     for system in ['H2', 'CH4', 'H2O', 'C2H6', 'C2H2Au2S3']:
         matrices.append(torch.tensor(np.loadtxt(
             join(path, f'{system}_pbc_S.csv'), delimiter=','),
