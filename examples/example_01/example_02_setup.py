@@ -1,5 +1,5 @@
 from os.path import exists, join
-import urllib, tempfile, zipfile
+import urllib.request, tempfile, zipfile
 import shutil
 
 from tbmalt.tools.downloaders import download_dftb_parameter_set

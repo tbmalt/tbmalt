@@ -1,7 +1,7 @@
 import pytest
 import torch
 from os.path import join
-import urllib, tarfile
+import urllib.request, tarfile
 from tbmalt.io.skf import Skf, VCRSkf
 from tbmalt.tools.downloaders import download_dftb_parameter_set
 # Default must be set to float64 otherwise gradcheck will not function

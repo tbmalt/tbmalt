@@ -1,12 +1,9 @@
 from os.path import join, dirname
 import pytest
-import urllib
 import torch
-import tarfile
 from typing import List
 import numpy as np
-from tbmalt.io.skf import Skf
-from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed, SkFeed
+from tbmalt.physics.dftb.feeds import ScipySkFeed, SkFeed
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
