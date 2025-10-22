@@ -8,7 +8,10 @@ additional distance dependent function formed from the element parametrization.
 """
 
 from typing import Dict, Optional
-from pydantic import BaseModel
+try:
+    from pydantic.v1 import BaseModel
+except ImportError:
+    from pydantic import BaseModel
 
 
 class XTBHamiltonian(BaseModel):

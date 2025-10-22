@@ -1,12 +1,9 @@
 from os.path import join, dirname
 import pytest
-import urllib
 import torch
-import tarfile
 from typing import List
 import numpy as np
-from tbmalt.io.skf import Skf
-from tbmalt.physics.dftb.feeds import ScipySkFeed, SkfOccupationFeed, SkFeed
+from tbmalt.physics.dftb.feeds import ScipySkFeed, SkFeed
 from tbmalt import Geometry, OrbitalInfo
 from tbmalt.common.batch import pack
 from tbmalt.data.units import length_units
@@ -122,7 +119,7 @@ def systems(device) -> List[Geometry]:
 
 def hamiltonians(device):
     matrices = []
-    path = join(dirname(__file__), 'data/skfeed')
+    path = join(dirname(__file__), 'data', 'skfeed')
     for system in ['H2', 'CH4', 'H2O', 'C2H6', 'C2H2Au2S3']:
         matrices.append(torch.tensor(np.loadtxt(
             join(path, f'{system}_pbc_H.csv'), delimiter=','),
@@ -132,7 +129,7 @@ def hamiltonians(device):
 
 def overlaps(device):
     matrices = []
-    path = join(dirname(__file__), 'data/skfeed')
+    path = join(dirname(__file__), 'data', 'skfeed')
     for system in ['H2', 'CH4', 'H2O', 'C2H6', 'C2H2Au2S3']:
         matrices.append(torch.tensor(np.loadtxt(
             join(path, f'{system}_pbc_S.csv'), delimiter=','),

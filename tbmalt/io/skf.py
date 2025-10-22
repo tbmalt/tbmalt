@@ -54,14 +54,14 @@ class Skf:
     Examples:
         Examples of reading and writing.
 
-        >>> import urllib, tarfile
+        >>> import urllib.request, tarfile
         >>> from os.path import join
         >>> from tbmalt.io.skf import Skf
         >>> link = 'https://github.com/dftbparams/auorg/releases/download/v1.1.0/auorg-1-1.tar.xz'
-        >>> taraug = urllib.request.urlretrieve(link, path := join('./auorg-1-1.tar.xz'))
-        >>> tartmp = tarfile.open(path)
-        >>> tartmp.extractall('./')
-        >>> cc = Skf.from_skf('./auorg-1-1/C-C.skf')
+        >>> urllib.request.urlretrieve(link, 'auorg-1-1.tar.xz')
+        >>> tartmp = tarfile.open('auorg-1-1.tar.xz')
+        >>> tartmp.extractall()
+        >>> cc = Skf.from_skf(join('auorg-1-1', 'C-C.skf'))
         >>> print(cc.hamiltonian.keys())
         dict_keys([(0, 0), (0, 1), (1, 1)])
 
@@ -644,12 +644,12 @@ class VCRSkf(Skf):
         Examples of reading the h5 file with VCR. Generation data set with VCR
         can be seen in `examples/example_01/example_02_setup.py`.
 
-        >>> import urllib, torch
+        >>> import urllib.request, torch
         >>> from os.path import join
-        >>> from tbmalt.io.skf import Skf
+        >>> from tbmalt.io.skf import VCRSkf
         >>> link = 'https://zenodo.org/record/8109578/files/example_dftb_vcr.h5?download=1'
-        >>> h5file = urllib.request.urlretrieve(link, path := join('./example_dftb_vcr.h5'))
-        >>> skfh5 = Skf.read('./example_dftb_vcr.h5', torch.tensor([6, 6]))
+        >>> h5file = urllib.request.urlretrieve(link, 'example_dftb_vcr.h5')
+        >>> skfh5 = VCRSkf.read('example_dftb_vcr.h5', torch.tensor([6, 6]))
         >>> print(skfh5.hamiltonian.keys())
         dict_keys([(0, 0), (0, 1), (1, 1)])
 
@@ -832,14 +832,15 @@ class VCRSkf(Skf):
             map_files = {tuple(ele.group(0).split('_')): i for i in all_files
                          if (ele := re_s1(i))}
         else:
-            re_s1 = re.compile(fr'(?<=\/){e}?-{e}?-\d+.\d+-\d+.\d+').search
+            re_s1 = re.compile(fr'{e}?-{e}?-\d+.\d+-\d+.\d+').search
             map_files = {tuple(ele.group(0).split('-')): i for i in all_files
-                         if (ele := re_s1(i))}
+                         if (ele := re_s1(basename(i)))}
             map_keys = np.array(list(map_files.keys()))
             atom_pair_names = np.unique(map_keys[..., :2], axis=0)
-            re_ho = re.compile(fr'(?<=\/){e}?-{e}?.skf').search
+            re_ho = re.compile(fr'{e}?-{e}?.skf').search
             homo_files = {tuple(ele.group(0)[:-4].split('-')):
-                              i for i in all_files if (ele := re_ho(i))}
+                              i for i in all_files if (
+                ele := re_ho(basename(i)))}
 
         # Report systems found to the user [print header]
         print(f'Map files found for {len(map_files)} system(s):\n'
@@ -852,10 +853,20 @@ class VCRSkf(Skf):
                 if pair in current:  # Skip it if it has been parsed before
                     print('SKIPPING (previously parsed)')
                     continue
+                else:
+                    print('PARSING')
 
                 VCRSkf.single_csv(path, pair, all_files, target)
         else:
             for pair in atom_pair_names:
+
+                print(f'\t{pair[0]:6}\t{pair[1]:6}\t', end='')
+                if pair in current:
+                    print('SKIPPING (previously parsed)')
+                    continue
+                else:
+                    print('PARSING')
+
                 this_mask = (map_keys[..., :2] == pair).all(-1)
                 this_file_keys = sorted(map_keys[this_mask].tolist())
                 this_list = []

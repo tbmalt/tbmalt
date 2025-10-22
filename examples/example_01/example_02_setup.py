@@ -1,5 +1,5 @@
 from os.path import exists, join
-import urllib, tempfile, zipfile
+import urllib.request, tempfile, zipfile
 import shutil
 
 from tbmalt.tools.downloaders import download_dftb_parameter_set
@@ -28,4 +28,4 @@ with tempfile.TemporaryDirectory() as tmpdir:
     with zipfile.ZipFile(output_file, 'r') as zip_ref:
         zip_ref.extractall(tmpdir)
 
-    shutil.copyfile(join(tmpdir, 'data/dataset.h5'), './dataset.h5')
+    shutil.copyfile(join(tmpdir, 'data', 'dataset.h5'), 'dataset.h5')

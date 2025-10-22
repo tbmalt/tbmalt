@@ -5,7 +5,10 @@ Element parametrization record containing the adjustable parameters for each spe
 
 
 from typing import List
-from pydantic import BaseModel
+try:
+    from pydantic.v1 import BaseModel
+except ImportError:
+    from pydantic import BaseModel
 
 
 class Element(BaseModel):
