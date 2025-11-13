@@ -124,14 +124,15 @@ def gamma_exponential(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor
     gamma[..., ut[0], ut[1]] = gamma_tr
     gamma[..., ut[1], ut[0]] = gamma[..., ut[0], ut[1]]
 
-    gamma = gamma.squeeze()
+    # Ensure any unnecessary dimensions are removed
+    gamma = gamma.reshape(orbs.res_matrix_shape)
 
     # Subtract the gamma matrix from the inverse distance to get the final
     # result.
     r[r != 0.0] = 1.0 / r[r != 0.0]
     gamma = r - gamma
 
-    return gamma.squeeze()
+    return gamma
 
 
 def gamma_gaussian(geometry: Geometry, orbs: OrbitalInfo, hubbard_Us: Tensor

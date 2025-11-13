@@ -214,7 +214,7 @@ class OrbitalInfo:
     @property
     def shells_per_atom(self) -> Tensor:
         """Returns the number of shells associated with each atom."""
-        return self._shells_per_species[self.atomic_numbers.view(-1)
+        return self._shells_per_species[self.atomic_numbers.reshape(-1)
                                         ].view_as(self.atomic_numbers)
 
     def to(self, device: device) -> 'OrbitalInfo':
@@ -562,7 +562,7 @@ class OrbitalInfo:
             an_mat = self.atomic_numbers.gather(-1, indices)
 
         elif form == 'shell':
-            an = self.atomic_numbers.view(-1)
+            an = self.atomic_numbers.reshape(-1)
             an_mat = an.repeat_interleave(self._shells_per_species[an])
             if batch:
                 an_mat = pack(split_by_size(an_mat, self.n_shells), value=0)
@@ -610,7 +610,7 @@ class OrbitalInfo:
         elif form == 'shell':
             i_mat = arange(
                 self.n_atoms.max(), device=self.__device).expand_as(
-                ans).repeat_interleave(self._shells_per_species[ans.view(-1)])
+                ans).repeat_interleave(self._shells_per_species[ans.reshape(-1)])
 
             if self.atomic_numbers.dim() == 2:  # "if batch"
                 i_mat = pack(split_by_size(i_mat, self.n_shells), value=-1)

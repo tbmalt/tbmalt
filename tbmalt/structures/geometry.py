@@ -700,7 +700,9 @@ class Geometry:
 
     def clone(self) -> 'Geometry':
         """Returns a copy of the `Geometry` instance.
+
         This method creates and returns a new copy of the `Geometry` instance.
+
         Returns:
             geometry: A copy of the `Geometry` instance.
         """
@@ -708,12 +710,49 @@ class Geometry:
             return self.__class__(self.atomic_numbers.clone(),
                                   self.positions.clone())
         else:
-            pbc = self.periodicity
             return self.__class__(
                 self.atomic_numbers.clone(),
                 self.positions.clone(),
                 lattice_vector=self.lattice.clone(),
-                cutoff=pbc.cutoff.clone())
+                cutoff=self.periodicity.cutoff.clone())
+
+    def unsqueeze(self) -> 'Geometry':
+        """Returns a new `Geometry` instance with a batch dimension.
+
+        This method exists solely to provide a quick and easy way to convert
+        a single system into a batch of size one. When called on a `Geometry`
+        instance representing a single system, this method will extract the
+        underlying `atomic_numbers`, `positions`, and `lattice` tensors,
+        add a new batch dimension to them using `torch.unsqueeze(tensor, 0)`,
+        before returning a new `Geometry` instance construct using them. Note,
+        the `Geometry` instance will share the same underlying data as the
+        original one. If a batch dimension is found to already be present then
+        the original `Geometry` instance will be returned.
+
+        Returns:
+            geometry: A batched version of the specified `Geometry` instance.
+
+        """
+
+        # If the geometry instance already includes a batch dimension
+        # then no unsqueeze operation is necessary. Thus, the original
+        # instance, `self`, is returned.
+        if self.atomic_numbers.ndim > 2:
+            return self
+
+        # Extract the attributes from the current geometry instance,
+        # unsqueeze them, and then feed them into a new geometry
+        # instance.
+        if self.is_periodic:
+            return self.__class__(
+                self.atomic_numbers.unsqueeze(0),
+                self.positions.unsqueeze(0),
+                lattice_vector=self.lattice.unsqueeze(0),
+                cutoff=self.periodicity.cutoff)
+        else:
+            return self.__class__(
+                self.atomic_numbers.unsqueeze(0),
+                self.positions.unsqueeze(0))
 
     def detach(self) -> 'Geometry':
         """Returns a copy of the `Geometry` instance.

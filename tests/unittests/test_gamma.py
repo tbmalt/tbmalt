@@ -400,6 +400,16 @@ def merge_systems(device, *systems):
 
     results = {k: pack(v) for k, v in results.items()}
 
+    # Catch to ensure a single system is treated as a batch of size one
+    if len(systems) == 1:
+        geometry = geometry.unsqueeze()
+
+        orbs = OrbitalInfo(
+            orbs.atomic_numbers.unsqueeze(0),
+            orbs.shell_dict, orbs.shell_resolved)
+
+        results = {k: v.unsqueeze(0) for k, v in results.items()}
+
     return geometry, orbs, results
 
 

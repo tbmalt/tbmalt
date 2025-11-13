@@ -742,6 +742,16 @@ def merge_systems(device, *systems):
 
     results = {k: pack(v) for k, v in results.items()}
 
+    # Catch to ensure a single system is treated as a batch of size one
+    if len(systems) == 1:
+        geometry = geometry.unsqueeze()
+
+        orbs = OrbitalInfo(
+            orbs.atomic_numbers.unsqueeze(0),
+            orbs.shell_dict, orbs.shell_resolved)
+
+        results = {k: v.unsqueeze(0) for k, v in results.items()}
+
     return geometry, orbs, results, kwargs
 
 
@@ -763,6 +773,8 @@ def dftb1_helper(calculator, geometry, orbs, results):
         if isinstance(predicted, torch.Tensor):
             device_check = predicted.device == calculator.device
             assert device_check, f'Attribute {i} was returned on the wrong device'
+            shape_check = predicted.device == calculator.device
+            assert shape_check, f'Attribute {i} was the wrong shape'
 
     check_allclose('q_final_atomic')
 
@@ -785,6 +797,8 @@ def dftb2_helper(calculator, geometry, orbs, results):
         if isinstance(predicted, torch.Tensor):
             device_check = predicted.device == calculator.device
             assert device_check, f'Attribute {i} was returned on the wrong device'
+            shape_check = predicted.device == calculator.device
+            assert shape_check, f'Attribute {i} was the wrong shape'
 
     check_allclose('q_final_atomic')
     check_allclose('band_energy')
