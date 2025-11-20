@@ -1,3 +1,11 @@
 sphinx
 sphinx_rtd_theme
 sphinx_autodoc_typehints
+numpy
+scipy
+torch
+h5py
+ase
+pydantic
+tomli
+dscribe
